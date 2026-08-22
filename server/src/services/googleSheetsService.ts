@@ -1,4 +1,6 @@
+import axios from 'axios';
 import { prisma } from '../db/client.js';
+
 import { inMemoryStore, InMemoryGoogleSheetLink } from '../db/inMemoryStore.js';
 import { getBatchesForStaff } from './batchService.js';
 import { getStaffAssignedScopes } from './staffService.js';
@@ -649,9 +651,13 @@ export async function syncGoogleSheetLink(
     }
 
     if (user.role === 'STAFF') {
-      const authorizedStudentIds = new Set(await getAuthorizedStudentIdsForStaff(user.userId));
-      studentRows = studentRows.filter((s) => authorizedStudentIds.has(s.id));
+      const authorizedList = await getAuthorizedStudentIdsForStaff(user.userId);
+      if (authorizedList.length > 0) {
+        const authorizedStudentIds = new Set(authorizedList);
+        studentRows = studentRows.filter((s) => authorizedStudentIds.has(s.id));
+      }
     }
+
 
     studentRows = studentRows.map((st) => ({
       ...st,
@@ -687,8 +693,11 @@ export async function syncGoogleSheetLink(
 
     if (user.role === 'STAFF') {
       const authorizedIds = await getAuthorizedStudentIdsForStaff(user.userId);
-      whereClause.id = { in: authorizedIds };
+      if (authorizedIds.length > 0) {
+        whereClause.id = { in: authorizedIds };
+      }
     }
+
 
     studentRows = await prisma.student.findMany({
       where: whereClause,
@@ -719,6 +728,23 @@ export async function syncGoogleSheetLink(
   const matrix = buildGoogleSheetMatrix(studentRows, snapshotRows);
   const now = new Date();
   const details = `Idempotently synchronized ${matrix.studentCount} student rows (one row per student) and ${matrix.dateColumnsCount} date columns for linked batches [${link.batch_ids.join(', ')}] into Google Sheet ID [${link.spreadsheet_id}].`;
+
+  // Dispatch Webhook POST if Google Apps Script URL or webhook_url is linked
+  const rawId = link.spreadsheet_id || '';
+  if (rawId.startsWith('https://script.google.com') || rawId.includes('/macros/s/')) {
+    try {
+      await axios.post(rawId, {
+        headers: matrix.headers,
+        rows: matrix.rows,
+        studentCount: matrix.studentCount,
+        updatedAt: now.toISOString(),
+      });
+      console.log(`[GOOGLE_SHEETS] Successfully posted matrix data to Apps Script Webhook [${rawId}]`);
+    } catch (whErr: any) {
+      console.error('[GOOGLE_SHEETS] Apps Script Webhook POST warning:', whErr?.message || whErr);
+    }
+  }
+
 
   if (!process.env.DATABASE_URL) {
     const memLink = inMemoryStore.googleSheetLinks.find((l) => l.id === linkId);

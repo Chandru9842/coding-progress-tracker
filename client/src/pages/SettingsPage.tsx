@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
-import { User, Mail, Shield, Calendar, FileSpreadsheet, RefreshCw, CheckCircle2, AlertCircle, Plus, ExternalLink, Trash2, History, Pencil, Key, Save, X, Search, Edit2 } from 'lucide-react';
+import { User, Mail, Shield, Calendar, FileSpreadsheet, RefreshCw, CheckCircle2, AlertCircle, Plus, ExternalLink, Trash2, History, Pencil, Key, Save, X, Search, Edit2, Copy, Download, Code } from 'lucide-react';
+
 import { authApi, googleSheetsApi, batchApi, staffApi, GoogleSheetLink, GoogleSheetLinkLog, Batch } from '../services/api.js';
 
 export const SettingsPage: React.FC = () => {
@@ -56,6 +57,11 @@ export const SettingsPage: React.FC = () => {
   const [showLogsModal, setShowLogsModal] = useState<boolean>(false);
   const [selectedLogLink, setSelectedLogLink] = useState<GoogleSheetLink | null>(null);
   const [activeLogs, setActiveLogs] = useState<GoogleSheetLinkLog[]>([]);
+
+  // Apps Script Setup Modal State
+  const [showScriptModal, setShowScriptModal] = useState<boolean>(false);
+  const [scriptModalLink, setScriptModalLink] = useState<GoogleSheetLink | null>(null);
+
 
   useEffect(() => {
     loadData();
@@ -240,6 +246,61 @@ export const SettingsPage: React.FC = () => {
       setSyncingLinkId(null);
     }
   };
+
+  const handleCopySheetMatrix = async (link: GoogleSheetLink) => {
+    try {
+      setSyncingLinkId(link.id);
+      setMessage(null);
+      const res = await googleSheetsApi.triggerSync(link.id);
+      const matrix = res.data?.matrix;
+      if (matrix && matrix.headers && matrix.rows) {
+        const tsv = [matrix.headers.join('\t'), ...matrix.rows.map((r: string[]) => r.join('\t'))].join('\n');
+        await navigator.clipboard.writeText(tsv);
+        setMessage({
+          type: 'success',
+          text: `📋 Copied formatted data matrix for ${matrix.studentCount} student(s) to clipboard! Paste directly into Cell A1 of your Google Sheet.`,
+        });
+      } else {
+        setMessage({ type: 'success', text: 'Sheet matrix copied.' });
+      }
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Failed to copy sheet data matrix.' });
+    } finally {
+      setSyncingLinkId(null);
+    }
+  };
+
+  const handleDownloadSheetCSV = async (link: GoogleSheetLink) => {
+    try {
+      setSyncingLinkId(link.id);
+      setMessage(null);
+      const res = await googleSheetsApi.triggerSync(link.id);
+      const matrix = res.data?.matrix;
+      if (matrix && matrix.headers && matrix.rows) {
+        const csvContent = [
+          matrix.headers.map((h: string) => `"${h.replace(/"/g, '""')}"`).join(','),
+          ...matrix.rows.map((row: string[]) => row.map((cell: string) => `"${cell.replace(/"/g, '""')}"`).join(',')),
+        ].join('\n');
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${link.name.replace(/[^a-zA-Z0-9_-]/g, '_')}_data.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setMessage({
+          type: 'success',
+          text: `⬇ Downloaded CSV dataset for ${matrix.studentCount} student(s)! Import directly into Google Sheets (File -> Import).`,
+        });
+      }
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Failed to download sheet CSV.' });
+    } finally {
+      setSyncingLinkId(null);
+    }
+  };
+
 
   const handleDeleteLink = async (linkId: string) => {
     if (!window.confirm('Deactivate this linked sheet? Historical sheet data will be preserved in Google Sheets.')) return;
@@ -714,16 +775,52 @@ export const SettingsPage: React.FC = () => {
                       )}
 
                       {link.is_active && (
-                        <button
-                          className="btn btn-primary"
-                          onClick={() => handleSyncLink(link.id)}
-                          disabled={syncingLinkId === link.id}
-                          style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-                        >
-                          <RefreshCw size={14} className={syncingLinkId === link.id ? 'animate-spin' : ''} />
-                          <span>{syncingLinkId === link.id ? 'Syncing...' : 'Sync Now'}</span>
-                        </button>
+                        <>
+                          <button
+                            className="btn btn-primary"
+                            onClick={() => handleSyncLink(link.id)}
+                            disabled={syncingLinkId === link.id}
+                            style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                          >
+                            <RefreshCw size={14} className={syncingLinkId === link.id ? 'animate-spin' : ''} />
+                            <span>{syncingLinkId === link.id ? 'Syncing...' : 'Sync Now'}</span>
+                          </button>
+
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() => handleCopySheetMatrix(link)}
+                            disabled={syncingLinkId === link.id}
+                            style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.35rem', backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#34d399', border: '1px solid rgba(16, 185, 129, 0.3)' }}
+                            title="Copy student data matrix directly to clipboard (Paste into Cell A1 of Google Sheet)"
+                          >
+                            <Copy size={14} />
+                            <span>Copy Data (Cell A1)</span>
+                          </button>
+
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() => handleDownloadSheetCSV(link)}
+                            disabled={syncingLinkId === link.id}
+                            style={{ padding: '0.4rem 0.6rem', fontSize: '0.85rem' }}
+                            title="Download dataset as CSV file for Google Sheets import"
+                          >
+                            <Download size={14} />
+                          </button>
+
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() => {
+                              setScriptModalLink(link);
+                              setShowScriptModal(true);
+                            }}
+                            style={{ padding: '0.4rem 0.6rem', fontSize: '0.85rem' }}
+                            title="1-Click Google Apps Script Setup Code"
+                          >
+                            <Code size={14} />
+                          </button>
+                        </>
                       )}
+
 
                       <button
                         className="btn btn-secondary"
@@ -1092,6 +1189,85 @@ export const SettingsPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* 1-Click Apps Script Setup Modal */}
+      {showScriptModal && scriptModalLink && (
+        <div className="modal-overlay-responsive">
+          <div className="glass-panel modal-card-responsive" style={{ width: '100%', maxWidth: '640px', padding: '2rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <Code size={20} style={{ color: '#10b981' }} />
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>
+                  Live Apps Script Auto-Fill Setup
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowScriptModal(false)}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1rem', lineHeight: '1.5' }}>
+              Follow these 2 quick steps to let Google Sheet <strong>[{scriptModalLink.name}]</strong> auto-fill automatically whenever 12:00 AM IST sync runs or when you click <strong>Sync Now</strong>:
+            </p>
+
+            <ol style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', paddingLeft: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
+              <li>
+                Open your Google Sheet: <a href={scriptModalLink.spreadsheet_url || '#'} target="_blank" rel="noopener noreferrer" style={{ color: '#818cf8', fontWeight: 600 }}>{scriptModalLink.name}</a>
+              </li>
+              <li>
+                Click <strong>Extensions &rarr; Apps Script</strong> in Google Sheets, paste the code below, and click <strong>Deploy &rarr; New deployment &rarr; Web app</strong> (Execute as: <i>Me</i>, Access: <i>Anyone</i>):
+              </li>
+            </ol>
+
+            <div style={{ position: 'relative', marginBottom: '1.25rem' }}>
+              <textarea
+                readOnly
+                rows={10}
+                className="form-input"
+                style={{ fontFamily: 'monospace', fontSize: '0.8rem', width: '100%', backgroundColor: '#0f172a', color: '#38bdf8', padding: '0.85rem' }}
+                value={`function doPost(e) {
+  try {
+    var data = JSON.parse(e.postData.contents);
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    sheet.clear();
+    if (data.headers) sheet.appendRow(data.headers);
+    if (data.rows) {
+      for (var i = 0; i < data.rows.length; i++) {
+        sheet.appendRow(data.rows[i]);
+      }
+    }
+    return ContentService.createTextOutput("SUCCESS");
+  } catch (err) {
+    return ContentService.createTextOutput("ERROR: " + err.message);
+  }
+}`}
+              />
+              <button
+                className="btn btn-secondary"
+                onClick={() => {
+                  const code = `function doPost(e) {\n  try {\n    var data = JSON.parse(e.postData.contents);\n    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();\n    sheet.clear();\n    if (data.headers) sheet.appendRow(data.headers);\n    if (data.rows) {\n      for (var i = 0; i < data.rows.length; i++) {\n        sheet.appendRow(data.rows[i]);\n      }\n    }\n    return ContentService.createTextOutput("SUCCESS");\n  } catch (err) {\n    return ContentService.createTextOutput("ERROR: " + err.message);\n  }\n}`;
+                  navigator.clipboard.writeText(code);
+                  setMessage({ type: 'success', text: '📋 Apps Script code copied to clipboard!' });
+                }}
+                style={{ position: 'absolute', right: '0.5rem', top: '0.5rem', fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
+              >
+                Copy Script
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="btn btn-primary" onClick={() => setShowScriptModal(false)}>
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
+
   );
 };
