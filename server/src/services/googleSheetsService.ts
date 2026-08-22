@@ -196,13 +196,14 @@ export function buildGoogleSheetMatrix(
           hardToday = Math.max(0, currSnap.hard_solved - prevSnap.hard_solved);
           totalToday = easyToday + medToday + hardToday;
         } else {
-          easyToday = currSnap.easy_solved;
-          medToday = currSnap.medium_solved;
-          hardToday = currSnap.hard_solved;
-          totalToday = easyToday + medToday + hardToday;
+          easyToday = 0;
+          medToday = 0;
+          hardToday = 0;
+          totalToday = 0;
         }
 
         const cellContent = `E-${currSnap.easy_solved} | M-${currSnap.medium_solved} | H-${currSnap.hard_solved} | T-${currSnap.total_solved}\nToday: E-${easyToday} / M-${medToday} / H-${hardToday} / T-${totalToday}`;
+
         baseRow.push(cellContent);
       }
     });
