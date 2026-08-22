@@ -3,6 +3,8 @@ import { prisma } from '../db/client.js';
 import { inMemoryStore } from '../db/inMemoryStore.js';
 import { isStaffAuthorizedForStudent, getAuthorizedStudentIdsForStaff } from './studentAuthorizationService.js';
 import { syncGoogleSheetLink } from './googleSheetsService.js';
+import { runMidnightAutoSync } from './cronService.js';
+
 import { UserRole } from '../types/index.js';
 
 export interface LeetCodeStats {
@@ -408,8 +410,15 @@ export async function runDailyMidnightReconciliation(): Promise<{
   const result = await runPeriodicAutoSync();
   const istDate = getISTDate().toISOString().split('T')[0];
 
+  try {
+    await runMidnightAutoSync();
+  } catch (sheetErr: any) {
+    console.error('[CRON] Failed to auto-sync linked Google Sheets during 12:00 AM IST reconciliation:', sheetErr?.message || sheetErr);
+  }
+
   return {
     ...result,
     istDate,
   };
 }
+
