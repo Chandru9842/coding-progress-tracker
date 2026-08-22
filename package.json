@@ -21,7 +21,7 @@
     "test:security": "npm --prefix server run test:security",
     "test:regression": "npm --prefix server run test:regression",
     "verify": "npm run lint && npm run prisma:generate && npm test && npm run build",
-    "vercel-build": "npm run prisma:generate && npm run build"
+    "vercel-build": "npm --prefix server install && npm --prefix client install && npm --prefix server run prisma:generate && npm run build"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
