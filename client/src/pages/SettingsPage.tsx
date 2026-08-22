@@ -1012,27 +1012,24 @@ export const SettingsPage: React.FC = () => {
                         </label>
                         <select
                           className="form-input"
-                          value={selectedStaffAllocBatchId}
+                          value={selectedStaffAllocBatchId || 'ALL'}
                           onChange={(e) => setSelectedStaffAllocBatchId(e.target.value)}
                           required
                           style={{ width: '100%' }}
                         >
+                          <option value="ALL">Entire Section (All Batches)</option>
                           {(() => {
                             const currentSec = staffSections.find((s) => s.id === selectedStaffSectionId);
-                            if (!currentSec) return null;
-
-                            const options = [];
-                            if (currentSec.assignment_mode === 'ALL') {
-                              options.push(<option key="ALL" value="ALL">Entire Section (All Batches)</option>);
-                            }
-                            currentSec.allocation_batches.forEach((ab) => {
-                              options.push(<option key={ab.id} value={ab.id}>{ab.name}</option>);
-                            });
-
-                            return options;
+                            if (!currentSec || !currentSec.allocation_batches) return null;
+                            return currentSec.allocation_batches.map((ab) => (
+                              <option key={ab.id} value={ab.id}>
+                                {ab.name}
+                              </option>
+                            ));
                           })()}
                         </select>
                       </div>
+
                     </>
                   )}
                 </>
