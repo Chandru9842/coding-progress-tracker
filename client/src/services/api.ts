@@ -19,6 +19,37 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Client-side Memory Cache with TTL for 0ms Instant Page Loads
+interface CacheEntry<T> {
+  data: T;
+  timestamp: number;
+}
+const cacheStore: Record<string, CacheEntry<any>> = {};
+const CACHE_TTL = 30000; // 30 seconds
+
+export function getCachedData<T>(key: string): T | null {
+  const entry = cacheStore[key];
+  if (entry && Date.now() - entry.timestamp < CACHE_TTL) {
+    return entry.data;
+  }
+  return null;
+}
+
+export function setCachedData<T>(key: string, data: T): void {
+  cacheStore[key] = { data, timestamp: Date.now() };
+}
+
+export function clearClientCache(prefix?: string): void {
+  if (!prefix) {
+    Object.keys(cacheStore).forEach((k) => delete cacheStore[k]);
+  } else {
+    Object.keys(cacheStore).forEach((k) => {
+      if (k.startsWith(prefix)) delete cacheStore[k];
+    });
+  }
+}
+
+
 export interface User {
   id: string;
   userId?: string;
@@ -220,17 +251,27 @@ export const statsApi = {
 
 export const staffApi = {
   getStaffList: async (activeOnly?: boolean): Promise<StaffUser[]> => {
+    const key = `staff_list_${activeOnly ? 'active' : 'all'}`;
+    const cached = getCachedData<StaffUser[]>(key);
+    if (cached) return cached;
     const res = await api.get<{ staff: any[] }>('/staff', {
       params: activeOnly ? { active: 'true' } : undefined,
     });
-    return res.data.staff.map(normalizeStaffUser);
+    const normalized = res.data.staff.map(normalizeStaffUser);
+    setCachedData(key, normalized);
+    return normalized;
   },
 
   getAllStaff: async (activeOnly?: boolean): Promise<StaffUser[]> => {
+    const key = `staff_${activeOnly ? 'active' : 'all'}`;
+    const cached = getCachedData<StaffUser[]>(key);
+    if (cached) return cached;
     const res = await api.get<{ staff: any[] }>('/staff', {
       params: activeOnly ? { active: 'true' } : undefined,
     });
-    return res.data.staff.map(normalizeStaffUser);
+    const normalized = res.data.staff.map(normalizeStaffUser);
+    setCachedData(key, normalized);
+    return normalized;
   },
 
   getStaffDetail: async (staffId: string): Promise<StaffUser> => {
@@ -244,6 +285,7 @@ export const staffApi = {
   },
 
   createStaff: async (data: { name: string; email: string; password: string; isActive?: boolean }): Promise<StaffUser> => {
+    clearClientCache('staff_');
     const res = await api.post<{ staff: any }>('/staff', {
       name: data.name,
       email: data.email,
@@ -257,17 +299,20 @@ export const staffApi = {
   },
 
   updateStaff: async (staffId: string, data: { name?: string; email?: string; password?: string; assignedBatchIds?: string[] }): Promise<void> => {
+    clearClientCache('staff_');
     await api.patch(`/staff/${staffId}`, data);
   },
 
-
   deleteStaff: async (staffId: string): Promise<void> => {
+    clearClientCache('staff_');
     await api.delete(`/staff/${staffId}`);
   },
 
   updateStatus: async (staffId: string, isActive: boolean): Promise<void> => {
+    clearClientCache('staff_');
     await api.patch(`/staff/${staffId}/status`, { isActive });
   },
+
 
   resetPassword: async (staffId: string, password: string): Promise<void> => {
     await api.patch(`/staff/${staffId}/password`, { password });
@@ -390,7 +435,11 @@ export const studentApi = {
     mentorId?: string;
     search?: string;
   }): Promise<Student[]> => {
+    const key = `students_${JSON.stringify(params || {})}`;
+    const cached = getCachedData<Student[]>(key);
+    if (cached) return cached;
     const res = await api.get<{ students: Student[] }>('/students', { params });
+    setCachedData(key, res.data.students);
     return res.data.students;
   },
 
@@ -407,23 +456,28 @@ export const studentApi = {
     section_id: string;
     leetcode_username?: string;
   }): Promise<Student> => {
+    clearClientCache('students_');
     const res = await api.post<{ student: Student }>('/students', data);
     return res.data.student;
   },
 
   updateStudent: async (studentId: string, data: Partial<Student>): Promise<Student> => {
+    clearClientCache('students_');
     const res = await api.patch<{ student: Student }>(`/students/${studentId}`, data);
     return res.data.student;
   },
 
   deleteStudent: async (studentId: string): Promise<void> => {
+    clearClientCache('students_');
     await api.delete(`/students/${studentId}`);
   },
 
   bulkDeleteStudents: async (studentIds: string[]): Promise<void> => {
+    clearClientCache('students_');
     await api.post('/students/bulk-delete', { studentIds });
   },
 };
+
 
 
 export const syncApi = {

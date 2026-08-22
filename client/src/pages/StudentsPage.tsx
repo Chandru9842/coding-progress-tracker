@@ -51,8 +51,9 @@ export const StudentsPage: React.FC = () => {
 
   const fetchStudents = async () => {
     try {
-      setLoading(true);
+      if (students.length === 0) setLoading(true);
       const data = await studentApi.getStudents({
+
         batchId: filterBatchId || undefined,
         sectionId: filterSectionId || undefined,
         department: filterDept || undefined,

@@ -50,8 +50,9 @@ export const StaffManagementPage: React.FC = () => {
 
   const fetchStaff = async () => {
     try {
-      setLoading(true);
+      if (staffList.length === 0) setLoading(true);
       const [staffData, batchData] = await Promise.all([
+
         staffApi.getAllStaff(),
         batchApi.getAllBatches().catch(() => []),
       ]);
