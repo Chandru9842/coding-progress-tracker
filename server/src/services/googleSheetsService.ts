@@ -170,11 +170,18 @@ export function buildGoogleSheetMatrix(
 
   const rows: string[][] = sortedStudents.map((st, idx) => {
     const rank = (idx + 1).toString();
-    const ay = st.batch ? `${st.batch.start_year}–${st.batch.end_year}` : (st.academic_year || 'N/A');
-    const dept = st.batch ? st.batch.department : (st.department || 'N/A');
-    const sec = st.section ? `Section ${st.section.name}` : (st.section_name ? `Section ${st.section_name}` : 'N/A');
-    const allocBatch = st.allocation_batch?.name || (st.sub_batch && st.sub_batch !== 'N/A' ? st.sub_batch : '-');
-    const mentorName = st.mentor ? st.mentor.name : (st.mentor_name || 'Unassigned');
+    const ay = st.batch ? `${st.batch.start_year}–${st.batch.end_year}` : (st.academic_year || '-');
+    const dept = st.batch ? st.batch.department : (st.department || '-');
+    const rawSec = st.section ? st.section.name : (st.section_name || '-');
+    const sec = rawSec.startsWith('Section') ? rawSec : `Section ${rawSec}`;
+    
+    // Cleanly separate Allocation Batch vs Mentor Name to prevent column shift
+    let allocBatch = st.allocation_batch?.name || (st.sub_batch && st.sub_batch !== 'N/A' && !st.sub_batch.startsWith('Dr.') && !st.sub_batch.startsWith('Mr.') ? st.sub_batch : '-');
+    let mentorName = st.mentor ? st.mentor.name : (st.mentor_name || (st.sub_batch && (st.sub_batch.startsWith('Dr.') || st.sub_batch.startsWith('Mr.')) ? st.sub_batch : '-'));
+
+    const regNo = st.register_number || '-';
+    const studentName = st.name || '-';
+    const leetcodeId = st.leetcode_username || '-';
 
     const baseRow: string[] = [
       rank,
@@ -183,10 +190,11 @@ export function buildGoogleSheetMatrix(
       sec,
       allocBatch,
       mentorName,
-      st.register_number,
-      st.name,
-      st.leetcode_username || 'N/A',
+      regNo,
+      studentName,
+      leetcodeId,
     ];
+
 
     const studentSnaps = studentSnapshotsMap.get(st.id) || [];
 
@@ -674,14 +682,13 @@ export async function syncGoogleSheetLink(
       studentRows = studentRows.filter((s) => s.allocation_batch_id === link.allocation_batch_id || s.sub_batch === targetName);
     }
 
-    if (user.role === 'STAFF') {
+    if (user.role === 'STAFF' && (!link.batch_ids || link.batch_ids.length === 0)) {
       const authorizedList = await getAuthorizedStudentIdsForStaff(user.userId);
       if (authorizedList.length > 0) {
         const authorizedStudentIds = new Set(authorizedList);
         studentRows = studentRows.filter((s) => authorizedStudentIds.has(s.id));
       }
     }
-
 
     studentRows = studentRows.map((st) => ({
       ...st,
@@ -715,12 +722,13 @@ export async function syncGoogleSheetLink(
       ];
     }
 
-    if (user.role === 'STAFF') {
+    if (user.role === 'STAFF' && (!activeBatchIds || activeBatchIds.length === 0)) {
       const authorizedIds = await getAuthorizedStudentIdsForStaff(user.userId);
       if (authorizedIds.length > 0) {
         whereClause.id = { in: authorizedIds };
       }
     }
+
 
 
     studentRows = await prisma.student.findMany({

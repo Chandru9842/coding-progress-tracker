@@ -151,12 +151,12 @@ export async function triggerDailyMidnightReconciliation(req: AuthenticatedReque
 
     const result = await leetcodeService.runDailyMidnightReconciliation();
     res.status(200).json({
-      message: 'Daily 2:35 AM IST reconciliation sync completed',
-      scheduledTimeIST: '2:35 AM IST (21:05 UTC)',
+      message: 'Daily 3:00 AM IST reconciliation sync completed',
+      scheduledTimeIST: '3:00 AM IST (21:30 UTC)',
       data: result,
     });
   } catch (error: any) {
-    res.status(500).json({ error: 'Failed to execute daily 2:35 AM IST reconciliation' });
+    res.status(500).json({ error: 'Failed to execute daily 3:00 AM IST reconciliation' });
   }
 }
 
@@ -172,14 +172,15 @@ export async function getSyncStatus(req: AuthenticatedRequest, res: Response): P
     res.status(200).json({
       status: 'ACTIVE',
       periodicPollingIntervalMinutes: 15,
-      dailyReconciliationIST: '2:35 AM IST (21:05 UTC)',
+      dailyReconciliationIST: '3:00 AM IST (21:30 UTC)',
       currentISTDate: istDate,
       vercelCronConfig: {
         cronEndpoint: '/api/v1/cron/daily-sync',
-        scheduleUTC: '5 21 * * *',
+        scheduleUTC: '30 21 * * *',
         hobbyPlanNote: 'Vercel Hobby plan supports once-per-day cron schedules with hour-level precision.',
       },
     });
+
 
 
 
