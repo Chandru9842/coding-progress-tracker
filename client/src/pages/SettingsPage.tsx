@@ -348,10 +348,17 @@ export const SettingsPage: React.FC = () => {
     try {
       setUpdatingLink(true);
       setMessage(null);
-      const updated = await googleSheetsApi.updateLink(editingLink.id, {
-        name: editLinkName.trim(),
-        spreadsheet_id: editSpreadsheetId.trim(),
-      });
+      const val = editSpreadsheetId.trim();
+      let payload: any = { name: editLinkName.trim() };
+
+      if (val.startsWith('https://script.google.com') || val.includes('/macros/s/')) {
+        payload.webhook_url = val;
+        payload.spreadsheet_id = editingLink.spreadsheet_id;
+      } else {
+        payload.spreadsheet_id = val;
+      }
+
+      const updated = await googleSheetsApi.updateLink(editingLink.id, payload);
       setMessage({ type: 'success', text: `Google Sheet [${updated.name}] updated successfully!` });
       setEditingLink(null);
       await loadData();
@@ -361,6 +368,7 @@ export const SettingsPage: React.FC = () => {
       setUpdatingLink(false);
     }
   };
+
 
   const handleViewLogs = async (link: GoogleSheetLink) => {
     try {

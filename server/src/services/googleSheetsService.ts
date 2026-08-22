@@ -62,33 +62,39 @@ export function extractSpreadsheetId(input: string): string {
   if (!input) return '';
   const trimmed = input.trim();
 
+  if (trimmed.includes('script.google.com') || trimmed.includes('/macros/s/')) {
+    return '';
+  }
+
   const urlMatch = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   if (urlMatch && urlMatch[1]) {
     return urlMatch[1];
   }
 
-  return trimmed.split('/')[0].split('?')[0].split('#')[0].trim();
+  const candidate = trimmed.split('/')[0].split('?')[0].split('#')[0].trim();
+  return candidate.includes('.') || candidate.includes(':') || candidate.length < 10 ? '' : candidate;
 }
 
-/**
- * Ensures GoogleSheetLink records present clean raw spreadsheet IDs and exact valid URLs:
- * https://docs.google.com/spreadsheets/d/{spreadsheetId}/edit
- */
 export function sanitizeGoogleSheetLink<T extends { spreadsheet_id: string; spreadsheet_url?: string | null; webhook_url?: string | null }>(link: T): T {
   if (!link) return link;
 
-  const raw = link.spreadsheet_id || '';
-  if (raw.startsWith('https://script.google.com') || raw.includes('/macros/s/')) {
-    (link as any).webhook_url = raw;
-  }
+  const rawId = link.spreadsheet_id || '';
+  const cleanId = extractSpreadsheetId(rawId);
 
-  const cleanId = extractSpreadsheetId(raw);
-  if (cleanId && !cleanId.includes('script.google.com') && !cleanId.includes('macros')) {
+  if (cleanId) {
     link.spreadsheet_id = cleanId;
     link.spreadsheet_url = `https://docs.google.com/spreadsheets/d/${cleanId}/edit`;
+  } else if (rawId.startsWith('https://script.google.com') || rawId.includes('/macros/s/')) {
+    (link as any).webhook_url = rawId;
   }
+
+  if (link.spreadsheet_url && link.spreadsheet_url.includes('script.google.com')) {
+    link.spreadsheet_url = null;
+  }
+
   return link;
 }
+
 
 
 /**
@@ -531,11 +537,16 @@ export async function updateGoogleSheetLink(
     throw err;
   }
 
-  const cleanSpreadsheetId = input.spreadsheet_id
+  let cleanSpreadsheetId = input.spreadsheet_id
     ? extractSpreadsheetId(input.spreadsheet_id)
     : existing.spreadsheet_id;
 
-  const spreadsheetUrl = `https://docs.google.com/spreadsheets/d/${cleanSpreadsheetId}/edit`;
+  if (!cleanSpreadsheetId && existing.spreadsheet_id) {
+    cleanSpreadsheetId = existing.spreadsheet_id;
+  }
+
+  const spreadsheetUrl = cleanSpreadsheetId ? `https://docs.google.com/spreadsheets/d/${cleanSpreadsheetId}/edit` : existing.spreadsheet_url;
+
 
   let batch_ids = input.batch_ids || existing.batch_ids;
 
