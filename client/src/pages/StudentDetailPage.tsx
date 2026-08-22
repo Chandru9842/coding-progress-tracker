@@ -229,42 +229,76 @@ export const StudentDetailPage: React.FC = () => {
             {/* Daily Snapshots History Table */}
             {snapshots.length > 0 && (
               <div className="glass-panel" style={{ padding: '1.5rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
-                  <Activity size={20} style={{ color: 'var(--primary)' }} />
-                  <h4 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Daily Snapshot History</h4>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <Activity size={20} style={{ color: 'var(--primary)' }} />
+                    <h4 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Daily Snapshot History</h4>
+                  </div>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    Track daily problem-solving progress & cumulative totals
+                  </span>
                 </div>
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                <div className="table-responsive-container">
+                  <table style={{ width: '100%', minWidth: '780px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                     <thead>
                       <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
                         <th style={{ padding: '0.75rem' }}>Date</th>
-                        <th style={{ padding: '0.75rem' }}>Easy Solved</th>
-                        <th style={{ padding: '0.75rem' }}>Medium Solved</th>
-                        <th style={{ padding: '0.75rem' }}>Hard Solved</th>
+                        <th style={{ padding: '0.75rem' }}>Today's Solved</th>
+                        <th style={{ padding: '0.75rem' }}>Today's Breakdown</th>
+                        <th style={{ padding: '0.75rem' }}>Cumulative Easy</th>
+                        <th style={{ padding: '0.75rem' }}>Cumulative Medium</th>
+                        <th style={{ padding: '0.75rem' }}>Cumulative Hard</th>
                         <th style={{ padding: '0.75rem' }}>Total Solved</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {snapshots.map((snap) => (
-                        <tr key={snap.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                          <td style={{ padding: '0.75rem', fontWeight: 600 }}>
-                            {(() => {
-                              const dStr = typeof snap.snapshot_date === 'string' ? snap.snapshot_date : new Date(snap.snapshot_date).toISOString();
-                              const parts = dStr.split('T')[0].split('-');
-                              return parts.length === 3 ? `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}/${parts[0]}` : new Date(snap.snapshot_date).toLocaleDateString();
-                            })()}
-                          </td>
-                          <td style={{ padding: '0.75rem', color: '#4ade80' }}>{snap.easy_solved}</td>
-                          <td style={{ padding: '0.75rem', color: '#facc15' }}>{snap.medium_solved}</td>
-                          <td style={{ padding: '0.75rem', color: '#f87171' }}>{snap.hard_solved}</td>
-                          <td style={{ padding: '0.75rem', fontWeight: 700, color: 'var(--primary)' }}>{snap.total_solved}</td>
-                        </tr>
-                      ))}
+                      {snapshots.map((snap, idx) => {
+                        const prevSnap = snapshots[idx + 1];
+                        const dailyEasy = prevSnap ? Math.max(0, snap.easy_solved - prevSnap.easy_solved) : 0;
+                        const dailyMedium = prevSnap ? Math.max(0, snap.medium_solved - prevSnap.medium_solved) : 0;
+                        const dailyHard = prevSnap ? Math.max(0, snap.hard_solved - prevSnap.hard_solved) : 0;
+                        const dailyTotal = prevSnap ? Math.max(0, snap.total_solved - prevSnap.total_solved) : 0;
+
+                        return (
+                          <tr key={snap.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                            <td style={{ padding: '0.75rem', fontWeight: 600 }}>
+                              {(() => {
+                                const dStr = typeof snap.snapshot_date === 'string' ? snap.snapshot_date : new Date(snap.snapshot_date).toISOString();
+                                const parts = dStr.split('T')[0].split('-');
+                                return parts.length === 3 ? `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}/${parts[0]}` : new Date(snap.snapshot_date).toLocaleDateString();
+                              })()}
+                            </td>
+                            <td style={{ padding: '0.75rem' }}>
+                              <span style={{
+                                padding: '0.2rem 0.55rem',
+                                borderRadius: '6px',
+                                fontSize: '0.8rem',
+                                fontWeight: 700,
+                                backgroundColor: dailyTotal > 0 ? 'rgba(52, 211, 153, 0.15)' : 'rgba(148, 163, 184, 0.1)',
+                                color: dailyTotal > 0 ? '#34d399' : '#94a3b8',
+                                border: dailyTotal > 0 ? '1px solid rgba(52, 211, 153, 0.3)' : '1px solid rgba(148, 163, 184, 0.2)',
+                              }}>
+                                {dailyTotal > 0 ? `+${dailyTotal}` : '0'}
+                              </span>
+                            </td>
+                            <td style={{ padding: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                              <span style={{ color: '#4ade80', fontWeight: dailyEasy > 0 ? 700 : 400 }}>+{dailyEasy} E</span> &bull;{' '}
+                              <span style={{ color: '#facc15', fontWeight: dailyMedium > 0 ? 700 : 400 }}>+{dailyMedium} M</span> &bull;{' '}
+                              <span style={{ color: '#f87171', fontWeight: dailyHard > 0 ? 700 : 400 }}>+{dailyHard} H</span>
+                            </td>
+                            <td style={{ padding: '0.75rem', color: '#4ade80' }}>{snap.easy_solved}</td>
+                            <td style={{ padding: '0.75rem', color: '#facc15' }}>{snap.medium_solved}</td>
+                            <td style={{ padding: '0.75rem', color: '#f87171' }}>{snap.hard_solved}</td>
+                            <td style={{ padding: '0.75rem', fontWeight: 700, color: 'var(--primary)' }}>{snap.total_solved}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               </div>
             )}
+
           </div>
         )}
       </div>
