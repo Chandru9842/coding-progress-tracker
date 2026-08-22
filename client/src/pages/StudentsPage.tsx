@@ -1,0 +1,649 @@
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Layout } from '../components/Layout.js';
+import { useAuth } from '../context/AuthContext.js';
+import { studentApi, batchApi, staffApi, syncApi, Student, Batch, StaffUser } from '../services/api.js';
+import { Users, UserPlus, Search, Edit2, Trash2, Loader2, Filter, RefreshCw, X, CheckCircle2, UserCheck } from 'lucide-react';
+
+export const StudentsPage: React.FC = () => {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'ADMIN';
+  const isStaff = user?.role === 'STAFF';
+  const canManage = isAdmin || isStaff;
+  const navigate = useNavigate();
+
+  const [students, setStudents] = useState<Student[]>([]);
+  const [batches, setBatches] = useState<Batch[]>([]);
+  const [staffList, setStaffList] = useState<StaffUser[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [syncingAll, setSyncingAll] = useState<boolean>(false);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  const [search, setSearch] = useState<string>('');
+  const [filterBatchId, setFilterBatchId] = useState<string>('');
+  const [filterSectionId, setFilterSectionId] = useState<string>('');
+  const [filterDept, setFilterDept] = useState<string>('');
+  const [filterAllocBatchId, setFilterAllocBatchId] = useState<string>('');
+  const [filterMentorId, setFilterMentorId] = useState<string>('');
+  const [filterAllocBatches, setFilterAllocBatches] = useState<any[]>([]);
+  const [formAllocBatches, setFormAllocBatches] = useState<any[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  // Modal States
+  const [showStudentModal, setShowStudentModal] = useState<boolean>(false);
+  const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
+  const [studentForm, setStudentForm] = useState({
+    register_number: '',
+    name: '',
+    department: 'CSE',
+    batch_id: '',
+    section_id: '',
+    current_year: '',
+    sub_batch: '',
+    allocation_batch_id: '',
+    leetcode_username: '',
+    mentor_id: '',
+  });
+  const [submitting, setSubmitting] = useState<boolean>(false);
+
+  const fetchStudents = async () => {
+    try {
+      setLoading(true);
+      const data = await studentApi.getStudents({
+        batchId: filterBatchId || undefined,
+        sectionId: filterSectionId || undefined,
+        department: filterDept || undefined,
+        allocationBatchId: filterAllocBatchId || undefined,
+        mentorId: filterMentorId || undefined,
+        search: search || undefined,
+      });
+      setStudents(data);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to load student roster');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchStudents();
+  }, [search, filterBatchId, filterSectionId, filterDept, filterAllocBatchId, filterMentorId]);
+
+  useEffect(() => {
+    if (filterSectionId) {
+      batchApi.getAllocationBatches(filterSectionId)
+        .then((abs) => setFilterAllocBatches(abs || []))
+        .catch(() => setFilterAllocBatches([]));
+    } else {
+      setFilterAllocBatches([]);
+      setFilterAllocBatchId('');
+    }
+  }, [filterSectionId]);
+
+  useEffect(() => {
+    if (studentForm.section_id) {
+      batchApi.getAllocationBatches(studentForm.section_id)
+        .then((abs) => setFormAllocBatches(abs || []))
+        .catch(() => setFormAllocBatches([]));
+    } else {
+      setFormAllocBatches([]);
+    }
+  }, [studentForm.section_id]);
+
+  useEffect(() => {
+    batchApi.getAllBatches().then(setBatches).catch(console.error);
+    staffApi.getAllStaff(true).then(setStaffList).catch(console.error);
+  }, []);
+
+  const handleSyncBatchOrAll = async () => {
+    try {
+      setSyncingAll(true);
+      setSyncNotice(null);
+      if (filterBatchId) {
+        const res = await syncApi.syncBatch(filterBatchId);
+        setSyncNotice(`Batch sync completed: ${res.data.successful} synced successfully.`);
+      } else if (isAdmin) {
+        const res = await syncApi.syncAll();
+        setSyncNotice(`Global sync completed: ${res.successful} synced successfully.`);
+      }
+      fetchStudents();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to sync LeetCode data');
+    } finally {
+      setSyncingAll(false);
+    }
+  };
+
+  const handleOpenCreateModal = async () => {
+    setEditingStudentId(null);
+    setStudentForm({
+      register_number: '',
+      name: '',
+      department: 'CSE',
+      batch_id: '',
+      section_id: '',
+      current_year: '',
+      sub_batch: '',
+      allocation_batch_id: '',
+      leetcode_username: '',
+      mentor_id: isStaff && user ? (user.id || (user as any).userId || '') : '',
+    });
+    setShowStudentModal(true);
+    try {
+      const activeStaff = await staffApi.getAllStaff(true);
+      setStaffList(activeStaff);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleOpenEditModal = async (student: Student, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingStudentId(student.id);
+    setStudentForm({
+      register_number: student.register_number,
+      name: student.name,
+      department: student.department,
+      batch_id: student.batch_id,
+      section_id: student.section_id,
+      current_year: student.current_year || '',
+      sub_batch: student.sub_batch || '',
+      allocation_batch_id: student.allocation_batch_id || student.allocation_batch?.id || '',
+      leetcode_username: student.leetcode_username || '',
+      mentor_id: student.mentor_id || student.mentor?.id || '',
+    });
+    setShowStudentModal(true);
+    try {
+      const activeStaff = await staffApi.getAllStaff(true);
+      setStaffList(activeStaff);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleSaveStudent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!studentForm.batch_id || !studentForm.section_id) {
+      alert('Please select both a batch and section');
+      return;
+    }
+
+    if (!studentForm.leetcode_username.trim()) {
+      alert('LeetCode username is required');
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      if (editingStudentId) {
+        await studentApi.updateStudent(editingStudentId, studentForm);
+      } else {
+        await studentApi.createStudent(studentForm);
+      }
+      setShowStudentModal(false);
+      fetchStudents();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to save student record');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteStudent = async (student: Student, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm(`Are you sure you want to delete student ${student.name} (${student.register_number})?`)) return;
+
+    try {
+      await studentApi.deleteStudent(student.id);
+      fetchStudents();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to delete student');
+    }
+  };
+
+  return (
+    <Layout title="Student Management">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        {/* Page Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+          <div>
+            <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <Users size={28} style={{ color: 'var(--primary)' }} />
+              <span>Student Management</span>
+            </h1>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>
+              {isStaff ? 'Manage student records, assign mentors, and sync LeetCode profiles.' : 'View all registered students, assigned mentors, and track LeetCode stats.'}
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <button
+              className="btn-secondary"
+              onClick={handleSyncBatchOrAll}
+              disabled={syncingAll}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+            >
+              <RefreshCw size={16} className={syncingAll ? 'animate-spin' : ''} />
+              <span>{syncingAll ? 'Syncing...' : filterBatchId ? 'Sync Active Batch' : 'Sync All Students'}</span>
+            </button>
+
+            {canManage && (
+              <button
+                className="btn-primary"
+                onClick={handleOpenCreateModal}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                <UserPlus size={16} />
+                <span>Add Student Record</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {syncNotice && (
+          <div style={{
+            padding: '0.75rem 1rem',
+            backgroundColor: 'rgba(16, 185, 129, 0.15)',
+            border: '1px solid rgba(16, 185, 129, 0.3)',
+            borderRadius: 'var(--radius-sm)',
+            color: '#34d399',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            fontSize: '0.875rem'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <CheckCircle2 size={16} />
+              <span>{syncNotice}</span>
+            </div>
+            <button onClick={() => setSyncNotice(null)} style={{ background: 'none', border: 'none', color: '#34d399', cursor: 'pointer' }}>
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
+        {/* Filter Bar */}
+        <div className="glass-panel" style={{ padding: '1rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ position: 'relative', flex: '1 1 200px' }}>
+            <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+            <input
+              type="text"
+              className="form-input"
+              placeholder="Search reg no, name..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ paddingLeft: '2.25rem', width: '100%' }}
+            />
+          </div>
+
+          <select
+            className="form-input"
+            value={filterBatchId}
+            onChange={(e) => {
+              const selectedBatchId = e.target.value;
+              setFilterBatchId(selectedBatchId);
+              setFilterSectionId('');
+              setFilterAllocBatchId('');
+              if (selectedBatchId) {
+                const b = batches.find((item) => item.id === selectedBatchId);
+                if (b && b.department) setFilterDept(b.department);
+              }
+            }}
+            style={{ flex: '1 1 140px' }}
+          >
+            <option value="">Academic Year (All)</option>
+            {batches.map((b) => (
+              <option key={b.id} value={b.id}>{b.batch_name}</option>
+            ))}
+          </select>
+
+          <select
+            className="form-input"
+            value={filterDept}
+            onChange={(e) => {
+              setFilterDept(e.target.value);
+              setFilterSectionId('');
+              setFilterAllocBatchId('');
+            }}
+            style={{ flex: '1 1 120px' }}
+          >
+            <option value="">Department (All)</option>
+            {Array.from(
+              new Set(
+                (filterBatchId
+                  ? batches.filter((b) => b.id === filterBatchId)
+                  : batches
+                ).map((b) => b.department)
+              )
+            ).filter(Boolean).sort().map((dept) => (
+              <option key={dept} value={dept}>{dept}</option>
+            ))}
+          </select>
+
+          <select
+            className="form-input"
+            value={filterSectionId}
+            onChange={(e) => {
+              setFilterSectionId(e.target.value);
+              setFilterAllocBatchId('');
+            }}
+            style={{ flex: '1 1 130px' }}
+          >
+            <option value="">Section (All)</option>
+            {batches
+              .filter((b) => (!filterBatchId || b.id === filterBatchId) && (!filterDept || b.department === filterDept))
+              .flatMap((b) => b.sections || [])
+              .map((sec) => (
+                <option key={sec.id} value={sec.id}>Section {sec.name}</option>
+              ))}
+          </select>
+
+          <select
+            className="form-input"
+            value={filterAllocBatchId}
+            onChange={(e) => setFilterAllocBatchId(e.target.value)}
+            disabled={!filterSectionId}
+            style={{ flex: '1 1 150px' }}
+          >
+            <option value="">Allocation Batch (All)</option>
+            {filterAllocBatches.map((ab) => (
+              <option key={ab.id} value={ab.id}>{ab.name}</option>
+            ))}
+          </select>
+
+          <select
+            className="form-input"
+            value={filterMentorId}
+            onChange={(e) => setFilterMentorId(e.target.value)}
+            style={{ flex: '1 1 140px' }}
+          >
+            <option value="">Mentor (All Staff)</option>
+            {staffList.map((stf) => (
+              <option key={stf.id} value={stf.id}>{stf.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {loading && (
+          <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+            <Loader2 className="animate-spin" size={24} style={{ margin: '0 auto 0.5rem auto', color: 'var(--primary)' }} />
+            <span>Loading student records...</span>
+          </div>
+        )}
+
+        {error && (
+          <div style={{ padding: '1rem', backgroundColor: 'rgba(239, 68, 68, 0.12)', color: '#f87171', borderRadius: 'var(--radius-sm)' }}>
+            {error}
+          </div>
+        )}
+
+        {!loading && (
+          <div className="glass-panel table-responsive-container">
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+                  <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Register Number</th>
+                  <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Student Name</th>
+                  <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Department</th>
+                  <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Batch</th>
+                  <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Section</th>
+                  <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Allocation Batch</th>
+                  <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Mentor (Staff)</th>
+                  <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>LeetCode Handle</th>
+                  {canManage && <th style={{ padding: '1rem', textAlign: 'right', whiteSpace: 'nowrap' }}>Actions</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {students.length === 0 ? (
+                  <tr>
+                    <td colSpan={canManage ? 9 : 8} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                      {search || filterBatchId ? 'No students match your filter criteria.' : 'No students yet.'}
+                    </td>
+                  </tr>
+                ) : (
+                  students.map((student) => (
+                    <tr
+                      key={student.id}
+                      onClick={() => navigate(`/students/${student.id}`)}
+                      style={{ borderBottom: '1px solid var(--border-subtle)', cursor: 'pointer', transition: 'var(--transition-fast)' }}
+                    >
+                      <td style={{ padding: '1rem', fontWeight: 700, color: 'var(--primary)', whiteSpace: 'nowrap' }}>
+                        {student.register_number}
+                      </td>
+                      <td style={{ padding: '1rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
+                        {student.name}
+                      </td>
+                      <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                        {student.department}
+                      </td>
+                      <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                        {student.batch?.batch_name || 'N/A'}
+                      </td>
+                      <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                        Section {student.section?.name || 'N/A'}
+                      </td>
+                      <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: 'rgba(255, 255, 255, 0.06)', padding: '0.2rem 0.55rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600 }}>
+                          {student.allocation_batch?.name || student.sub_batch || '-'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                        {student.mentor?.name ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', backgroundColor: 'rgba(99, 102, 241, 0.12)', color: '#818cf8', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600 }}>
+                            <UserCheck size={13} />
+                            <span>{student.mentor.name}</span>
+                          </span>
+                        ) : (
+                          <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Unassigned</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '1rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        {student.leetcode_username ? `@${student.leetcode_username}` : 'Not linked'}
+                      </td>
+                      {canManage && (
+                        <td style={{ padding: '1rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          <div style={{ display: 'inline-flex', gap: '0.5rem' }}>
+                            <button
+                              onClick={(e) => handleOpenEditModal(student, e)}
+                              className="touch-target"
+                              style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '0.4rem' }}
+                              title="Edit Student"
+                            >
+                              <Edit2 size={16} />
+                            </button>
+                            {isAdmin && (
+                              <button
+                                onClick={(e) => handleDeleteStudent(student, e)}
+                                className="touch-target"
+                                style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', padding: '0.4rem' }}
+                                title="Delete Student"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Add / Edit Student Modal */}
+      {showStudentModal && (
+        <div className="modal-overlay-responsive">
+          <div className="glass-panel modal-card-responsive" style={{ width: '100%', maxWidth: '480px', padding: '2rem' }}>
+            <h3 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '1.5rem' }}>
+              {editingStudentId ? 'Edit Student Record' : 'Add Student Record'}
+            </h3>
+            <form onSubmit={handleSaveStudent}>
+              <div className="form-group">
+                <label className="form-label">Register Number (Unique)</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. 814723104029"
+                  value={studentForm.register_number}
+                  onChange={(e) => setStudentForm({ ...studentForm, register_number: e.target.value })}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Full Name</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. John Doe"
+                  value={studentForm.name}
+                  onChange={(e) => setStudentForm({ ...studentForm, name: e.target.value })}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Department</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={studentForm.department}
+                  onChange={(e) => setStudentForm({ ...studentForm, department: e.target.value })}
+                  required
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div className="form-group">
+                  <label className="form-label">Batch</label>
+                  <select
+                    className="form-input"
+                    value={studentForm.batch_id}
+                    onChange={(e) => {
+                      const bId = e.target.value;
+                      setStudentForm({ ...studentForm, batch_id: bId, section_id: '' });
+                    }}
+                    required
+                  >
+                    <option value="">Select Batch</option>
+                    {batches.map((b) => (
+                      <option key={b.id} value={b.id}>{b.batch_name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Section</label>
+                  <select
+                    className="form-input"
+                    value={studentForm.section_id}
+                    onChange={(e) => setStudentForm({ ...studentForm, section_id: e.target.value })}
+                    required
+                  >
+                    <option value="">Select Section</option>
+                    {batches.find((b) => b.id === studentForm.batch_id)?.sections?.map((sec) => (
+                      <option key={sec.id} value={sec.id}>Section {sec.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div className="form-group">
+                  <label className="form-label">Current Year (Optional)</label>
+                  <select
+                    className="form-input"
+                    value={studentForm.current_year}
+                    onChange={(e) => setStudentForm({ ...studentForm, current_year: e.target.value })}
+                  >
+                    <option value="">Select Year</option>
+                    <option value="1st Year">1st Year</option>
+                    <option value="2nd Year">2nd Year</option>
+                    <option value="3rd Year">3rd Year</option>
+                    <option value="4th Year">4th Year</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Allocation Batch (Optional)</label>
+                  <select
+                    className="form-input"
+                    value={studentForm.allocation_batch_id || studentForm.sub_batch}
+                    onChange={(e) => {
+                      const selectedVal = e.target.value;
+                      const availList = formAllocBatches.length > 0
+                        ? formAllocBatches
+                        : batches
+                            .find((b) => b.id === studentForm.batch_id)
+                            ?.sections?.find((sec) => sec.id === studentForm.section_id)
+                            ?.allocation_batches || [];
+                      const matchingAb = availList.find((b: any) => b.id === selectedVal || b.name === selectedVal);
+
+                      setStudentForm({
+                        ...studentForm,
+                        allocation_batch_id: matchingAb?.id || selectedVal,
+                        sub_batch: matchingAb?.name || selectedVal,
+                      });
+                    }}
+                  >
+                    <option value="">Select Allocation Batch</option>
+                    {(formAllocBatches.length > 0
+                      ? formAllocBatches
+                      : batches
+                          .find((b) => b.id === studentForm.batch_id)
+                          ?.sections?.find((sec) => sec.id === studentForm.section_id)
+                          ?.allocation_batches || []
+                    ).map((ab: any) => (
+                      <option key={ab.id || ab.name} value={ab.id || ab.name}>{ab.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Mentor (Staff)</label>
+                <select
+                  className="form-input"
+                  value={studentForm.mentor_id}
+                  onChange={(e) => setStudentForm({ ...studentForm, mentor_id: e.target.value })}
+                >
+                  <option value="">Select Mentor</option>
+                  {staffList
+                    .filter((stf) => stf.is_active || stf.isActive)
+                    .map((stf) => (
+                      <option key={stf.id} value={stf.id}>
+                        {stf.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">LeetCode Username *</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. johndoe_code"
+                  value={studentForm.leetcode_username}
+                  onChange={(e) => setStudentForm({ ...studentForm, leetcode_username: e.target.value })}
+                  required
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.5rem' }}>
+                <button type="button" className="btn-secondary" onClick={() => setShowStudentModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary" disabled={submitting}>
+                  {editingStudentId ? 'Update Student' : 'Add Student'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </Layout>
+  );
+};

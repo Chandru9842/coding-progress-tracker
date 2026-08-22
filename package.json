@@ -1,0 +1,30 @@
+{
+  "name": "coding-progress-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Faculty coding progress tracking web application",
+  "scripts": {
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "build:server": "npm --prefix server run build",
+    "build:client": "npm --prefix client run build",
+    "build": "npm run build:server && npm run build:client",
+    "lint:server": "npm --prefix server run lint",
+    "lint:client": "npm --prefix client run lint",
+    "lint": "npm run lint:server && npm run lint:client",
+    "prisma:generate": "npm --prefix server run prisma:generate",
+    "prisma:push": "npm --prefix server run prisma:push",
+    "test": "npm --prefix server run test",
+    "test:unit": "npm --prefix server run test:unit",
+    "test:integration": "npm --prefix server run test:integration",
+    "test:security": "npm --prefix server run test:security",
+    "test:regression": "npm --prefix server run test:regression",
+    "verify": "npm run lint && npm run prisma:generate && npm test && npm run build",
+    "vercel-build": "npm run prisma:generate && npm run build"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.4.5"
+  }
+}

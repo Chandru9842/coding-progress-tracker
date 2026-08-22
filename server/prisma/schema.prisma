@@ -1,0 +1,230 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  STAFF
+}
+
+enum AssignmentMode {
+  ALL
+  SELECTED
+}
+
+model User {
+  id                        String                   @id @default(uuid())
+  name                      String
+  email                     String                   @unique
+  password_hash             String
+  role                      UserRole                 @default(STAFF)
+  is_active                 Boolean                  @default(true)
+  created_at                DateTime                 @default(now())
+  updated_at                DateTime                 @updatedAt
+  staff_batch_assignments   StaffBatchAssignment[]
+  staff_section_assignments StaffSectionAssignment[]
+  staff_student_assignments StaffStudentAssignment[]
+  generated_reports         GeneratedReport[]
+  google_sheet_links        GoogleSheetLink[]
+
+  @@map("users")
+}
+
+model Batch {
+  id                      String                 @id @default(uuid())
+  batch_name              String
+  start_year              Int
+  end_year                Int
+  department              String
+  created_at              DateTime               @default(now())
+  updated_at              DateTime               @updatedAt
+  sections                Section[]
+  students                Student[]
+  staff_batch_assignments StaffBatchAssignment[]
+  generated_reports       GeneratedReport[]
+
+  @@map("batches")
+}
+
+model StaffBatchAssignment {
+  id         String   @id @default(uuid())
+  staff_id   String
+  batch_id   String
+  created_at DateTime @default(now())
+
+  staff User  @relation(fields: [staff_id], references: [id], onDelete: Cascade)
+  batch Batch @relation(fields: [batch_id], references: [id], onDelete: Cascade)
+
+  @@unique([staff_id, batch_id])
+  @@map("staff_batch_assignments")
+}
+
+model Section {
+  id                        String                   @id @default(uuid())
+  batch_id                  String
+  name                      String
+  created_at                DateTime                 @default(now())
+  updated_at                DateTime                 @updatedAt
+  batch                     Batch                    @relation(fields: [batch_id], references: [id], onDelete: Cascade)
+  allocation_batches        AllocationBatch[]
+  students                  Student[]
+  staff_section_assignments StaffSectionAssignment[]
+  generated_reports         GeneratedReport[]
+
+  @@unique([batch_id, name])
+  @@map("sections")
+}
+
+model AllocationBatch {
+  id                        String                   @id @default(uuid())
+  section_id                String
+  name                      String
+  created_at                DateTime                 @default(now())
+  updated_at                DateTime                 @updatedAt
+  section                   Section                  @relation(fields: [section_id], references: [id], onDelete: Cascade)
+  students                  Student[]
+  staff_section_assignments StaffSectionAssignment[]
+
+  @@unique([section_id, name])
+  @@map("allocation_batches")
+}
+
+model Student {
+  id                        String                   @id @default(uuid())
+  register_number           String                   @unique
+  name                      String
+  department                String
+  batch_id                  String
+  section_id                String
+  allocation_batch_id       String?
+  sub_batch                 String?
+  current_year              String?
+  leetcode_username         String?
+  created_at                DateTime                 @default(now())
+  updated_at                DateTime                 @updatedAt
+  batch                     Batch                    @relation(fields: [batch_id], references: [id], onDelete: Cascade)
+  section                   Section                  @relation(fields: [section_id], references: [id], onDelete: Cascade)
+  allocation_batch          AllocationBatch?         @relation(fields: [allocation_batch_id], references: [id], onDelete: SetNull)
+  snapshots                 DailyCodingSnapshot[]
+  staff_student_assignments StaffStudentAssignment[]
+
+  @@index([batch_id])
+  @@index([section_id])
+  @@index([allocation_batch_id])
+  @@index([department])
+  @@map("students")
+}
+
+model StaffSectionAssignment {
+  id                  String           @id @default(uuid())
+  staff_id            String
+  section_id          String
+  allocation_batch_id String?
+  assignment_mode     AssignmentMode   @default(ALL)
+  created_at          DateTime         @default(now())
+
+  staff            User             @relation(fields: [staff_id], references: [id], onDelete: Cascade)
+  section          Section          @relation(fields: [section_id], references: [id], onDelete: Cascade)
+  allocation_batch AllocationBatch? @relation(fields: [allocation_batch_id], references: [id], onDelete: SetNull)
+
+  @@unique([staff_id, section_id, allocation_batch_id])
+  @@index([staff_id])
+  @@index([section_id])
+  @@map("staff_section_assignments")
+}
+
+model StaffStudentAssignment {
+  id         String   @id @default(uuid())
+  staff_id   String
+  student_id String
+  created_at DateTime @default(now())
+
+  staff   User    @relation(fields: [staff_id], references: [id], onDelete: Cascade)
+  student Student @relation(fields: [student_id], references: [id], onDelete: Cascade)
+
+  @@unique([staff_id, student_id])
+  @@index([staff_id])
+  @@index([student_id])
+  @@map("staff_student_assignments")
+}
+
+model DailyCodingSnapshot {
+  id            String   @id @default(uuid())
+  student_id    String
+  snapshot_date DateTime @db.Date
+  easy_solved   Int      @default(0)
+  medium_solved Int      @default(0)
+  hard_solved   Int      @default(0)
+  total_solved  Int      @default(0)
+  created_at    DateTime @default(now())
+  student       Student  @relation(fields: [student_id], references: [id], onDelete: Cascade)
+
+  @@unique([student_id, snapshot_date])
+  @@index([student_id])
+  @@index([snapshot_date])
+  @@map("daily_coding_snapshots")
+}
+
+model GeneratedReport {
+  id                    String    @id @default(uuid())
+  generated_by_staff_id String
+  batch_id              String?
+  section_id            String?
+  report_type           String
+  from_date             DateTime? @db.Date
+  to_date               DateTime? @db.Date
+  file_name             String
+  generated_at          DateTime  @default(now())
+  staff                 User      @relation(fields: [generated_by_staff_id], references: [id], onDelete: Cascade)
+  batch                 Batch?    @relation(fields: [batch_id], references: [id], onDelete: SetNull)
+  section               Section?  @relation(fields: [section_id], references: [id], onDelete: SetNull)
+
+  @@map("generated_reports")
+}
+
+model GoogleSheetLink {
+  id                    String                   @id @default(uuid())
+  owner_user_id         String
+  name                  String
+  spreadsheet_id        String
+  spreadsheet_name      String?
+  spreadsheet_url       String?
+  academic_year         String?
+  department            String?
+  section_id            String?
+  allocation_batch_id   String?
+  batch_ids             String[]
+  is_active             Boolean                  @default(true)
+  is_auto_sync_enabled  Boolean                  @default(true)
+  sync_students         Boolean                  @default(true)
+  sync_daily_progress   Boolean                  @default(true)
+  last_sync_at          DateTime?
+  last_sync_status      String?
+  last_sync_error       String?
+  created_at            DateTime                 @default(now())
+  updated_at            DateTime                 @updatedAt
+  owner                 User                     @relation(fields: [owner_user_id], references: [id], onDelete: Cascade)
+  google_sheet_link_logs GoogleSheetLinkSyncLog[]
+
+  @@index([owner_user_id])
+  @@map("google_sheet_links")
+}
+
+model GoogleSheetLinkSyncLog {
+  id            String          @id @default(uuid())
+  sheet_link_id String
+  status        String
+  rows_synced   Int             @default(0)
+  details       String?
+  error_message String?
+  synced_at     DateTime        @default(now())
+  sheet_link    GoogleSheetLink @relation(fields: [sheet_link_id], references: [id], onDelete: Cascade)
+
+  @@index([sheet_link_id])
+  @@map("google_sheet_link_sync_logs")
+}

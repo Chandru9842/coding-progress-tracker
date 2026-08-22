@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "crons": [
+    {
+      "path": "/api/v1/cron/daily-sync",
+      "schedule": "30 18 * * *"
+    }
+  ]
+}
