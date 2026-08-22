@@ -2,7 +2,12 @@
 
 > **Enterprise-Grade College Faculty Analytics Dashboard, LeetCode Progress Reconciliation Engine & Zero-Click Google Sheets Automation Platform.**
 
-Developed & Engineered by **[Chandru M](https://github.com/Chandru9842)**
+---
+
+### 👨‍💻 Engineering & Live Production
+- **Lead Software Engineer**: **[Chandru M](https://github.com/Chandru9842)**
+- **GitHub Repository**: **[https://github.com/Chandru9842/coding-progress-tracker](https://github.com/Chandru9842/coding-progress-tracker)**
+- **Live Vercel Production Web App**: **[https://coding-progress-tracker-navy.vercel.app](https://coding-progress-tracker-navy.vercel.app)**
 
 ---
 
@@ -30,9 +35,10 @@ graph TD
     Cron["⏰ Vercel Daily Cron / Internal Timer (3:00 AM IST)"] -->|Trigger| ReconcileEngine["🔄 LeetCode Reconciliation Engine"]
     ReconcileEngine -->|GraphQL Query| LeetCode["🧩 LeetCode Public GraphQL API"]
     ReconcileEngine -->|Store Daily Snapshots| Database
-    ReconcileEngine -->|POST JSON (text/plain)| AppsScript["📜 Google Apps Script Web App"]
+    ReconcileEngine -->|"POST JSON (text/plain)"| AppsScript["📜 Google Apps Script Web App"]
     AppsScript -->|Clear & Append Rows| GoogleSheet["📊 Linked Google Sheet"]
 ```
+
 
 ---
 
