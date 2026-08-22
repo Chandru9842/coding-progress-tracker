@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
 import { studentApi, batchApi, staffApi, syncApi, Student, Batch, StaffUser } from '../services/api.js';
-import { Users, UserPlus, Search, Edit2, Trash2, Loader2, Filter, RefreshCw, X, CheckCircle2, UserCheck } from 'lucide-react';
+import { Users, UserPlus, Search, Edit2, Trash2, Loader2, Filter, RefreshCw, X, CheckCircle2, UserCheck, ShieldAlert } from 'lucide-react';
 
 export const StudentsPage: React.FC = () => {
   const { user } = useAuth();
@@ -31,6 +31,9 @@ export const StudentsPage: React.FC = () => {
   // Selection & Bulk Action States
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState<boolean>(false);
+  const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
+  const [studentToDelete, setStudentToDelete] = useState<Student | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Modal States
   const [showStudentModal, setShowStudentModal] = useState<boolean>(false);
@@ -53,7 +56,6 @@ export const StudentsPage: React.FC = () => {
     try {
       if (students.length === 0) setLoading(true);
       const data = await studentApi.getStudents({
-
         batchId: filterBatchId || undefined,
         sectionId: filterSectionId || undefined,
         department: filterDept || undefined,
@@ -96,18 +98,48 @@ export const StudentsPage: React.FC = () => {
   const handleConfirmBulkDelete = async () => {
     if (selectedStudentIds.size === 0) return;
     const toDeleteSet = new Set(selectedStudentIds);
-    setStudents((prev) => prev.filter((s) => !toDeleteSet.has(s.id)));
-    setShowBulkDeleteModal(false);
-    setSelectedStudentIds(new Set());
     try {
+      setSubmitting(true);
       await studentApi.bulkDeleteStudents(Array.from(toDeleteSet));
+      setStudents((prev) => prev.filter((s) => !toDeleteSet.has(s.id)));
+      setShowBulkDeleteModal(false);
+      setSelectedStudentIds(new Set());
     } catch (err: any) {
       fetchStudents();
       alert(err.response?.data?.error || 'Failed to delete selected students');
+    } finally {
+      setSubmitting(false);
     }
   };
 
+  const handleOpenDeleteStudent = (student: Student, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setStudentToDelete(student);
+    setDeleteError(null);
+    setShowDeleteModal(true);
+  };
 
+  const handleConfirmDeleteStudent = async () => {
+    if (!studentToDelete) return;
+    const deletedId = studentToDelete.id;
+    try {
+      setSubmitting(true);
+      setDeleteError(null);
+      await studentApi.deleteStudent(deletedId);
+      setStudents((prev) => prev.filter((s) => s.id !== deletedId));
+      setSelectedStudentIds((prev) => {
+        const next = new Set(prev);
+        next.delete(deletedId);
+        return next;
+      });
+      setShowDeleteModal(false);
+      setStudentToDelete(null);
+    } catch (err: any) {
+      setDeleteError(err.response?.data?.error || 'Failed to delete student record');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     fetchStudents();
@@ -232,20 +264,6 @@ export const StudentsPage: React.FC = () => {
       setSubmitting(false);
     }
   };
-
-  const handleDeleteStudent = async (student: Student, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!window.confirm(`Are you sure you want to delete student ${student.name} (${student.register_number})?`)) return;
-    const deletedId = student.id;
-    setStudents((prev) => prev.filter((s) => s.id !== deletedId));
-    try {
-      await studentApi.deleteStudent(deletedId);
-    } catch (err: any) {
-      fetchStudents();
-      alert(err.response?.data?.error || 'Failed to delete student');
-    }
-  };
-
 
   return (
     <Layout title="Student Management">
@@ -461,28 +479,26 @@ export const StudentsPage: React.FC = () => {
                 Clear Selection
               </button>
 
-              {isAdmin && (
-                <button
-                  type="button"
-                  onClick={() => setShowBulkDeleteModal(true)}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '0.4rem',
-                    padding: '0.4rem 0.85rem',
-                    backgroundColor: '#ef4444',
-                    color: '#ffffff',
-                    border: 'none',
-                    borderRadius: 'var(--radius-sm)',
-                    fontWeight: 600,
-                    fontSize: '0.85rem',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <Trash2 size={15} />
-                  <span>Delete Selected ({selectedStudentIds.size})</span>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => setShowBulkDeleteModal(true)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  padding: '0.4rem 0.85rem',
+                  backgroundColor: '#ef4444',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: 'var(--radius-sm)',
+                  fontWeight: 600,
+                  fontSize: '0.85rem',
+                  cursor: 'pointer',
+                }}
+              >
+                <Trash2 size={15} />
+                <span>Delete Selected ({selectedStudentIds.size})</span>
+              </button>
             </div>
           </div>
         )}
@@ -590,16 +606,14 @@ export const StudentsPage: React.FC = () => {
                               >
                                 <Edit2 size={16} />
                               </button>
-                              {isAdmin && (
-                                <button
-                                  onClick={(e) => handleDeleteStudent(student, e)}
-                                  className="touch-target"
-                                  style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', padding: '0.4rem' }}
-                                  title="Delete Student"
-                                >
-                                  <Trash2 size={16} />
-                                </button>
-                              )}
+                              <button
+                                onClick={(e) => handleOpenDeleteStudent(student, e)}
+                                className="touch-target"
+                                style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', padding: '0.4rem' }}
+                                title="Delete Student"
+                              >
+                                <Trash2 size={16} />
+                              </button>
                             </div>
                           </td>
                         )}
@@ -612,6 +626,58 @@ export const StudentsPage: React.FC = () => {
           </div>
         )}
 
+        {/* SINGLE DELETE STUDENT CONFIRMATION MODAL */}
+        {showDeleteModal && studentToDelete && (
+          <div className="modal-overlay-responsive">
+            <div className="glass-panel modal-card-responsive" style={{ maxWidth: '440px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#f87171', marginBottom: '1rem' }}>
+                <ShieldAlert size={26} />
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Delete Student Record</h3>
+              </div>
+
+              {deleteError && (
+                <div style={{ padding: '0.75rem', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#f87171', borderRadius: 'var(--radius-sm)', marginBottom: '1rem', fontSize: '0.85rem' }}>
+                  {deleteError}
+                </div>
+              )}
+
+              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: '1.5' }}>
+                Are you sure you want to delete student <strong style={{ color: 'var(--text-primary)' }}>{studentToDelete.name}</strong> (<span style={{ fontFamily: 'monospace' }}>{studentToDelete.register_number}</span>)?
+              </p>
+              <p style={{ fontSize: '0.825rem', color: '#f87171', backgroundColor: 'rgba(248, 113, 113, 0.1)', padding: '0.65rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.5rem' }}>
+                ⚠️ Warning: This will permanently remove this student record and all their associated daily coding snapshots.
+              </p>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => { setShowDeleteModal(false); setStudentToDelete(null); }}
+                  disabled={submitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDeleteStudent}
+                  disabled={submitting}
+                  style={{
+                    padding: '0.6rem 1.25rem',
+                    backgroundColor: '#ef4444',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: 'var(--radius-sm)',
+                    fontWeight: 600,
+                    cursor: submitting ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {submitting ? 'Deleting...' : 'Confirm Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* BULK DELETE CONFIRMATION MODAL */}
         {showBulkDeleteModal && (
           <div className="modal-overlay-responsive">
@@ -620,7 +686,6 @@ export const StudentsPage: React.FC = () => {
                 <Trash2 size={26} />
                 <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Delete Selected Students</h3>
               </div>
-
 
               <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: '1.5' }}>
                 Are you sure you want to delete <strong style={{ color: 'var(--primary)' }}>{selectedStudentIds.size} selected student(s)</strong>?

@@ -1,17 +1,23 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
+import { useAuth } from '../context/AuthContext.js';
 import { studentApi, syncApi, Student, DailySnapshot } from '../services/api.js';
-import { ArrowLeft, User, ShieldAlert, Code2, GraduationCap, Layers, Loader2, Activity, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, User, ShieldAlert, Code2, GraduationCap, Layers, Loader2, Activity, RefreshCw, CheckCircle2, Trash2 } from 'lucide-react';
 
 export const StudentDetailPage: React.FC = () => {
   const { studentId } = useParams<{ studentId: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const canManage = user?.role === 'ADMIN' || user?.role === 'STAFF';
 
   const [student, setStudent] = useState<Student | null>(null);
   const [snapshots, setSnapshots] = useState<DailySnapshot[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [syncing, setSyncing] = useState<boolean>(false);
+  const [deleting, setDeleting] = useState<boolean>(false);
+  const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,6 +64,20 @@ export const StudentDetailPage: React.FC = () => {
     }
   };
 
+  const handleConfirmDelete = async () => {
+    if (!studentId) return;
+    try {
+      setDeleting(true);
+      setDeleteError(null);
+      await studentApi.deleteStudent(studentId);
+      navigate('/students');
+    } catch (err: any) {
+      setDeleteError(err.response?.data?.error || 'Failed to delete student');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const latestSnapshot = snapshots.length > 0 ? snapshots[0] : null;
 
   return (
@@ -93,7 +113,7 @@ export const StudentDetailPage: React.FC = () => {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
             {/* Metadata Header Card */}
             <div className="glass-panel" style={{ padding: '2rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '1.5rem', marginBottom: '1.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '1.5rem', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                   <div style={{
                     width: '54px', height: '54px', borderRadius: '50%',
@@ -110,17 +130,40 @@ export const StudentDetailPage: React.FC = () => {
                   </div>
                 </div>
 
-                {student.leetcode_username && (
-                  <button
-                    className="btn-primary"
-                    onClick={handleSyncNow}
-                    disabled={syncing}
-                    style={{ fontSize: '0.85rem' }}
-                  >
-                    {syncing ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />}
-                    <span>{syncing ? 'Syncing...' : 'Sync LeetCode Data'}</span>
-                  </button>
-                )}
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  {student.leetcode_username && (
+                    <button
+                      className="btn-primary"
+                      onClick={handleSyncNow}
+                      disabled={syncing || deleting}
+                      style={{ fontSize: '0.85rem' }}
+                    >
+                      {syncing ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />}
+                      <span>{syncing ? 'Syncing...' : 'Sync LeetCode Data'}</span>
+                    </button>
+                  )}
+
+                  {canManage && (
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => { setDeleteError(null); setShowDeleteModal(true); }}
+                      disabled={syncing || deleting}
+                      style={{
+                        fontSize: '0.85rem',
+                        color: '#f87171',
+                        borderColor: 'rgba(239, 68, 68, 0.3)',
+                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.4rem',
+                      }}
+                    >
+                      <Trash2 size={16} />
+                      <span>Delete Student</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
               {syncMessage && (
@@ -295,6 +338,58 @@ export const StudentDetailPage: React.FC = () => {
                       })}
                     </tbody>
                   </table>
+                </div>
+              </div>
+            )}
+
+            {/* SINGLE DELETE STUDENT CONFIRMATION MODAL */}
+            {showDeleteModal && student && (
+              <div className="modal-overlay-responsive">
+                <div className="glass-panel modal-card-responsive" style={{ maxWidth: '440px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#f87171', marginBottom: '1rem' }}>
+                    <ShieldAlert size={26} />
+                    <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Delete Student Record</h3>
+                  </div>
+
+                  {deleteError && (
+                    <div style={{ padding: '0.75rem', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#f87171', borderRadius: 'var(--radius-sm)', marginBottom: '1rem', fontSize: '0.85rem' }}>
+                      {deleteError}
+                    </div>
+                  )}
+
+                  <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: '1.5' }}>
+                    Are you sure you want to delete student <strong style={{ color: 'var(--text-primary)' }}>{student.name}</strong> (<span style={{ fontFamily: 'monospace' }}>{student.register_number}</span>)?
+                  </p>
+                  <p style={{ fontSize: '0.825rem', color: '#f87171', backgroundColor: 'rgba(248, 113, 113, 0.1)', padding: '0.65rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.5rem' }}>
+                    ⚠️ Warning: This will permanently remove this student record and all their associated daily coding snapshots.
+                  </p>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => setShowDeleteModal(false)}
+                      disabled={deleting}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleConfirmDelete}
+                      disabled={deleting}
+                      style={{
+                        padding: '0.6rem 1.25rem',
+                        backgroundColor: '#ef4444',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: 'var(--radius-sm)',
+                        fontWeight: 600,
+                        cursor: deleting ? 'not-allowed' : 'pointer',
+                      }}
+                    >
+                      {deleting ? 'Deleting...' : 'Confirm Delete'}
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
