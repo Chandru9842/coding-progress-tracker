@@ -227,6 +227,35 @@ h1, h2, h3, h4 {
   display: flex !important;
 }
 
+/* Global Fixed Modal Overlay System (Applies to Desktop, Tablet & Mobile) */
+.modal-overlay-responsive {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  background-color: rgba(0, 0, 0, 0.8) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  z-index: 99999 !important;
+  padding: 1.25rem !important;
+}
+
+.modal-card-responsive {
+  width: 100% !important;
+  max-width: min(850px, 94vw) !important;
+  max-height: 90vh !important;
+  overflow-y: auto !important;
+  padding: 2rem !important;
+  border-radius: var(--radius-md) !important;
+  position: relative !important;
+  z-index: 100000 !important;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.85), 0 0 30px rgba(99, 102, 241, 0.25) !important;
+}
+
 @media (max-width: 1024px) {
   .sidebar-container {
     position: fixed !important;
@@ -267,35 +296,15 @@ h1, h2, h3, h4 {
     font-size: 1.2rem !important;
   }
 
-  /* Responsive Modal Overlays for Tablet & Mobile */
-  .modal-overlay-responsive {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: rgba(0, 0, 0, 0.75);
-    backdrop-filter: blur(6px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    padding: 1.25rem;
-  }
-
   .modal-card-responsive {
-    width: 100% !important;
-    max-width: min(720px, 92vw) !important;
-    max-height: 90vh !important;
-    overflow-y: auto !important;
-    padding: 1.5rem !important;
-    border-radius: var(--radius-md) !important;
+    padding: 1.25rem !important;
   }
 
   .stats-grid-responsive {
     grid-template-columns: repeat(2, 1fr) !important;
   }
 }
+
 
 @media (max-width: 640px) {
   .stats-grid-responsive {

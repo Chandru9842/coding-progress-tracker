@@ -526,18 +526,15 @@ export const StaffManagementPage: React.FC = () => {
 
       {/* CREATE STAFF MODAL */}
       {showCreateModal && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(4px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
-        }}>
-          <div className="glass-panel" style={{ width: '100%', maxWidth: '480px', padding: '2rem' }}>
+        <div className="modal-overlay-responsive">
+          <div className="glass-panel modal-card-responsive" style={{ maxWidth: '480px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Create Staff Account</h3>
               <button onClick={() => setShowCreateModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
                 <X size={20} />
               </button>
             </div>
+
 
             {formError && (
               <div style={{ padding: '0.75rem', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#f87171', borderRadius: 'var(--radius-sm)', marginBottom: '1rem', fontSize: '0.85rem' }}>
@@ -621,18 +618,15 @@ export const StaffManagementPage: React.FC = () => {
 
       {/* EDIT STAFF MODAL */}
       {showEditModal && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(4px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
-        }}>
-          <div className="glass-panel" style={{ width: '100%', maxWidth: '480px', padding: '2rem' }}>
+        <div className="modal-overlay-responsive">
+          <div className="glass-panel modal-card-responsive" style={{ maxWidth: '640px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Edit Staff Account</h3>
               <button onClick={() => setShowEditModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
                 <X size={20} />
               </button>
             </div>
+
 
             {editError && (
               <div style={{ padding: '0.75rem', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#f87171', borderRadius: 'var(--radius-sm)', marginBottom: '1rem', fontSize: '0.85rem' }}>
@@ -823,16 +817,13 @@ export const StaffManagementPage: React.FC = () => {
 
       {/* DELETE STAFF CONFIRMATION MODAL */}
       {showDeleteModal && staffToDelete && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.8)', backdropFilter: 'blur(6px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
-        }}>
-          <div className="glass-panel" style={{ width: '100%', maxWidth: '440px', padding: '2rem' }}>
+        <div className="modal-overlay-responsive">
+          <div className="glass-panel modal-card-responsive" style={{ maxWidth: '440px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#f87171', marginBottom: '1rem' }}>
               <ShieldAlert size={26} />
               <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Delete Staff Account</h3>
             </div>
+
 
             {deleteError && (
               <div style={{ padding: '0.75rem', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#f87171', borderRadius: 'var(--radius-sm)', marginBottom: '1rem', fontSize: '0.85rem' }}>
@@ -874,13 +865,10 @@ export const StaffManagementPage: React.FC = () => {
 
       {/* RESET PASSWORD MODAL */}
       {showPasswordModal && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(4px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
-        }}>
-          <div className="glass-panel" style={{ width: '100%', maxWidth: '400px', padding: '2rem' }}>
+        <div className="modal-overlay-responsive">
+          <div className="glass-panel modal-card-responsive" style={{ maxWidth: '400px' }}>
             <h3 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '1rem' }}>Reset Password</h3>
+
             <form onSubmit={handleResetPassword}>
               <div className="form-group">
                 <label className="form-label">New Password</label>

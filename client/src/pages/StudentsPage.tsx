@@ -610,16 +610,13 @@ export const StudentsPage: React.FC = () => {
 
         {/* BULK DELETE CONFIRMATION MODAL */}
         {showBulkDeleteModal && (
-          <div style={{
-            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.8)', backdropFilter: 'blur(6px)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
-          }}>
-            <div className="glass-panel" style={{ width: '100%', maxWidth: '440px', padding: '2rem' }}>
+          <div className="modal-overlay-responsive">
+            <div className="glass-panel modal-card-responsive" style={{ maxWidth: '440px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#f87171', marginBottom: '1rem' }}>
                 <Trash2 size={26} />
                 <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Delete Selected Students</h3>
               </div>
+
 
               <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: '1.5' }}>
                 Are you sure you want to delete <strong style={{ color: 'var(--primary)' }}>{selectedStudentIds.size} selected student(s)</strong>?
