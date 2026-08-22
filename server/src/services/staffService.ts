@@ -317,6 +317,26 @@ export async function deleteStaff(staffId: string) {
   return { message: 'Staff member deleted successfully' };
 }
 
+export async function bulkDeleteStaff(staffIds: string[]) {
+  if (!process.env.DATABASE_URL) {
+    inMemoryStore.users = inMemoryStore.users.filter((u) => !staffIds.includes(u.id));
+    inMemoryStore.staffBatchAssignments = inMemoryStore.staffBatchAssignments.filter((a) => !staffIds.includes(a.staff_id));
+    inMemoryStore.staffSectionAssignments = inMemoryStore.staffSectionAssignments.filter((a) => !staffIds.includes(a.staff_id));
+    inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter((a) => !staffIds.includes(a.staff_id));
+    return { count: staffIds.length };
+  }
+
+  const result = await prisma.user.deleteMany({
+    where: {
+      id: { in: staffIds },
+      role: 'STAFF',
+    },
+  });
+
+  return { count: result.count };
+}
+
+
 export async function assignBatchesToStaff(staffId: string, batchIds: string[]) {
   if (!process.env.DATABASE_URL) {
     inMemoryStore.staffBatchAssignments = inMemoryStore.staffBatchAssignments.filter((sba) => sba.staff_id !== staffId);

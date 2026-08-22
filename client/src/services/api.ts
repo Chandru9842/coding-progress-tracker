@@ -308,6 +308,12 @@ export const staffApi = {
     await api.delete(`/staff/${staffId}`);
   },
 
+  bulkDeleteStaff: async (staffIds: string[]): Promise<void> => {
+    clearClientCache('staff_');
+    await api.post('/staff/bulk-delete', { staffIds });
+  },
+
+
   updateStatus: async (staffId: string, isActive: boolean): Promise<void> => {
     clearClientCache('staff_');
     await api.patch(`/staff/${staffId}/status`, { isActive });

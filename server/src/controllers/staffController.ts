@@ -70,6 +70,22 @@ export async function deleteStaff(req: AuthenticatedRequest, res: Response): Pro
   }
 }
 
+export async function bulkDeleteStaff(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const { staffIds } = req.body;
+    if (!Array.isArray(staffIds) || staffIds.length === 0) {
+      res.status(400).json({ error: 'staffIds must be a non-empty array' });
+      return;
+    }
+    const result = await staffService.bulkDeleteStaff(staffIds);
+    res.status(200).json({ message: `${result.count} staff members deleted successfully`, count: result.count });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to bulk delete staff members';
+    res.status(400).json({ error: message });
+  }
+}
+
+
 export async function updateStaffStatus(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const { staffId } = req.params;

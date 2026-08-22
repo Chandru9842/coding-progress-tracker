@@ -6,7 +6,9 @@ import {
   createStaff,
   updateStaff,
   deleteStaff,
+  bulkDeleteStaff,
   updateStaffStatus,
+
   resetStaffPassword,
   assignBatches,
   assignSection,
@@ -26,6 +28,7 @@ const router = Router();
 router.get('/staff/me/assigned-scopes', requireAuth, getStaffAssignedScopes);
 router.get('/staff', requireAuth, getStaffList);
 router.post('/staff', requireAuth, requireAdmin, createStaff);
+router.post('/staff/bulk-delete', requireAuth, requireAdmin, bulkDeleteStaff);
 router.get('/staff/:staffId', requireAuth, requireAdmin, getStaffDetail);
 router.patch('/staff/:staffId', requireAuth, requireAdmin, updateStaff);
 router.delete('/staff/:staffId', requireAuth, requireAdmin, deleteStaff);

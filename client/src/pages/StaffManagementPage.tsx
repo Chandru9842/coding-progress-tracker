@@ -19,6 +19,48 @@ export const StaffManagementPage: React.FC = () => {
   const [selectedStaffId, setSelectedStaffId] = useState<string | null>(null);
   const [staffDetail, setStaffDetail] = useState<StaffDetail | null>(null);
 
+  // Bulk Selection States
+  const [selectedStaffIds, setSelectedStaffIds] = useState<Set<string>>(new Set());
+  const [showBulkDeleteStaffModal, setShowBulkDeleteStaffModal] = useState<boolean>(false);
+
+  const handleToggleSelectStaff = (staffId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const next = new Set(selectedStaffIds);
+    if (next.has(staffId)) {
+      next.delete(staffId);
+    } else {
+      next.add(staffId);
+    }
+    setSelectedStaffIds(next);
+  };
+
+  const handleToggleSelectAllStaff = (filteredList: StaffListItem[]) => {
+    if (selectedStaffIds.size === filteredList.length && filteredList.length > 0) {
+      setSelectedStaffIds(new Set());
+    } else {
+      setSelectedStaffIds(new Set(filteredList.map((s) => s.id)));
+    }
+  };
+
+  const handleClearStaffSelection = () => {
+    setSelectedStaffIds(new Set());
+  };
+
+  const handleConfirmBulkDeleteStaff = async () => {
+    if (selectedStaffIds.size === 0) return;
+    const toDeleteSet = new Set(selectedStaffIds);
+    setStaffList((prev) => prev.filter((s) => !toDeleteSet.has(s.id)));
+    setShowBulkDeleteStaffModal(false);
+    setSelectedStaffIds(new Set());
+    try {
+      await staffApi.bulkDeleteStaff(Array.from(toDeleteSet));
+    } catch (err: any) {
+      fetchStaff();
+      alert(err.response?.data?.error || 'Failed to delete selected staff members');
+    }
+  };
+
+
   // Form States - Create Staff
   const [createForm, setCreateForm] = useState({ name: '', email: '', password: '', confirmPassword: '', isActive: true });
   const [formError, setFormError] = useState<string | null>(null);
@@ -406,6 +448,78 @@ export const StaffManagementPage: React.FC = () => {
           </div>
         </div>
 
+        {/* Bulk Action Controls Bar */}
+        {selectedStaffIds.size > 0 && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+
+            backgroundColor: 'rgba(99, 102, 241, 0.12)',
+            border: '1px solid rgba(99, 102, 241, 0.3)',
+            borderRadius: 'var(--radius-sm)',
+            padding: '0.75rem 1.25rem',
+            marginBottom: '1rem',
+            flexWrap: 'wrap',
+            gap: '0.75rem',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <span style={{ fontWeight: 700, color: 'var(--primary)', fontSize: '0.9rem' }}>
+                Selected: {selectedStaffIds.size} staff account(s)
+              </span>
+              <button
+                type="button"
+                onClick={() => handleToggleSelectAllStaff(filteredStaffList)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  fontSize: '0.825rem',
+                  textDecoration: 'underline',
+                }}
+              >
+                {selectedStaffIds.size === filteredStaffList.length ? 'Deselect All' : 'Select All'}
+              </button>
+              <button
+                type="button"
+                onClick={handleClearStaffSelection}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                  fontSize: '0.825rem',
+                  textDecoration: 'underline',
+                }}
+              >
+                Clear Selection
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowBulkDeleteStaffModal(true)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                padding: '0.45rem 0.9rem',
+                backgroundColor: '#ef4444',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: 'var(--radius-sm)',
+                fontWeight: 600,
+                fontSize: '0.85rem',
+                cursor: 'pointer',
+              }}
+            >
+              <Trash2 size={15} />
+              <span>Delete Selected Staff ({selectedStaffIds.size})</span>
+            </button>
+          </div>
+        )}
+
         {/* Staff Table */}
         {loading && !showAssignmentModal && (
           <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
@@ -421,10 +535,19 @@ export const StaffManagementPage: React.FC = () => {
         )}
 
         {!loading && (
-          <div className="glass-panel" style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
+          <div className="glass-panel table-responsive-container">
+            <table style={{ width: '100%', minWidth: '950px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+                  <th style={{ padding: '1rem', width: '40px', textAlign: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={filteredStaffList.length > 0 && selectedStaffIds.size === filteredStaffList.length}
+                      onChange={() => handleToggleSelectAllStaff(filteredStaffList)}
+                      style={{ cursor: 'pointer' }}
+                      title="Select All Staff"
+                    />
+                  </th>
                   <th style={{ padding: '1rem' }}>Name</th>
                   <th style={{ padding: '1rem' }}>Email</th>
                   <th style={{ padding: '1rem' }}>Status</th>
@@ -437,7 +560,7 @@ export const StaffManagementPage: React.FC = () => {
               <tbody>
                 {filteredStaffList.length === 0 ? (
                   <tr>
-                    <td colSpan={7} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    <td colSpan={8} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
                       {staffSearchQuery ? (
                         <>No staff accounts match <strong>"{staffSearchQuery}"</strong>.</>
                       ) : (
@@ -446,29 +569,46 @@ export const StaffManagementPage: React.FC = () => {
                     </td>
                   </tr>
                 ) : (
-                  filteredStaffList.map((staff) => (
-                    <tr key={staff.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                      <td style={{ padding: '1rem', fontWeight: 600, color: 'var(--text-primary)' }}>{staff.name}</td>
-                      <td style={{ padding: '1rem', color: 'var(--text-secondary)' }}>{staff.email}</td>
-                      <td style={{ padding: '1rem' }}>
-                        <span style={{
-                          padding: '0.2rem 0.6rem',
-                          borderRadius: '9999px',
-                          fontSize: '0.75rem',
-                          fontWeight: 700,
-                          backgroundColor: staff.isActive ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                          color: staff.isActive ? '#10b981' : '#f87171',
-                          border: staff.isActive ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
-                        }}>
-                          {staff.isActive ? 'Active' : 'Disabled'}
-                        </span>
-                      </td>
-                      <td style={{ padding: '1rem', color: 'var(--text-primary)' }}>
-                        {staff.assignedBatchesCount} Batch(es)
-                      </td>
-                      <td style={{ padding: '1rem', color: 'var(--text-primary)' }}>
-                        {staff.assignedStudentsCount} Student(s)
-                      </td>
+                  filteredStaffList.map((staff) => {
+                    const isSelected = selectedStaffIds.has(staff.id);
+                    return (
+                      <tr
+                        key={staff.id}
+                        style={{
+                          borderBottom: '1px solid var(--border-subtle)',
+                          backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.08)' : 'transparent',
+                        }}
+                      >
+                        <td style={{ padding: '1rem', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => handleToggleSelectStaff(staff.id, e as any)}
+                            style={{ cursor: 'pointer' }}
+                          />
+                        </td>
+                        <td style={{ padding: '1rem', fontWeight: 600, color: 'var(--text-primary)' }}>{staff.name}</td>
+                        <td style={{ padding: '1rem', color: 'var(--text-secondary)' }}>{staff.email}</td>
+                        <td style={{ padding: '1rem' }}>
+                          <span style={{
+                            padding: '0.2rem 0.6rem',
+                            borderRadius: '9999px',
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            backgroundColor: staff.isActive ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                            color: staff.isActive ? '#10b981' : '#f87171',
+                            border: staff.isActive ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
+                          }}>
+                            {staff.isActive ? 'Active' : 'Disabled'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '1rem', color: 'var(--text-primary)' }}>
+                          {staff.assignedBatchesCount} Batch(es)
+                        </td>
+                        <td style={{ padding: '1rem', color: 'var(--text-primary)' }}>
+                          {staff.assignedStudentsCount} Student(s)
+                        </td>
+
                       <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>
                         {new Date(staff.createdAt).toLocaleDateString()}
                       </td>
@@ -518,8 +658,11 @@ export const StaffManagementPage: React.FC = () => {
                         </div>
                       </td>
                     </tr>
-                  ))
-                )}
+                  );
+                })
+              )}
+
+
               </tbody>
             </table>
           </div>
@@ -864,6 +1007,48 @@ export const StaffManagementPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* BULK DELETE STAFF CONFIRMATION MODAL */}
+      {showBulkDeleteStaffModal && (
+        <div className="modal-overlay-responsive">
+          <div className="glass-panel modal-card-responsive" style={{ maxWidth: '460px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#f87171', marginBottom: '1rem' }}>
+              <Trash2 size={26} />
+              <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Delete Selected Staff Accounts</h3>
+            </div>
+
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: '1.5' }}>
+              Are you sure you want to delete <strong style={{ color: 'var(--primary)' }}>{selectedStaffIds.size} selected staff member(s)</strong>?
+            </p>
+            <p style={{ fontSize: '0.825rem', color: '#f87171', backgroundColor: 'rgba(248, 113, 113, 0.1)', padding: '0.65rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.5rem' }}>
+              ⚠️ Warning: This will permanently remove the selected staff accounts and all their assigned batch/section responsibilities.
+            </p>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button type="button" className="btn-secondary" onClick={() => setShowBulkDeleteStaffModal(false)} disabled={submitting}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmBulkDeleteStaff}
+                disabled={submitting}
+                style={{
+                  padding: '0.6rem 1.25rem',
+                  backgroundColor: '#ef4444',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: 'var(--radius-sm)',
+                  fontWeight: 600,
+                  cursor: submitting ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {submitting ? 'Deleting...' : 'Confirm Bulk Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
 
       {/* RESET PASSWORD MODAL */}
       {showPasswordModal && (
