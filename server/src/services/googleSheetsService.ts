@@ -218,7 +218,8 @@ export function buildGoogleSheetMatrix(
           totalToday = 0;
         }
 
-        const cellContent = `Overall: E-${currSnap.easy_solved} | M-${currSnap.medium_solved} | H-${currSnap.hard_solved} | T-${currSnap.total_solved}\nToday: E-${easyToday} | M-${medToday} | H-${hardToday} | T-${totalToday}`;
+        const cellContent = `Overall: ${currSnap.easy_solved}E | ${currSnap.medium_solved}M | ${currSnap.hard_solved}H | ${currSnap.total_solved}T\nToday: +${easyToday}E | +${medToday}M | +${hardToday}H | +${totalToday}T`;
+
 
 
         baseRow.push(cellContent);
@@ -756,17 +757,24 @@ export async function syncGoogleSheetLink(
   const webhookUrl = (link as any).webhook_url || (link.spreadsheet_id && (link.spreadsheet_id.startsWith('https://script.google.com') || link.spreadsheet_id.includes('/macros/s/')) ? link.spreadsheet_id : null);
   if (webhookUrl) {
     try {
-      await axios.post(webhookUrl, {
+      const payloadString = JSON.stringify({
         headers: matrix.headers,
         rows: matrix.rows,
         studentCount: matrix.studentCount,
         updatedAt: now.toISOString(),
       });
-      console.log(`[GOOGLE_SHEETS] Successfully posted matrix data to Apps Script Webhook [${webhookUrl}]`);
+      const whRes = await axios.post(webhookUrl, payloadString, {
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8',
+        },
+        maxRedirects: 5,
+      });
+      console.log(`[GOOGLE_SHEETS] Successfully posted matrix data to Apps Script Webhook [${webhookUrl}], Response: ${whRes.data}`);
     } catch (whErr: any) {
       console.error('[GOOGLE_SHEETS] Apps Script Webhook POST warning:', whErr?.message || whErr);
     }
   }
+
 
 
 
