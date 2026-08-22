@@ -1,155 +1,209 @@
-# Coding Progress Tracker (Phase 1)
+# ⚡ Coding Progress Tracker & LeetCode Analytics Engine
 
-A college faculty web application designed for tracking student coding activity, batch performance metrics, and progress logs.
+> **Enterprise-Grade College Faculty Analytics Dashboard, LeetCode Progress Reconciliation Engine & Zero-Click Google Sheets Automation Platform.**
 
----
-
-## Project Purpose
-
-**Coding Progress Tracker** empowers college faculty (Department Heads, Professors, and Mentors) to track, evaluate, and analyze student coding progress across platforms.
-
-### Core Authentication & Access Rules
-- **Faculty Only**: Only authenticated faculty members (`ADMIN` and `STAFF`) can log in.
-- **No Student Login**: Students do NOT have accounts, passwords, or authentication credentials. Students exist strictly as database records.
-- **Role-Based Permissions**:
-  - `ADMIN`: Manages overall department statistics, faculty user accounts, batches, sections, and global system configuration.
-  - `STAFF`: Manages assigned student batches, views section analytics, and generates progress reports.
+Developed & Engineered by **[Chandru M](https://github.com/Chandru9842)**
 
 ---
 
-## Technology Stack
+## 🌟 Executive Summary
 
-- **Frontend**: React 18+, Vite, TypeScript, React Router v6, Lucide Icons, Custom Modern CSS System.
-- **Backend**: Node.js, Express, TypeScript, Prisma ORM.
-- **Database**: PostgreSQL.
-- **Authentication**: JWT stored in HttpOnly cookies, `bcryptjs` password hashing, custom authorization middleware (`requireAuth`, `requireAdmin`, `requireStaff`).
-- **Deployment Target**: Unified Vercel serverless function (`api/index.ts`) hosting both frontend SPA and Express API under a single origin.
+**Coding Progress Tracker** is an enterprise-level SaaS platform designed for higher-education institution faculty (Department Heads, Professors, and Student Mentors) to track, evaluate, and analyze student coding activity and LeetCode problem-solving performance across academic batches and sections.
+
+### Key Capabilities
+- **Zero-Click Google Sheets Auto-Sync**: Automatically pushes structured student performance matrix data directly into Google Sheets every night via Google Apps Script Webhooks.
+- **LeetCode Progress & Snapshots Engine**: Fetches real-time problem-solving statistics (Easy, Medium, Hard, Total) via GraphQL and records daily historical snapshot deltas (`+Easy`, `+Medium`, `+Hard`, `+Total`).
+- **Role-Based Access Control (RBAC)**: Enforces strict separation between **`ADMIN`** (system configuration, staff roster, batch/section management) and **`STAFF`** (assigned student rosters, section progress, linked batch sheets).
+- **0ms Instant Client Caching**: High-performance client-side TTL memory store for instant page transitions without loading spinners.
+- **Production Data Permanence Guarantee**: Built with idempotent data pipelines guaranteeing zero data loss, database truncations, or record duplication.
 
 ---
 
-## Folder Structure
+## 🏗️ System Architecture
 
+```mermaid
+graph TD
+    User["👨‍🏫 Faculty Member / Admin"] -->|HTTPS| Frontend["⚛️ React 18 + Vite SPA (Vercel CDN)"]
+    Frontend -->|JWT Auth / HTTP REST| Backend["⚡ Express + Node.js API (Vercel Serverless)"]
+    Backend -->|Prisma ORM| Database["🐘 PostgreSQL (Supabase Database)"]
+    
+    Cron["⏰ Vercel Daily Cron / Internal Timer (3:00 AM IST)"] -->|Trigger| ReconcileEngine["🔄 LeetCode Reconciliation Engine"]
+    ReconcileEngine -->|GraphQL Query| LeetCode["🧩 LeetCode Public GraphQL API"]
+    ReconcileEngine -->|Store Daily Snapshots| Database
+    ReconcileEngine -->|POST JSON (text/plain)| AppsScript["📜 Google Apps Script Web App"]
+    AppsScript -->|Clear & Append Rows| GoogleSheet["📊 Linked Google Sheet"]
 ```
+
+---
+
+## 🛠️ Technology Stack
+
+| Layer | Technology |
+|---|---|
+| **Frontend** | React 18, TypeScript, Vite, React Router v6, Lucide Icons, Glassmorphism CSS Design Tokens |
+| **Backend** | Node.js, Express.js, TypeScript, Axios, Cors, Cookie-Parser |
+| **Database & ORM** | PostgreSQL, Supabase, Prisma ORM v5 |
+| **Authentication** | JWT (JSON Web Tokens), `bcryptjs` password hashing, Role-Based Route Guards |
+| **Automation** | Google Apps Script Webhook POST Engine, Vercel Serverless Crons |
+| **Deployment** | Vercel Serverless Functions (`/api`), Static CDN Asset Delivery |
+
+---
+
+## 📊 100% Automated Google Sheets Integration (Apps Script)
+
+The system automatically syncs student coding matrix data (Rank, Academic Year, Department, Section, Allocation Batch, Mentor, Register No, Student Name, LeetCode ID, and Daily Progress Columns) into linked Google Sheets without requiring manual spreadsheet editing.
+
+### 📜 Google Apps Script Deployment Code
+
+To enable direct automated background sync for a linked sheet:
+1. Open your target Google Sheet (e.g., `https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit`).
+2. Navigate to **Extensions &rarr; Apps Script**.
+3. Replace the contents of `Code.gs` with the following production script:
+
+```javascript
+function doPost(e) {
+  try {
+    var data = JSON.parse(e.postData.contents);
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    sheet.clear();
+    if (data.headers) sheet.appendRow(data.headers);
+    if (data.rows) {
+      for (var i = 0; i < data.rows.length; i++) {
+        sheet.appendRow(data.rows[i]);
+      }
+    }
+    // Auto-fit column widths so text never overlaps
+    var lastCol = sheet.getLastColumn();
+    if (lastCol > 0) {
+      sheet.autoResizeColumns(1, lastCol);
+      for (var col = 10; col <= lastCol; col++) {
+        if (sheet.getColumnWidth(col) < 220) {
+          sheet.setColumnWidth(col, 220);
+        }
+      }
+    }
+    return ContentService.createTextOutput("SUCCESS");
+  } catch (err) {
+    return ContentService.createTextOutput("ERROR: " + err.message);
+  }
+}
+```
+
+4. Click **Deploy &rarr; New deployment &rarr; Web app** (Execute as: *Me*, Who has access: *Anyone*).
+5. Copy the generated Web app URL (`https://script.google.com/macros/s/.../exec`) and paste it into **Apps Script Web App Webhook URL** when linking your sheet under **Settings**.
+
+---
+
+## 📁 Repository Directory Structure
+
+```text
 coding-progress-tracker/
 ├── api/
 │   └── index.ts                  # Vercel Serverless entrypoint wrapping Express app
-├── client/                       # React + Vite + TypeScript Frontend
-│   ├── public/
-│   │   └── favicon.svg
+├── client/                       # React 18 + Vite + TypeScript Frontend
 │   ├── src/
-│   │   ├── components/           # Sidebar, Topbar, Layout, ProtectedRoute
+│   │   ├── components/           # Sidebar, Topbar, Layout, ProtectedRoute, Modals
 │   │   ├── context/              # AuthContext session provider
-│   │   ├── pages/                # LoginPage, DashboardPage, SettingsPage
-│   │   ├── services/             # Axios API service client
-│   │   ├── types/                # TypeScript data interfaces
-│   │   ├── App.tsx               # App routing and auth guards
-│   │   ├── index.css             # Glassmorphism design tokens & styles
-│   │   └── main.tsx              # React mounting root
+│   │   ├── pages/                # AdminDashboard, StaffDashboard, StudentDirectory, Settings
+│   │   ├── services/             # Axios API Service client with 0ms Memory Caching
+│   │   ├── types/                # TypeScript Interfaces & Data Models
+│   │   ├── App.tsx               # Client Routes & Role Guard Middleware
+│   │   └── index.css             # Glassmorphism Design System & Design Tokens
 │   ├── index.html
 │   ├── package.json
-│   ├── tsconfig.json
 │   └── vite.config.ts
 ├── server/                       # Node.js + Express + TypeScript Backend
 │   ├── prisma/
-│   │   └── schema.prisma         # PostgreSQL schema definition
+│   │   └── schema.prisma         # Prisma Schema Definition (PostgreSQL / Supabase)
 │   ├── src/
-│   │   ├── config/               # Environment configuration
-│   │   ├── controllers/          # Auth, Health, & Stats controllers
-│   │   ├── db/                   # Prisma database client singleton
-│   │   ├── middleware/           # requireAuth, requireAdmin, requireStaff, errorHandler
-│   │   ├── routes/               # API route definitions (/api/v1)
-│   │   ├── services/             # Auth & User services (initial admin seeding)
-│   │   ├── types/                # Express & Auth request extensions
-│   │   ├── app.ts                # Express app configuration
-│   │   └── index.ts              # Local development server runner
+│   │   ├── controllers/          # Auth, Student, Staff, Batch, Sync & Report Controllers
+│   │   ├── db/                   # Prisma Database Client Singleton & Fallback Memory Store
+│   │   ├── middleware/           # Auth, Role Authorization (ADMIN / STAFF), Error Handlers
+│   │   ├── routes/               # REST API Endpoints (/api/v1)
+│   │   ├── services/             # LeetCode GraphQL Engine, Google Sheets Service, Cron Service
+│   │   ├── app.ts                # Express Application Initializer
+│   │   └── index.ts              # Local HTTP Server Runner
 │   ├── package.json
 │   └── tsconfig.json
-├── .env.example                  # Environment variable template
-├── package.json                  # Root monorepo workspace scripts
-├── tsconfig.json                 # Root TypeScript configuration
-├── vercel.json                   # Unified Vercel routing configuration
-└── README.md                     # Documentation
+├── vercel.json                   # Vercel Single-Origin Routing & Cron Configuration
+├── package.json                  # Workspace Monorepo Scripts
+└── README.md                     # Technical Documentation
 ```
 
 ---
 
-## Environment Variables
+## 🚀 Environment Setup & Local Installation
 
-Copy `.env.example` to create `.env` in the root directory:
+### 1. Prerequisites
+- **Node.js**: v18.0.0 or higher
+- **npm**: v9.0.0 or higher
+- **PostgreSQL Database** (or Supabase Connection String)
+
+### 2. Environment Variables Configuration
+Create a `.env` file in the root folder:
 
 ```env
-DATABASE_URL=postgresql://user:password@localhost:5432/coding_tracker?schema=public
-JWT_SECRET=your_secure_jwt_secret_key_here
-INITIAL_ADMIN_NAME=System Administrator
+DATABASE_URL=postgresql://postgres:password@localhost:5432/coding_tracker?schema=public
+JWT_SECRET=your_super_secret_jwt_key_here
+INITIAL_ADMIN_NAME=Dr. System Admin
 INITIAL_ADMIN_EMAIL=admin@college.edu
 INITIAL_ADMIN_PASSWORD=AdminPass123!
 ```
 
-> [!IMPORTANT]
-> Never commit actual secrets or credentials into source control.
-
----
-
-## Database Schema Foundation (PostgreSQL / Prisma)
-
-1. **`users`**: Faculty user accounts (`ADMIN` / `STAFF`) with email, bcrypt password hash, and active status.
-2. **`batches`**: Dynamic student intake batches with start year, end year, and department.
-3. **`staff_batch_assignments`**: Maps faculty staff to assigned batches.
-4. **`sections`**: Dynamic sections under batches (e.g., Section A, Section B).
-5. **`students`**: Student records with unique register numbers (NOT database primary key) and LeetCode usernames.
-6. **`daily_coding_snapshots`**: Historical daily snapshots preserving problem-solving stats (`easy_solved`, `medium_solved`, `hard_solved`, `total_solved`) with a unique constraint on `(student_id, snapshot_date)`.
-7. **`generated_reports`**: Audit record of exported reports.
-
----
-
-## Local Development & Setup
-
-### 1. Install Dependencies
-Run from root:
+### 3. Dependency Installation
 ```bash
+# Install root monorepo dependencies
 npm install
+
+# Install backend and frontend dependencies
 npm --prefix server install
 npm --prefix client install
 ```
 
-### 2. Database Migration & Seed
-Ensure your PostgreSQL database is running and `DATABASE_URL` is set:
+### 4. Database Setup (Prisma ORM)
 ```bash
+# Generate Prisma Client
+npm run prisma:generate
+
+# Push Schema to PostgreSQL
 npm run prisma:push
 ```
 
-### 3. Start Development Servers
-Run frontend (Vite port 3000) and backend (Express port 5000) concurrently:
+### 5. Local Server Execution
 ```bash
+# Run client (Vite Port 3000) and backend server (Port 5000) concurrently
 npm run dev
 ```
 
 ---
 
-## Build & Lint Commands
+## ⚡ Production Deployment (Vercel)
+
+The repository is configured for **Unified Single-Origin Vercel Serverless Deployment**:
 
 ```bash
-# Lint codebases
-npm run lint
-
-# Compile server and build Vite static client
+# Compile TypeScript server and build Vite frontend assets
 npm run build
+
+# Deploy to Vercel Production
+npx vercel --prod
 ```
 
----
-
-## Vercel Deployment Architecture
-
-The project is structured for **ONE unified Vercel deployment**:
-- `api/index.ts` exports the Express application as a Vercel Serverless Function.
-- `client/` is compiled into static assets served via Vercel CDN.
-- `vercel.json` rewrites `/api/(.*)` to `api/index.ts` and routes all non-API paths to `client/dist/index.html` for single-page client routing.
+- Serverless API handles requests at `/api/v1/*`
+- Static Vite Frontend served via global Vercel Edge CDN
+- Vercel Daily Cron triggers reconciliation automatically at `3:00 AM IST` (`30 21 * * *` UTC)
 
 ---
 
-## Roadmap & Future Phases
+## 👤 Author & Lead Engineer
 
-- **Phase 2**: Staff Management CRUD & Batch / Section Allocation
-- **Phase 3**: Student Directory & Dynamic Batch Setup
-- **Phase 4**: LeetCode Sync Engine & Daily Snapshot Collector
-- **Phase 5**: Google Sheets Sync & Automated Report Generator
+**Chandru M**  
+*Senior Full-Stack Software Engineer*  
+- **GitHub**: [@Chandru9842](https://github.com/Chandru9842)  
+- **Project Repository**: [coding-progress-tracker](https://github.com/Chandru9842/coding-progress-tracker)
+
+---
+
+## 📄 License
+
+This project is proprietary software developed for institution coding progress analytics and academic reporting. All rights reserved.
