@@ -1226,7 +1226,7 @@ export const SettingsPage: React.FC = () => {
             <div style={{ position: 'relative', marginBottom: '1.25rem' }}>
               <textarea
                 readOnly
-                rows={10}
+                rows={12}
                 className="form-input"
                 style={{ fontFamily: 'monospace', fontSize: '0.8rem', width: '100%', backgroundColor: '#0f172a', color: '#38bdf8', padding: '0.85rem' }}
                 value={`function doPost(e) {
@@ -1240,6 +1240,9 @@ export const SettingsPage: React.FC = () => {
         sheet.appendRow(data.rows[i]);
       }
     }
+    if (sheet.getLastColumn() > 0) {
+      sheet.autoResizeColumns(1, sheet.getLastColumn());
+    }
     return ContentService.createTextOutput("SUCCESS");
   } catch (err) {
     return ContentService.createTextOutput("ERROR: " + err.message);
@@ -1249,15 +1252,16 @@ export const SettingsPage: React.FC = () => {
               <button
                 className="btn btn-secondary"
                 onClick={() => {
-                  const code = `function doPost(e) {\n  try {\n    var data = JSON.parse(e.postData.contents);\n    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();\n    sheet.clear();\n    if (data.headers) sheet.appendRow(data.headers);\n    if (data.rows) {\n      for (var i = 0; i < data.rows.length; i++) {\n        sheet.appendRow(data.rows[i]);\n      }\n    }\n    return ContentService.createTextOutput("SUCCESS");\n  } catch (err) {\n    return ContentService.createTextOutput("ERROR: " + err.message);\n  }\n}`;
+                  const code = `function doPost(e) {\n  try {\n    var data = JSON.parse(e.postData.contents);\n    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();\n    sheet.clear();\n    if (data.headers) sheet.appendRow(data.headers);\n    if (data.rows) {\n      for (var i = 0; i < data.rows.length; i++) {\n        sheet.appendRow(data.rows[i]);\n      }\n    }\n    if (sheet.getLastColumn() > 0) {\n      sheet.autoResizeColumns(1, sheet.getLastColumn());\n    }\n    return ContentService.createTextOutput("SUCCESS");\n  } catch (err) {\n    return ContentService.createTextOutput("ERROR: " + err.message);\n  }\n}`;
                   navigator.clipboard.writeText(code);
-                  setMessage({ type: 'success', text: '📋 Apps Script code copied to clipboard!' });
+                  setMessage({ type: 'success', text: '📋 Apps Script code with Auto-Column Resizing copied!' });
                 }}
                 style={{ position: 'absolute', right: '0.5rem', top: '0.5rem', fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
               >
                 Copy Script
               </button>
             </div>
+
 
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <button className="btn btn-primary" onClick={() => setShowScriptModal(false)}>

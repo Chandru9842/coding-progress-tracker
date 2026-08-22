@@ -74,15 +74,22 @@ export function extractSpreadsheetId(input: string): string {
  * Ensures GoogleSheetLink records present clean raw spreadsheet IDs and exact valid URLs:
  * https://docs.google.com/spreadsheets/d/{spreadsheetId}/edit
  */
-export function sanitizeGoogleSheetLink<T extends { spreadsheet_id: string; spreadsheet_url?: string | null }>(link: T): T {
+export function sanitizeGoogleSheetLink<T extends { spreadsheet_id: string; spreadsheet_url?: string | null; webhook_url?: string | null }>(link: T): T {
   if (!link) return link;
-  const cleanId = extractSpreadsheetId(link.spreadsheet_id);
-  if (cleanId) {
+
+  const raw = link.spreadsheet_id || '';
+  if (raw.startsWith('https://script.google.com') || raw.includes('/macros/s/')) {
+    (link as any).webhook_url = raw;
+  }
+
+  const cleanId = extractSpreadsheetId(raw);
+  if (cleanId && !cleanId.includes('script.google.com') && !cleanId.includes('macros')) {
     link.spreadsheet_id = cleanId;
     link.spreadsheet_url = `https://docs.google.com/spreadsheets/d/${cleanId}/edit`;
   }
   return link;
 }
+
 
 /**
  * Builds the one-student-one-row / one-date-one-column Google Sheet data matrix.
@@ -202,7 +209,8 @@ export function buildGoogleSheetMatrix(
           totalToday = 0;
         }
 
-        const cellContent = `E-${currSnap.easy_solved} | M-${currSnap.medium_solved} | H-${currSnap.hard_solved} | T-${currSnap.total_solved}\nToday: E-${easyToday} / M-${medToday} / H-${hardToday} / T-${totalToday}`;
+        const cellContent = `Overall: E-${currSnap.easy_solved} | M-${currSnap.medium_solved} | H-${currSnap.hard_solved} | T-${currSnap.total_solved}\nToday: E-${easyToday} | M-${medToday} | H-${hardToday} | T-${totalToday}`;
+
 
         baseRow.push(cellContent);
       }
@@ -731,20 +739,21 @@ export async function syncGoogleSheetLink(
   const details = `Idempotently synchronized ${matrix.studentCount} student rows (one row per student) and ${matrix.dateColumnsCount} date columns for linked batches [${link.batch_ids.join(', ')}] into Google Sheet ID [${link.spreadsheet_id}].`;
 
   // Dispatch Webhook POST if Google Apps Script URL or webhook_url is linked
-  const rawId = link.spreadsheet_id || '';
-  if (rawId.startsWith('https://script.google.com') || rawId.includes('/macros/s/')) {
+  const webhookUrl = (link as any).webhook_url || (link.spreadsheet_id && (link.spreadsheet_id.startsWith('https://script.google.com') || link.spreadsheet_id.includes('/macros/s/')) ? link.spreadsheet_id : null);
+  if (webhookUrl) {
     try {
-      await axios.post(rawId, {
+      await axios.post(webhookUrl, {
         headers: matrix.headers,
         rows: matrix.rows,
         studentCount: matrix.studentCount,
         updatedAt: now.toISOString(),
       });
-      console.log(`[GOOGLE_SHEETS] Successfully posted matrix data to Apps Script Webhook [${rawId}]`);
+      console.log(`[GOOGLE_SHEETS] Successfully posted matrix data to Apps Script Webhook [${webhookUrl}]`);
     } catch (whErr: any) {
       console.error('[GOOGLE_SHEETS] Apps Script Webhook POST warning:', whErr?.message || whErr);
     }
   }
+
 
 
   if (!process.env.DATABASE_URL) {
