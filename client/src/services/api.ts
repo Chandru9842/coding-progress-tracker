@@ -418,7 +418,12 @@ export const studentApi = {
   deleteStudent: async (studentId: string): Promise<void> => {
     await api.delete(`/students/${studentId}`);
   },
+
+  bulkDeleteStudents: async (studentIds: string[]): Promise<void> => {
+    await api.post('/students/bulk-delete', { studentIds });
+  },
 };
+
 
 export const syncApi = {
   syncStudent: async (studentId: string): Promise<any> => {

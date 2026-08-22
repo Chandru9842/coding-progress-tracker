@@ -641,3 +641,17 @@ export async function deleteStudent(studentId: string) {
   });
   return { message: 'Student deleted successfully' };
 }
+
+export async function bulkDeleteStudents(studentIds: string[]) {
+  if (!process.env.DATABASE_URL) {
+    inMemoryStore.students = inMemoryStore.students.filter((s) => !studentIds.includes(s.id));
+    inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter((sa) => !studentIds.includes(sa.student_id));
+    return { message: `${studentIds.length} students deleted successfully` };
+  }
+
+  await prisma.student.deleteMany({
+    where: { id: { in: studentIds } },
+  });
+  return { message: `${studentIds.length} students deleted successfully` };
+}
+

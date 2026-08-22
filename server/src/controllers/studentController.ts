@@ -193,3 +193,36 @@ export async function deleteStudent(req: AuthenticatedRequest, res: Response): P
     res.status(statusCode).json({ error: error.message || 'Failed to delete student' });
   }
 }
+
+export async function bulkDeleteStudents(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const { studentIds } = req.body;
+    if (!Array.isArray(studentIds) || studentIds.length === 0) {
+      res.status(400).json({ error: 'studentIds array is required' });
+      return;
+    }
+
+    // STAFF scope enforcement: must be authorized for all specified student IDs
+    if (req.user.role === 'STAFF') {
+      for (const id of studentIds) {
+        const ownsStudent = await isStaffAuthorizedForStudent(req.user.userId, id);
+        if (!ownsStudent) {
+          res.status(403).json({ error: 'Forbidden: You are not authorized to delete one or more selected students' });
+          return;
+        }
+      }
+    }
+
+    const result = await studentService.bulkDeleteStudents(studentIds);
+    res.status(200).json(result);
+  } catch (error: any) {
+    const statusCode = error.statusCode || 500;
+    res.status(statusCode).json({ error: error.message || 'Failed to delete selected students' });
+  }
+}
+

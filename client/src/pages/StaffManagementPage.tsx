@@ -25,7 +25,7 @@ export const StaffManagementPage: React.FC = () => {
   const [submitting, setSubmitting] = useState<boolean>(false);
 
   // Form States - Edit Staff
-  const [editForm, setEditForm] = useState({ id: '', name: '', email: '', password: '', confirmPassword: '' });
+  const [editForm, setEditForm] = useState({ id: '', name: '', email: '', password: '', confirmPassword: '', assignedBatchId: '' });
   const [editError, setEditError] = useState<string | null>(null);
 
   // Form States - Delete Staff
@@ -51,8 +51,12 @@ export const StaffManagementPage: React.FC = () => {
   const fetchStaff = async () => {
     try {
       setLoading(true);
-      const data = await staffApi.getAllStaff();
-      setStaffList(data);
+      const [staffData, batchData] = await Promise.all([
+        staffApi.getAllStaff(),
+        batchApi.getAllBatches().catch(() => []),
+      ]);
+      setStaffList(staffData);
+      setAllBatches(batchData);
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to load staff list.');
     } finally {
@@ -99,12 +103,14 @@ export const StaffManagementPage: React.FC = () => {
 
   // Handlers for Edit Staff
   const handleOpenEdit = (staff: StaffListItem) => {
+    const firstBatchId = staff.assignedBatches && staff.assignedBatches.length > 0 ? staff.assignedBatches[0].id : '';
     setEditForm({
       id: staff.id,
       name: staff.name,
       email: staff.email,
       password: '',
       confirmPassword: '',
+      assignedBatchId: firstBatchId,
     });
     setEditError(null);
     setShowEditModal(true);
@@ -131,6 +137,9 @@ export const StaffManagementPage: React.FC = () => {
         email: editForm.email,
         password: editForm.password || undefined,
       });
+      if (editForm.assignedBatchId) {
+        await staffApi.assignBatches(editForm.id, [editForm.assignedBatchId]);
+      }
       setShowEditModal(false);
       fetchStaff();
     } catch (err: any) {
@@ -139,6 +148,7 @@ export const StaffManagementPage: React.FC = () => {
       setSubmitting(false);
     }
   };
+
 
   // Handlers for Delete Staff
   const handleOpenDelete = (staff: StaffListItem) => {
@@ -655,6 +665,22 @@ export const StaffManagementPage: React.FC = () => {
               </div>
 
               <div className="form-group">
+                <label className="form-label">Assigned Intake Batch (Optional)</label>
+                <select
+                  className="form-input"
+                  value={editForm.assignedBatchId}
+                  onChange={(e) => setEditForm({ ...editForm, assignedBatchId: e.target.value })}
+                >
+                  <option value="">Unassigned / General Access</option>
+                  {allBatches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.batch_name} ({b.department})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
                 <label className="form-label">New Password (Optional - leave blank to keep current password)</label>
                 <input
                   type="password"
@@ -664,6 +690,7 @@ export const StaffManagementPage: React.FC = () => {
                   onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
                 />
               </div>
+
 
               {editForm.password && (
                 <div className="form-group">

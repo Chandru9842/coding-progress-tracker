@@ -28,6 +28,10 @@ export const StudentsPage: React.FC = () => {
   const [formAllocBatches, setFormAllocBatches] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  // Selection & Bulk Action States
+  const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState<boolean>(false);
+
   // Modal States
   const [showStudentModal, setShowStudentModal] = useState<boolean>(false);
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
@@ -57,12 +61,52 @@ export const StudentsPage: React.FC = () => {
         search: search || undefined,
       });
       setStudents(data);
+      setSelectedStudentIds(new Set());
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to load student roster');
     } finally {
       setLoading(false);
     }
   };
+
+  const handleToggleSelectStudent = (studentId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const next = new Set(selectedStudentIds);
+    if (next.has(studentId)) {
+      next.delete(studentId);
+    } else {
+      next.add(studentId);
+    }
+    setSelectedStudentIds(next);
+  };
+
+  const handleToggleSelectAll = () => {
+    if (selectedStudentIds.size === students.length && students.length > 0) {
+      setSelectedStudentIds(new Set());
+    } else {
+      setSelectedStudentIds(new Set(students.map((s) => s.id)));
+    }
+  };
+
+  const handleClearSelection = () => {
+    setSelectedStudentIds(new Set());
+  };
+
+  const handleConfirmBulkDelete = async () => {
+    if (selectedStudentIds.size === 0) return;
+    try {
+      setSubmitting(true);
+      await studentApi.bulkDeleteStudents(Array.from(selectedStudentIds));
+      setShowBulkDeleteModal(false);
+      setSelectedStudentIds(new Set());
+      fetchStudents();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to delete selected students');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
 
   useEffect(() => {
     fetchStudents();
@@ -376,11 +420,86 @@ export const StudentsPage: React.FC = () => {
           </div>
         )}
 
+        {/* Bulk Action Controls Bar */}
+        {canManage && selectedStudentIds.size > 0 && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0.85rem 1.25rem',
+            backgroundColor: 'rgba(99, 102, 241, 0.12)',
+            border: '1px solid rgba(99, 102, 241, 0.3)',
+            borderRadius: 'var(--radius-sm)',
+            flexWrap: 'wrap',
+            gap: '0.75rem',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+              <span style={{ fontSize: '0.9rem' }}>
+                Selected: <strong style={{ color: 'var(--primary)' }}>{selectedStudentIds.size}</strong> of {students.length} Student(s)
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={handleToggleSelectAll}
+                style={{ fontSize: '0.8rem', padding: '0.35rem 0.65rem' }}
+              >
+                {selectedStudentIds.size === students.length ? 'Deselect All' : `Select All (${students.length})`}
+              </button>
+
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={handleClearSelection}
+                style={{ fontSize: '0.8rem', padding: '0.35rem 0.65rem' }}
+              >
+                Clear Selection
+              </button>
+
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setShowBulkDeleteModal(true)}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    padding: '0.4rem 0.85rem',
+                    backgroundColor: '#ef4444',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: 'var(--radius-sm)',
+                    fontWeight: 600,
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <Trash2 size={15} />
+                  <span>Delete Selected ({selectedStudentIds.size})</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {!loading && (
           <div className="glass-panel table-responsive-container">
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+                  {canManage && (
+                    <th style={{ padding: '1rem', width: '40px', textAlign: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={students.length > 0 && selectedStudentIds.size === students.length}
+                        onChange={handleToggleSelectAll}
+                        style={{ cursor: 'pointer' }}
+                        title="Select All Students"
+                      />
+                    </th>
+                  )}
                   <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Register Number</th>
                   <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Student Name</th>
                   <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Department</th>
@@ -395,81 +514,145 @@ export const StudentsPage: React.FC = () => {
               <tbody>
                 {students.length === 0 ? (
                   <tr>
-                    <td colSpan={canManage ? 9 : 8} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    <td colSpan={canManage ? 10 : 8} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
                       {search || filterBatchId ? 'No students match your filter criteria.' : 'No students yet.'}
                     </td>
                   </tr>
                 ) : (
-                  students.map((student) => (
-                    <tr
-                      key={student.id}
-                      onClick={() => navigate(`/students/${student.id}`)}
-                      style={{ borderBottom: '1px solid var(--border-subtle)', cursor: 'pointer', transition: 'var(--transition-fast)' }}
-                    >
-                      <td style={{ padding: '1rem', fontWeight: 700, color: 'var(--primary)', whiteSpace: 'nowrap' }}>
-                        {student.register_number}
-                      </td>
-                      <td style={{ padding: '1rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
-                        {student.name}
-                      </td>
-                      <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                        {student.department}
-                      </td>
-                      <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                        {student.batch?.batch_name || 'N/A'}
-                      </td>
-                      <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                        Section {student.section?.name || 'N/A'}
-                      </td>
-                      <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: 'rgba(255, 255, 255, 0.06)', padding: '0.2rem 0.55rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600 }}>
-                          {student.allocation_batch?.name || student.sub_batch || '-'}
-                        </span>
-                      </td>
-                      <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                        {student.mentor?.name ? (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', backgroundColor: 'rgba(99, 102, 241, 0.12)', color: '#818cf8', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600 }}>
-                            <UserCheck size={13} />
-                            <span>{student.mentor.name}</span>
-                          </span>
-                        ) : (
-                          <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Unassigned</span>
+                  students.map((student) => {
+                    const isSelected = selectedStudentIds.has(student.id);
+                    return (
+                      <tr
+                        key={student.id}
+                        onClick={() => navigate(`/students/${student.id}`)}
+                        style={{
+                          borderBottom: '1px solid var(--border-subtle)',
+                          cursor: 'pointer',
+                          backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.08)' : 'transparent',
+                          transition: 'var(--transition-fast)',
+                        }}
+                      >
+                        {canManage && (
+                          <td style={{ padding: '1rem', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={(e) => handleToggleSelectStudent(student.id, e as any)}
+                              style={{ cursor: 'pointer' }}
+                            />
+                          </td>
                         )}
-                      </td>
-                      <td style={{ padding: '1rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                        {student.leetcode_username ? `@${student.leetcode_username}` : 'Not linked'}
-                      </td>
-                      {canManage && (
-                        <td style={{ padding: '1rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                          <div style={{ display: 'inline-flex', gap: '0.5rem' }}>
-                            <button
-                              onClick={(e) => handleOpenEditModal(student, e)}
-                              className="touch-target"
-                              style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '0.4rem' }}
-                              title="Edit Student"
-                            >
-                              <Edit2 size={16} />
-                            </button>
-                            {isAdmin && (
-                              <button
-                                onClick={(e) => handleDeleteStudent(student, e)}
-                                className="touch-target"
-                                style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', padding: '0.4rem' }}
-                                title="Delete Student"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            )}
-                          </div>
+                        <td style={{ padding: '1rem', fontWeight: 700, color: 'var(--primary)', whiteSpace: 'nowrap' }}>
+                          {student.register_number}
                         </td>
-                      )}
-                    </tr>
-                  ))
+                        <td style={{ padding: '1rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
+                          {student.name}
+                        </td>
+                        <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                          {student.department}
+                        </td>
+                        <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                          {student.batch?.batch_name || 'N/A'}
+                        </td>
+                        <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                          Section {student.section?.name || 'N/A'}
+                        </td>
+                        <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: 'rgba(255, 255, 255, 0.06)', padding: '0.2rem 0.55rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600 }}>
+                            {student.allocation_batch?.name || student.sub_batch || '-'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                          {student.mentor?.name ? (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', backgroundColor: 'rgba(99, 102, 241, 0.12)', color: '#818cf8', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600 }}>
+                              <UserCheck size={13} />
+                              <span>{student.mentor.name}</span>
+                            </span>
+                          ) : (
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Unassigned</span>
+                          )}
+                        </td>
+                        <td style={{ padding: '1rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                          {student.leetcode_username ? `@${student.leetcode_username}` : 'Not linked'}
+                        </td>
+                        {canManage && (
+                          <td style={{ padding: '1rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            <div style={{ display: 'inline-flex', gap: '0.5rem' }}>
+                              <button
+                                onClick={(e) => handleOpenEditModal(student, e)}
+                                className="touch-target"
+                                style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '0.4rem' }}
+                                title="Edit Student"
+                              >
+                                <Edit2 size={16} />
+                              </button>
+                              {isAdmin && (
+                                <button
+                                  onClick={(e) => handleDeleteStudent(student, e)}
+                                  className="touch-target"
+                                  style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', padding: '0.4rem' }}
+                                  title="Delete Student"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
           </div>
         )}
+
+        {/* BULK DELETE CONFIRMATION MODAL */}
+        {showBulkDeleteModal && (
+          <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.8)', backdropFilter: 'blur(6px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
+          }}>
+            <div className="glass-panel" style={{ width: '100%', maxWidth: '440px', padding: '2rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#f87171', marginBottom: '1rem' }}>
+                <Trash2 size={26} />
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Delete Selected Students</h3>
+              </div>
+
+              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: '1.5' }}>
+                Are you sure you want to delete <strong style={{ color: 'var(--primary)' }}>{selectedStudentIds.size} selected student(s)</strong>?
+              </p>
+              <p style={{ fontSize: '0.825rem', color: '#f87171', backgroundColor: 'rgba(248, 113, 113, 0.1)', padding: '0.65rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.5rem' }}>
+                ⚠️ Warning: This will permanently remove the selected student records and all their associated daily coding snapshots.
+              </p>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                <button type="button" className="btn-secondary" onClick={() => setShowBulkDeleteModal(false)} disabled={submitting}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmBulkDelete}
+                  disabled={submitting}
+                  style={{
+                    padding: '0.6rem 1.25rem',
+                    backgroundColor: '#ef4444',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: 'var(--radius-sm)',
+                    fontWeight: 600,
+                    cursor: submitting ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {submitting ? 'Deleting...' : 'Confirm Bulk Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
 
       {/* Add / Edit Student Modal */}

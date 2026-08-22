@@ -6,6 +6,7 @@ import {
   createStudent,
   updateStudent,
   deleteStudent,
+  bulkDeleteStudents,
 } from '../controllers/studentController.js';
 
 const router = Router();
@@ -17,7 +18,9 @@ router.use(requireAuth);
 router.get('/students', requireStaff, getStudents);
 router.get('/students/:studentId', requireStaff, getStudentDetail);
 router.post('/students', requireStaff, createStudent);
+router.post('/students/bulk-delete', requireStaff, bulkDeleteStudents);
 router.patch('/students/:studentId', requireStaff, updateStudent);
 router.delete('/students/:studentId', requireStaff, deleteStudent);
 
 export default router;
+
