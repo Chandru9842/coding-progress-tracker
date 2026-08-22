@@ -52,19 +52,29 @@ export const StudentsPage: React.FC = () => {
   });
   const [submitting, setSubmitting] = useState<boolean>(false);
 
-  const fetchStudents = async () => {
+  const [debouncedSearch, setDebouncedSearch] = useState<string>('');
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 250);
+    return () => clearTimeout(handler);
+  }, [search]);
+
+  const fetchStudents = async (showLoadingSpinner: boolean = true) => {
     try {
-      if (students.length === 0) setLoading(true);
+      if (showLoadingSpinner && students.length === 0) {
+        setLoading(true);
+      }
       const data = await studentApi.getStudents({
         batchId: filterBatchId || undefined,
         sectionId: filterSectionId || undefined,
         department: filterDept || undefined,
         allocationBatchId: filterAllocBatchId || undefined,
         mentorId: filterMentorId || undefined,
-        search: search || undefined,
+        search: debouncedSearch || undefined,
       });
       setStudents(data);
-      setSelectedStudentIds(new Set());
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to load student roster');
     } finally {
@@ -98,14 +108,15 @@ export const StudentsPage: React.FC = () => {
   const handleConfirmBulkDelete = async () => {
     if (selectedStudentIds.size === 0) return;
     const toDeleteSet = new Set(selectedStudentIds);
+    // Optimistic UI removal
+    setStudents((prev) => prev.filter((s) => !toDeleteSet.has(s.id)));
+    setShowBulkDeleteModal(false);
+    setSelectedStudentIds(new Set());
     try {
       setSubmitting(true);
       await studentApi.bulkDeleteStudents(Array.from(toDeleteSet));
-      setStudents((prev) => prev.filter((s) => !toDeleteSet.has(s.id)));
-      setShowBulkDeleteModal(false);
-      setSelectedStudentIds(new Set());
     } catch (err: any) {
-      fetchStudents();
+      fetchStudents(false);
       alert(err.response?.data?.error || 'Failed to delete selected students');
     } finally {
       setSubmitting(false);
@@ -122,20 +133,23 @@ export const StudentsPage: React.FC = () => {
   const handleConfirmDeleteStudent = async () => {
     if (!studentToDelete) return;
     const deletedId = studentToDelete.id;
+    // Optimistic UI removal
+    setStudents((prev) => prev.filter((s) => s.id !== deletedId));
+    setSelectedStudentIds((prev) => {
+      const next = new Set(prev);
+      next.delete(deletedId);
+      return next;
+    });
+    setShowDeleteModal(false);
+    setStudentToDelete(null);
+
     try {
       setSubmitting(true);
       setDeleteError(null);
       await studentApi.deleteStudent(deletedId);
-      setStudents((prev) => prev.filter((s) => s.id !== deletedId));
-      setSelectedStudentIds((prev) => {
-        const next = new Set(prev);
-        next.delete(deletedId);
-        return next;
-      });
-      setShowDeleteModal(false);
-      setStudentToDelete(null);
     } catch (err: any) {
-      setDeleteError(err.response?.data?.error || 'Failed to delete student record');
+      fetchStudents(false);
+      alert(err.response?.data?.error || 'Failed to delete student record');
     } finally {
       setSubmitting(false);
     }
@@ -143,7 +157,7 @@ export const StudentsPage: React.FC = () => {
 
   useEffect(() => {
     fetchStudents();
-  }, [search, filterBatchId, filterSectionId, filterDept, filterAllocBatchId, filterMentorId]);
+  }, [debouncedSearch, filterBatchId, filterSectionId, filterDept, filterAllocBatchId, filterMentorId]);
 
   useEffect(() => {
     if (filterSectionId) {
@@ -167,8 +181,10 @@ export const StudentsPage: React.FC = () => {
   }, [studentForm.section_id]);
 
   useEffect(() => {
-    batchApi.getAllBatches().then(setBatches).catch(console.error);
-    staffApi.getAllStaff(true).then(setStaffList).catch(console.error);
+    Promise.all([
+      batchApi.getAllBatches().then(setBatches),
+      staffApi.getAllStaff(true).then(setStaffList),
+    ]).catch(console.error);
   }, []);
 
   const handleSyncBatchOrAll = async () => {
@@ -182,7 +198,7 @@ export const StudentsPage: React.FC = () => {
         const res = await syncApi.syncAll();
         setSyncNotice(`Global sync completed: ${res.successful} synced successfully.`);
       }
-      fetchStudents();
+      fetchStudents(false);
     } catch (err: any) {
       alert(err.response?.data?.error || 'Failed to sync LeetCode data');
     } finally {
@@ -190,7 +206,7 @@ export const StudentsPage: React.FC = () => {
     }
   };
 
-  const handleOpenCreateModal = async () => {
+  const handleOpenCreateModal = () => {
     setEditingStudentId(null);
     setStudentForm({
       register_number: '',
@@ -205,15 +221,9 @@ export const StudentsPage: React.FC = () => {
       mentor_id: isStaff && user ? (user.id || (user as any).userId || '') : '',
     });
     setShowStudentModal(true);
-    try {
-      const activeStaff = await staffApi.getAllStaff(true);
-      setStaffList(activeStaff);
-    } catch (e) {
-      console.error(e);
-    }
   };
 
-  const handleOpenEditModal = async (student: Student, e: React.MouseEvent) => {
+  const handleOpenEditModal = (student: Student, e: React.MouseEvent) => {
     e.stopPropagation();
     setEditingStudentId(student.id);
     setStudentForm({
@@ -229,12 +239,6 @@ export const StudentsPage: React.FC = () => {
       mentor_id: student.mentor_id || student.mentor?.id || '',
     });
     setShowStudentModal(true);
-    try {
-      const activeStaff = await staffApi.getAllStaff(true);
-      setStaffList(activeStaff);
-    } catch (e) {
-      console.error(e);
-    }
   };
 
   const handleSaveStudent = async (e: React.FormEvent) => {
@@ -252,12 +256,18 @@ export const StudentsPage: React.FC = () => {
     try {
       setSubmitting(true);
       if (editingStudentId) {
-        await studentApi.updateStudent(editingStudentId, studentForm);
+        const updated = await studentApi.updateStudent(editingStudentId, studentForm);
+        if (updated && updated.id) {
+          setStudents((prev) => prev.map((s) => s.id === editingStudentId ? { ...s, ...updated } : s));
+        }
       } else {
-        await studentApi.createStudent(studentForm);
+        const created = await studentApi.createStudent(studentForm);
+        if (created && created.id) {
+          setStudents((prev) => [created, ...prev]);
+        }
       }
       setShowStudentModal(false);
-      fetchStudents();
+      fetchStudents(false);
     } catch (err: any) {
       alert(err.response?.data?.error || 'Failed to save student record');
     } finally {

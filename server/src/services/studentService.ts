@@ -377,90 +377,48 @@ export async function createStudent(data: {
     return attachMentorInfo(base);
   }
 
-  // PostgreSQL Mode
-  if (resolvedAllocBatchId) {
-    let ab = await prisma.allocationBatch.findUnique({ where: { id: resolvedAllocBatchId } }).catch(() => null);
-    if (!ab && data.section_id) {
-      ab = await prisma.allocationBatch.findFirst({
-        where: {
-          section_id: data.section_id,
-          name: { equals: resolvedAllocBatchId, mode: 'insensitive' },
-        },
-      });
-    }
-    if (ab) {
-      resolvedAllocBatchId = ab.id;
-      resolvedSubBatch = ab.name;
-    } else {
-      resolvedSubBatch = resolvedAllocBatchId;
-      resolvedAllocBatchId = null;
-    }
-  } else if (resolvedSubBatch) {
-    const ab = await prisma.allocationBatch.findFirst({
-      where: {
-        section_id: data.section_id,
-        name: { equals: resolvedSubBatch, mode: 'insensitive' },
-      },
-    });
-    if (ab) {
-      resolvedAllocBatchId = ab.id;
-      resolvedSubBatch = ab.name;
-    }
-  }
-
-  const existing = await prisma.student.findUnique({
-    where: { register_number },
-  });
-
-  if (existing) {
-    const conflictErr: any = new Error(`Student with register number '${register_number}' already exists`);
-    conflictErr.statusCode = 409;
-    throw conflictErr;
-  }
-
-  const student = await prisma.student.create({
-    data: {
-      register_number,
-      name: data.name.trim(),
-      department: data.department.trim(),
-      batch_id: data.batch_id,
-      section_id: data.section_id,
-      sub_batch: resolvedSubBatch,
-      allocation_batch_id: resolvedAllocBatchId,
-      current_year: data.current_year || null,
-      leetcode_username: data.leetcode_username?.trim() || null,
-    },
-    include: {
-      batch: { select: { id: true, batch_name: true } },
-      section: { select: { id: true, name: true } },
-      allocation_batch: { select: { id: true, name: true } },
-    },
-  });
-
-  if (data.mentor_id) {
-    await prisma.staffStudentAssignment.create({
+  // PostgreSQL Mode: Optimized Atomic Creation
+  try {
+    const student = await prisma.student.create({
       data: {
-        staff_id: data.mentor_id,
-        student_id: student.id,
+        register_number,
+        name: data.name.trim(),
+        department: data.department.trim(),
+        batch_id: data.batch_id,
+        section_id: data.section_id,
+        sub_batch: resolvedSubBatch,
+        allocation_batch_id: resolvedAllocBatchId,
+        current_year: data.current_year || null,
+        leetcode_username: data.leetcode_username?.trim() || null,
+        ...(data.mentor_id ? {
+          staff_student_assignments: {
+            create: {
+              staff_id: data.mentor_id,
+            },
+          },
+        } : {}),
       },
-    });
-  }
-
-  const reFetched = await prisma.student.findUnique({
-    where: { id: student.id },
-    include: {
-      batch: { select: { id: true, batch_name: true } },
-      section: { select: { id: true, name: true } },
-      allocation_batch: { select: { id: true, name: true } },
-      staff_student_assignments: {
-        include: {
-          staff: { select: { id: true, name: true, email: true } },
+      include: {
+        batch: { select: { id: true, batch_name: true, department: true } },
+        section: { select: { id: true, name: true } },
+        allocation_batch: { select: { id: true, name: true } },
+        staff_student_assignments: {
+          include: {
+            staff: { select: { id: true, name: true, email: true } },
+          },
         },
       },
-    },
-  });
+    });
 
-  return attachMentorInfo(reFetched || student);
+    return attachMentorInfo(student);
+  } catch (createErr: any) {
+    if (createErr.code === 'P2002') {
+      const conflictErr: any = new Error(`Student with register number '${register_number}' already exists`);
+      conflictErr.statusCode = 409;
+      throw conflictErr;
+    }
+    throw createErr;
+  }
 }
 
 export async function updateStudent(

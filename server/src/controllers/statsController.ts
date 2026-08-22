@@ -27,16 +27,16 @@ export async function getDashboardStats(
         totalBatches = inMemoryStore.batches.length;
         totalStudents = inMemoryStore.students.length;
       } else {
-        totalStaff = await prisma.user.count({
-          where: { role: 'STAFF' },
-        });
-
-        activeStaff = await prisma.user.count({
-          where: { role: 'STAFF', is_active: true },
-        });
-
-        totalBatches = await prisma.batch.count();
-        totalStudents = await prisma.student.count();
+        const [tStaff, aStaff, tBatches, tStudents] = await Promise.all([
+          prisma.user.count({ where: { role: 'STAFF' } }),
+          prisma.user.count({ where: { role: 'STAFF', is_active: true } }),
+          prisma.batch.count(),
+          prisma.student.count(),
+        ]);
+        totalStaff = tStaff;
+        activeStaff = aStaff;
+        totalBatches = tBatches;
+        totalStudents = tStudents;
       }
 
       res.status(200).json({
@@ -48,8 +48,10 @@ export async function getDashboardStats(
       });
       return;
     } else {
-      const assignedBatches = await getBatchesForStaff(req.user.userId);
-      const authorizedStudentIds = await getAuthorizedStudentIdsForStaff(req.user.userId);
+      const [assignedBatches, authorizedStudentIds] = await Promise.all([
+        getBatchesForStaff(req.user.userId),
+        getAuthorizedStudentIdsForStaff(req.user.userId),
+      ]);
 
       res.status(200).json({
         role: 'STAFF',

@@ -32,7 +32,7 @@ graph TD
     Frontend -->|JWT Auth / HTTP REST| Backend["⚡ Express + Node.js API (Vercel Serverless)"]
     Backend -->|Prisma ORM| Database["🐘 PostgreSQL (Supabase Database)"]
     
-    Cron["⏰ Vercel Daily Cron / Internal Timer (3:00 AM IST)"] -->|Trigger| ReconcileEngine["🔄 LeetCode Reconciliation Engine"]
+    Cron["⏰ Vercel Daily Cron / Internal Timer (4:30 AM IST)"] -->|Trigger| ReconcileEngine["🔄 LeetCode Reconciliation Engine"]
     ReconcileEngine -->|GraphQL Query| LeetCode["🧩 LeetCode Public GraphQL API"]
     ReconcileEngine -->|Store Daily Snapshots| Database
     ReconcileEngine -->|"POST JSON (text/plain)"| AppsScript["📜 Google Apps Script Web App"]
@@ -95,8 +95,12 @@ function doPost(e) {
 }
 ```
 
-4. Click **Deploy &rarr; New deployment &rarr; Web app** (Execute as: *Me*, Who has access: *Anyone*).
-5. Copy the generated Web app URL (`https://script.google.com/macros/s/.../exec`) and paste it into **Apps Script Web App Webhook URL** when linking your sheet under **Settings**.
+4. Click **Deploy &rarr; New deployment**.
+5. Select type: **Web app**.
+6. Set **Execute as**: *Me* (`your_email@gmail.com`).
+7. Set **Who has access**: *Anyone*.
+8. Click **Deploy** and copy the **Web app URL** (e.g. `https://script.google.com/macros/s/.../exec`).
+9. Paste this Web app URL into the **Settings &rarr; Linked Google Sheets &rarr; Apps Script Webhook URL** in the Coding Progress Tracker portal!
 
 ---
 
@@ -197,7 +201,7 @@ npx vercel --prod
 
 - Serverless API handles requests at `/api/v1/*`
 - Static Vite Frontend served via global Vercel Edge CDN
-- Vercel Daily Cron triggers reconciliation automatically at `3:00 AM IST` (`30 21 * * *` UTC)
+- Vercel Daily Cron triggers reconciliation automatically at `4:30 AM IST` (`0 23 * * *` UTC)
 
 ---
 

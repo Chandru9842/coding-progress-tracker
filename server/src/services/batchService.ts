@@ -82,23 +82,21 @@ export async function getBatchesForStaff(staffId: string) {
       });
   }
 
-  // 1. Direct batch assignments
-  const directAssigns = await prisma.staffBatchAssignment.findMany({
-    where: { staff_id: staffId },
-    select: { batch_id: true },
-  });
-
-  // 2. Section assignments
-  const secAssigns = await prisma.staffSectionAssignment.findMany({
-    where: { staff_id: staffId },
-    select: { section: { select: { batch_id: true } } },
-  });
-
-  // 3. Student assignments
-  const stAssigns = await prisma.staffStudentAssignment.findMany({
-    where: { staff_id: staffId },
-    select: { student: { select: { batch_id: true } } },
-  });
+  // 1. Fetch batch, section, and student assignments concurrently
+  const [directAssigns, secAssigns, stAssigns] = await Promise.all([
+    prisma.staffBatchAssignment.findMany({
+      where: { staff_id: staffId },
+      select: { batch_id: true },
+    }),
+    prisma.staffSectionAssignment.findMany({
+      where: { staff_id: staffId },
+      select: { section: { select: { batch_id: true } } },
+    }),
+    prisma.staffStudentAssignment.findMany({
+      where: { staff_id: staffId },
+      select: { student: { select: { batch_id: true } } },
+    }),
+  ]);
 
   const batchIds = new Set<string>();
   directAssigns.forEach((a) => batchIds.add(a.batch_id));
