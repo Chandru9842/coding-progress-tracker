@@ -48,15 +48,16 @@ export async function createStaff(req: AuthenticatedRequest, res: Response): Pro
 export async function updateStaff(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const { staffId } = req.params;
-    const { name, email, password } = req.body;
+    const { name, email, password, assignedBatchIds } = req.body;
 
-    const staff = await staffService.updateStaffDetails(staffId, { name, email, password });
+    const staff = await staffService.updateStaffDetails(staffId, { name, email, password, assignedBatchIds });
     res.status(200).json({ message: 'Staff updated successfully', staff });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to update staff member';
     res.status(400).json({ error: message });
   }
 }
+
 
 export async function deleteStaff(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {

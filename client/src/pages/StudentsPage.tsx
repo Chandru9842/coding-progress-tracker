@@ -94,18 +94,18 @@ export const StudentsPage: React.FC = () => {
 
   const handleConfirmBulkDelete = async () => {
     if (selectedStudentIds.size === 0) return;
+    const toDeleteSet = new Set(selectedStudentIds);
+    setStudents((prev) => prev.filter((s) => !toDeleteSet.has(s.id)));
+    setShowBulkDeleteModal(false);
+    setSelectedStudentIds(new Set());
     try {
-      setSubmitting(true);
-      await studentApi.bulkDeleteStudents(Array.from(selectedStudentIds));
-      setShowBulkDeleteModal(false);
-      setSelectedStudentIds(new Set());
-      fetchStudents();
+      await studentApi.bulkDeleteStudents(Array.from(toDeleteSet));
     } catch (err: any) {
+      fetchStudents();
       alert(err.response?.data?.error || 'Failed to delete selected students');
-    } finally {
-      setSubmitting(false);
     }
   };
+
 
 
   useEffect(() => {
@@ -235,14 +235,16 @@ export const StudentsPage: React.FC = () => {
   const handleDeleteStudent = async (student: Student, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!window.confirm(`Are you sure you want to delete student ${student.name} (${student.register_number})?`)) return;
-
+    const deletedId = student.id;
+    setStudents((prev) => prev.filter((s) => s.id !== deletedId));
     try {
-      await studentApi.deleteStudent(student.id);
-      fetchStudents();
+      await studentApi.deleteStudent(deletedId);
     } catch (err: any) {
+      fetchStudents();
       alert(err.response?.data?.error || 'Failed to delete student');
     }
   };
+
 
   return (
     <Layout title="Student Management">

@@ -245,7 +245,7 @@ export async function resetStaffPassword(staffId: string, password: string) {
 
 export async function updateStaffDetails(
   staffId: string,
-  data: { name?: string; email?: string; password?: string }
+  data: { name?: string; email?: string; password?: string; assignedBatchIds?: string[] }
 ) {
   const updateData: any = {};
   if (data.name) updateData.name = data.name.trim();
@@ -263,6 +263,9 @@ export async function updateStaffDetails(
       }
     }
     Object.assign(s, updateData);
+    if (data.assignedBatchIds !== undefined) {
+      assignBatchesToStaff(staffId, data.assignedBatchIds);
+    }
     return s;
   }
 
@@ -279,8 +282,14 @@ export async function updateStaffDetails(
     where: { id: staffId, role: 'STAFF' },
     data: updateData,
   });
+
+  if (data.assignedBatchIds !== undefined) {
+    await assignBatchesToStaff(staffId, data.assignedBatchIds);
+  }
+
   return updated;
 }
+
 
 export async function deleteStaff(staffId: string) {
   if (!process.env.DATABASE_URL) {

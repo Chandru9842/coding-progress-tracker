@@ -136,10 +136,11 @@ export const StaffManagementPage: React.FC = () => {
         name: editForm.name,
         email: editForm.email,
         password: editForm.password || undefined,
+        assignedBatchIds: editForm.assignedBatchIds,
       });
-      await staffApi.assignBatches(editForm.id, editForm.assignedBatchIds);
       setShowEditModal(false);
       fetchStaff();
+
     } catch (err: any) {
       setEditError(err.response?.data?.error || 'Failed to update staff member.');
     } finally {
@@ -158,29 +159,29 @@ export const StaffManagementPage: React.FC = () => {
 
   const handleConfirmDelete = async () => {
     if (!staffToDelete) return;
+    const deletingId = staffToDelete.id;
+    setStaffList((prev) => prev.filter((s) => s.id !== deletingId));
+    setShowDeleteModal(false);
+    setStaffToDelete(null);
     try {
-      setSubmitting(true);
-      setDeleteError(null);
-      await staffApi.deleteStaff(staffToDelete.id);
-      setShowDeleteModal(false);
-      setStaffToDelete(null);
-      fetchStaff();
+      await staffApi.deleteStaff(deletingId);
     } catch (err: any) {
-      setDeleteError(err.response?.data?.error || 'Failed to delete staff member.');
-    } finally {
-      setSubmitting(false);
+      fetchStaff();
     }
   };
 
   // Toggle Active Status
   const handleToggleStatus = async (staff: StaffListItem) => {
+    setStaffList((prev) =>
+      prev.map((s) => (s.id === staff.id ? { ...s, isActive: !s.isActive } : s))
+    );
     try {
       await staffApi.updateStatus(staff.id, !staff.isActive);
-      fetchStaff();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to update status');
+      fetchStaff();
     }
   };
+
 
   // Open Reset Password
   const handleOpenPasswordReset = (staffId: string) => {

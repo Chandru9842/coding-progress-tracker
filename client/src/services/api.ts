@@ -256,9 +256,10 @@ export const staffApi = {
     return created;
   },
 
-  updateStaff: async (staffId: string, data: { name?: string; email?: string; password?: string }): Promise<void> => {
+  updateStaff: async (staffId: string, data: { name?: string; email?: string; password?: string; assignedBatchIds?: string[] }): Promise<void> => {
     await api.patch(`/staff/${staffId}`, data);
   },
+
 
   deleteStaff: async (staffId: string): Promise<void> => {
     await api.delete(`/staff/${staffId}`);
