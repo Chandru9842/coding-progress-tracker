@@ -25,7 +25,7 @@ export const StaffManagementPage: React.FC = () => {
   const [submitting, setSubmitting] = useState<boolean>(false);
 
   // Form States - Edit Staff
-  const [editForm, setEditForm] = useState({ id: '', name: '', email: '', password: '', confirmPassword: '', assignedBatchId: '' });
+  const [editForm, setEditForm] = useState({ id: '', name: '', email: '', password: '', confirmPassword: '', assignedBatchIds: [] as string[] });
   const [editError, setEditError] = useState<string | null>(null);
 
   // Form States - Delete Staff
@@ -103,14 +103,14 @@ export const StaffManagementPage: React.FC = () => {
 
   // Handlers for Edit Staff
   const handleOpenEdit = (staff: StaffListItem) => {
-    const firstBatchId = staff.assignedBatches && staff.assignedBatches.length > 0 ? staff.assignedBatches[0].id : '';
+    const currentBatchIds = staff.assignedBatches ? staff.assignedBatches.map((b) => b.id) : [];
     setEditForm({
       id: staff.id,
       name: staff.name,
       email: staff.email,
       password: '',
       confirmPassword: '',
-      assignedBatchId: firstBatchId,
+      assignedBatchIds: currentBatchIds,
     });
     setEditError(null);
     setShowEditModal(true);
@@ -137,9 +137,7 @@ export const StaffManagementPage: React.FC = () => {
         email: editForm.email,
         password: editForm.password || undefined,
       });
-      if (editForm.assignedBatchId) {
-        await staffApi.assignBatches(editForm.id, [editForm.assignedBatchId]);
-      }
+      await staffApi.assignBatches(editForm.id, editForm.assignedBatchIds);
       setShowEditModal(false);
       fetchStaff();
     } catch (err: any) {
@@ -148,6 +146,7 @@ export const StaffManagementPage: React.FC = () => {
       setSubmitting(false);
     }
   };
+
 
 
   // Handlers for Delete Staff
@@ -665,20 +664,88 @@ export const StaffManagementPage: React.FC = () => {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Assigned Intake Batch (Optional)</label>
-                <select
-                  className="form-input"
-                  value={editForm.assignedBatchId}
-                  onChange={(e) => setEditForm({ ...editForm, assignedBatchId: e.target.value })}
-                >
-                  <option value="">Unassigned / General Access</option>
-                  {allBatches.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.batch_name} ({b.department})
-                    </option>
-                  ))}
-                </select>
+                <label className="form-label">Assigned Intake Batches</label>
+                
+                {/* List of currently assigned batch pills */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                  {editForm.assignedBatchIds.length === 0 ? (
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                      No intake batches assigned yet. Select a batch below to add assignment.
+                    </span>
+                  ) : (
+                    editForm.assignedBatchIds.map((bId) => {
+                      const b = allBatches.find((batch) => batch.id === bId);
+                      return (
+                        <div
+                          key={bId}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.4rem',
+                            backgroundColor: 'rgba(99, 102, 241, 0.15)',
+                            border: '1px solid rgba(99, 102, 241, 0.3)',
+                            color: '#818cf8',
+                            padding: '0.3rem 0.65rem',
+                            borderRadius: '9999px',
+                            fontSize: '0.8rem',
+                            fontWeight: 600,
+                          }}
+                        >
+                          <span>{b ? `${b.batch_name} (${b.department})` : 'Assigned Batch'}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditForm({
+                                ...editForm,
+                                assignedBatchIds: editForm.assignedBatchIds.filter((id) => id !== bId),
+                              });
+                            }}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#f87171',
+                              cursor: 'pointer',
+                              padding: '0.1rem',
+                              display: 'flex',
+                              alignItems: 'center',
+                            }}
+                            title="Remove Batch Assignment"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Dropdown menu to add a new batch assignment */}
+                {allBatches.filter((b) => !editForm.assignedBatchIds.includes(b.id)).length > 0 && (
+                  <select
+                    className="form-input"
+                    value=""
+                    onChange={(e) => {
+                      const newBId = e.target.value;
+                      if (newBId && !editForm.assignedBatchIds.includes(newBId)) {
+                        setEditForm({
+                          ...editForm,
+                          assignedBatchIds: [...editForm.assignedBatchIds, newBId],
+                        });
+                      }
+                    }}
+                  >
+                    <option value="">+ Add a Batch Assignment...</option>
+                    {allBatches
+                      .filter((b) => !editForm.assignedBatchIds.includes(b.id))
+                      .map((b) => (
+                        <option key={b.id} value={b.id}>
+                          + {b.batch_name} ({b.department})
+                        </option>
+                      ))}
+                  </select>
+                )}
               </div>
+
 
               <div className="form-group">
                 <label className="form-label">New Password (Optional - leave blank to keep current password)</label>
