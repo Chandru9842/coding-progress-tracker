@@ -667,7 +667,7 @@ export const StaffManagementPage: React.FC = () => {
                 <label className="form-label">Assigned Intake Batches</label>
                 
                 {/* List of currently assigned batch pills */}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1rem' }}>
                   {editForm.assignedBatchIds.length === 0 ? (
                     <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                       No intake batches assigned yet. Select a batch below to add assignment.
@@ -675,44 +675,63 @@ export const StaffManagementPage: React.FC = () => {
                   ) : (
                     editForm.assignedBatchIds.map((bId) => {
                       const b = allBatches.find((batch) => batch.id === bId);
+                      const secNames = b?.sections?.map((s) => `Section ${s.name}`).join(', ');
+                      const allocBatchNames = b?.sections?.flatMap((s) => s.allocation_batches || [])?.map((ab) => ab.name).join(', ');
+
                       return (
                         <div
                           key={bId}
                           style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '0.4rem',
-                            backgroundColor: 'rgba(99, 102, 241, 0.15)',
-                            border: '1px solid rgba(99, 102, 241, 0.3)',
-                            color: '#818cf8',
-                            padding: '0.3rem 0.65rem',
-                            borderRadius: '9999px',
-                            fontSize: '0.8rem',
-                            fontWeight: 600,
+                            padding: '0.75rem 1rem',
+                            backgroundColor: 'rgba(99, 102, 241, 0.08)',
+                            border: '1px solid rgba(99, 102, 241, 0.25)',
+                            borderRadius: 'var(--radius-sm)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '0.35rem',
                           }}
                         >
-                          <span>{b ? `${b.batch_name} (${b.department})` : 'Assigned Batch'}</span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditForm({
-                                ...editForm,
-                                assignedBatchIds: editForm.assignedBatchIds.filter((id) => id !== bId),
-                              });
-                            }}
-                            style={{
-                              background: 'none',
-                              border: 'none',
-                              color: '#f87171',
-                              cursor: 'pointer',
-                              padding: '0.1rem',
-                              display: 'flex',
-                              alignItems: 'center',
-                            }}
-                            title="Remove Batch Assignment"
-                          >
-                            <X size={14} />
-                          </button>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <span style={{ fontWeight: 700, color: 'var(--primary)', fontSize: '0.9rem' }}>
+                              {b ? `${b.batch_name} (${b.department})` : 'Assigned Batch'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditForm({
+                                  ...editForm,
+                                  assignedBatchIds: editForm.assignedBatchIds.filter((id) => id !== bId),
+                                });
+                              }}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                color: '#f87171',
+                                cursor: 'pointer',
+                                padding: '0.2rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.25rem',
+                                fontSize: '0.75rem',
+                              }}
+                              title="Remove Batch Assignment"
+                            >
+                              <X size={14} />
+                              <span>Remove</span>
+                            </button>
+                          </div>
+
+                          {/* Section & Allocation Batch Breakdown */}
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                            <div>
+                              <strong style={{ color: 'var(--text-muted)' }}>Sections:</strong> {secNames || 'None created'}
+                            </div>
+                            {allocBatchNames && (
+                              <div>
+                                <strong style={{ color: 'var(--text-muted)' }}>Allocation Batches:</strong> {allocBatchNames}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     })
@@ -744,7 +763,23 @@ export const StaffManagementPage: React.FC = () => {
                       ))}
                   </select>
                 )}
+
+                <div style={{ marginTop: '0.75rem' }}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => {
+                      setShowEditModal(false);
+                      handleOpenAssignments(editForm.id);
+                    }}
+                    style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}
+                  >
+                    <Settings2 size={14} />
+                    <span>Manage Detailed Section & Allocation Batch Rules</span>
+                  </button>
+                </div>
               </div>
+
 
 
               <div className="form-group">
