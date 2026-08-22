@@ -14,6 +14,7 @@ export interface GoogleSheetLinkDTO {
   spreadsheet_id: string;
   spreadsheet_name?: string | null;
   spreadsheet_url?: string | null;
+  webhook_url?: string | null;
   academic_year?: string | null;
   department?: string | null;
   section_id?: string | null;
@@ -34,6 +35,7 @@ export interface CreateSheetLinkInput {
   name: string;
   spreadsheet_id: string;
   spreadsheet_name?: string;
+  webhook_url?: string;
   academic_year?: string;
   department?: string;
   section_id?: string;
@@ -43,6 +45,7 @@ export interface CreateSheetLinkInput {
   sync_students?: boolean;
   sync_daily_progress?: boolean;
 }
+
 
 export interface GoogleSheetMatrix {
   headers: string[];

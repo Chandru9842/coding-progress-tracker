@@ -25,7 +25,9 @@ export const SettingsPage: React.FC = () => {
   const [editingLink, setEditingLink] = useState<GoogleSheetLink | null>(null);
   const [editLinkName, setEditLinkName] = useState<string>('');
   const [editSpreadsheetId, setEditSpreadsheetId] = useState<string>('');
+  const [editWebhookUrl, setEditWebhookUrl] = useState<string>('');
   const [updatingLink, setUpdatingLink] = useState<boolean>(false);
+
 
   // Profile Edit State
   const [isEditingProfile, setIsEditingProfile] = useState<boolean>(false);
@@ -49,6 +51,7 @@ export const SettingsPage: React.FC = () => {
   const [showLinkModal, setShowLinkModal] = useState<boolean>(false);
   const [linkName, setLinkName] = useState<string>('');
   const [spreadsheetId, setSpreadsheetId] = useState<string>('');
+  const [webhookUrl, setWebhookUrl] = useState<string>('');
   const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>('');
   const [selectedDepartment, setSelectedDepartment] = useState<string>('ALL');
   const [selectedBatchIds, setSelectedBatchIds] = useState<Set<string>>(new Set());
@@ -190,6 +193,7 @@ export const SettingsPage: React.FC = () => {
         payload = {
           name: generatedName,
           spreadsheet_id: spreadsheetId,
+          webhook_url: webhookUrl.trim() || undefined,
           academic_year: selectedAcademicYear,
           department: selectedDepartment,
           is_auto_sync_enabled: true,
@@ -205,6 +209,7 @@ export const SettingsPage: React.FC = () => {
         payload = {
           name: generatedName,
           spreadsheet_id: spreadsheetId,
+          webhook_url: webhookUrl.trim() || undefined,
           academic_year: selectedStaffAcademicYear,
           department: targetSec?.department,
           section_id: selectedStaffSectionId,
@@ -222,6 +227,8 @@ export const SettingsPage: React.FC = () => {
       setShowLinkModal(false);
       setLinkName('');
       setSpreadsheetId('');
+      setWebhookUrl('');
+
       setSelectedAcademicYear('');
       setSelectedDepartment('ALL');
       setSelectedBatchIds(new Set());
@@ -335,6 +342,7 @@ export const SettingsPage: React.FC = () => {
     setEditingLink(link);
     setEditLinkName(link.name);
     setEditSpreadsheetId(link.spreadsheet_id || link.spreadsheet_url || '');
+    setEditWebhookUrl(link.webhook_url || '');
   };
 
   const handleSaveEditLink = async (e: React.FormEvent) => {
@@ -349,6 +357,7 @@ export const SettingsPage: React.FC = () => {
       setUpdatingLink(true);
       setMessage(null);
       const val = editSpreadsheetId.trim();
+      const whVal = editWebhookUrl.trim();
       let payload: any = { name: editLinkName.trim() };
 
       if (val.startsWith('https://script.google.com') || val.includes('/macros/s/')) {
@@ -356,6 +365,7 @@ export const SettingsPage: React.FC = () => {
         payload.spreadsheet_id = editingLink.spreadsheet_id;
       } else {
         payload.spreadsheet_id = val;
+        if (whVal) payload.webhook_url = whVal;
       }
 
       const updated = await googleSheetsApi.updateLink(editingLink.id, payload);
@@ -368,6 +378,7 @@ export const SettingsPage: React.FC = () => {
       setUpdatingLink(false);
     }
   };
+
 
 
   const handleViewLogs = async (link: GoogleSheetLink) => {
@@ -1043,19 +1054,36 @@ export const SettingsPage: React.FC = () => {
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem' }}>
-                  Google Spreadsheet ID or URL *
+                  Google Spreadsheet Page URL or ID *
                 </label>
                 <input
                   type="text"
                   className="form-input"
-                  placeholder="Paste Spreadsheet ID or full URL (e.g. https://docs.google.com/spreadsheets/d/1BxiMVs.../edit)"
+                  placeholder="e.g. https://docs.google.com/spreadsheets/d/1mBFsJPO7RTNb7Wjeip2v03MH7T9SQeAUPPggO5Mbah8/edit"
                   value={spreadsheetId}
                   onChange={(e) => setSpreadsheetId(e.target.value)}
                   style={{ width: '100%' }}
                   required
                 />
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
-                  Paste either the raw ID or full Google Sheet URL. The system will extract the exact valid link automatically.
+                  Paste your main Google Sheet page URL. Clicking "Open Sheet" will open this page link.
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem' }}>
+                  Apps Script Web App Webhook URL (Optional for 100% Background Auto-Sync)
+                </label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. https://script.google.com/macros/s/AKfycb.../exec"
+                  value={webhookUrl}
+                  onChange={(e) => setWebhookUrl(e.target.value)}
+                  style={{ width: '100%' }}
+                />
+                <div style={{ fontSize: '0.75rem', color: '#38bdf8', marginTop: '0.35rem' }}>
+                  Generated from Extensions &rarr; Apps Script &rarr; Deploy as Web App. Allows direct 100% automated daily background updates.
                 </div>
               </div>
 
@@ -1156,22 +1184,41 @@ export const SettingsPage: React.FC = () => {
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem' }}>
-                  Google Sheet Webhook URL / Spreadsheet ID *
+                  Google Spreadsheet Page URL or ID *
                 </label>
                 <input
                   id="input-edit-spreadsheet-id"
                   type="text"
                   className="form-input"
-                  placeholder="e.g. https://docs.google.com/spreadsheets/d/1BxiMVs0.../edit or 1BxiMVs0..."
+                  placeholder="e.g. https://docs.google.com/spreadsheets/d/1mBFsJPO7RT.../edit"
                   value={editSpreadsheetId}
                   onChange={(e) => setEditSpreadsheetId(e.target.value)}
                   required
                   style={{ width: '100%' }}
                 />
                 <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.35rem', display: 'block' }}>
-                  Paste full Google Sheet URL or raw Spreadsheet ID.
+                  Main Google Sheet page URL (opened when clicking "Open Sheet").
                 </span>
               </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem' }}>
+                  Apps Script Web App Webhook URL (Optional for 100% Background Sync)
+                </label>
+                <input
+                  id="input-edit-webhook-url"
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. https://script.google.com/macros/s/AKfycb.../exec"
+                  value={editWebhookUrl}
+                  onChange={(e) => setEditWebhookUrl(e.target.value)}
+                  style={{ width: '100%' }}
+                />
+                <span style={{ fontSize: '0.75rem', color: '#38bdf8', marginTop: '0.35rem', display: 'block' }}>
+                  Generated from Extensions &rarr; Apps Script &rarr; Deploy as Web App.
+                </span>
+              </div>
+
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
                 <button

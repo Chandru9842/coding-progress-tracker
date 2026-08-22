@@ -530,6 +530,7 @@ export interface GoogleSheetLink {
   spreadsheet_id: string;
   spreadsheet_name?: string | null;
   spreadsheet_url?: string | null;
+  webhook_url?: string | null;
   academic_year?: string | null;
   department?: string | null;
   section_id?: string | null;
@@ -567,6 +568,7 @@ export const googleSheetsApi = {
     name: string;
     spreadsheet_id: string;
     spreadsheet_name?: string;
+    webhook_url?: string;
     academic_year?: string;
     department?: string;
     section_id?: string;
@@ -586,6 +588,7 @@ export const googleSheetsApi = {
       name?: string;
       spreadsheet_id?: string;
       spreadsheet_name?: string;
+      webhook_url?: string;
       academic_year?: string;
       department?: string;
       section_id?: string;
@@ -596,6 +599,7 @@ export const googleSheetsApi = {
     const res = await api.put<{ link: GoogleSheetLink }>(`/google-sheets/links/${linkId}`, data);
     return res.data.link;
   },
+
 
   getLinkDetail: async (linkId: string): Promise<GoogleSheetLink> => {
     const res = await api.get<{ link: GoogleSheetLink }>(`/google-sheets/links/${linkId}`);
