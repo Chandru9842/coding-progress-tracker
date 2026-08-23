@@ -95,7 +95,7 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
-  const handleOpenLinkModal = () => {
+  const handleOpenLinkModal = async () => {
     setLinkName('');
     setSpreadsheetId('');
 
@@ -105,21 +105,26 @@ export const SettingsPage: React.FC = () => {
       setSelectedAcademicYear(availableYears[0] || '');
       setSelectedBatchIds(new Set());
     } else {
-      const availableStaffYears = Array.from(new Set(staffSections.map((s) => s.academic_year))).sort();
+      let currentStaffSections = staffSections;
+      try {
+        const staffScopeRes = await staffApi.getAssignedScopes();
+        if (staffScopeRes.sections) {
+          currentStaffSections = staffScopeRes.sections;
+          setStaffSections(staffScopeRes.sections);
+        }
+      } catch (sErr) {
+        console.error('Failed to refresh staff scopes:', sErr);
+      }
+
+      const availableStaffYears = Array.from(new Set(currentStaffSections.map((s) => s.academic_year))).sort();
       const firstYear = availableStaffYears[0] || '';
       setSelectedStaffAcademicYear(firstYear);
 
-      const secsForFirstYear = staffSections.filter((s) => s.academic_year === firstYear);
+      const secsForFirstYear = currentStaffSections.filter((s) => s.academic_year === firstYear);
       const firstSec = secsForFirstYear[0];
       setSelectedStaffSectionId(firstSec?.id || '');
 
-      if (firstSec?.assignment_mode === 'ALL') {
-        setSelectedStaffAllocBatchId('ALL');
-      } else if (firstSec?.allocation_batches && firstSec.allocation_batches.length > 0) {
-        setSelectedStaffAllocBatchId(firstSec.allocation_batches[0].id);
-      } else {
-        setSelectedStaffAllocBatchId('ALL');
-      }
+      setSelectedStaffAllocBatchId('ALL');
     }
 
     setShowLinkModal(true);

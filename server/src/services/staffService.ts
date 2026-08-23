@@ -538,8 +538,8 @@ export async function getStaffAssignedScopes(staffId: string) {
     const studentIds = Array.from(new Set(studentAssigns.map((sa) => sa.student_id)));
 
     const assignedStudents = inMemoryStore.students.filter((st) => studentIds.includes(st.id));
-    const studentSecIds = assignedStudents.map((st) => st.section_id);
-    const studentBatchIds = assignedStudents.map((st) => st.batch_id);
+    const studentSecIds = assignedStudents.map((st) => st.section_id).filter(Boolean);
+    const studentBatchIds = assignedStudents.map((st) => st.batch_id).filter(Boolean);
 
     const allSecIds = Array.from(new Set([...sectionIds, ...studentSecIds]));
     const allBatchIds = Array.from(new Set([...batchIds, ...studentBatchIds]));
@@ -554,6 +554,22 @@ export async function getStaffAssignedScopes(staffId: string) {
         const secAssign = secAssigns.find((sa) => sa.section_id === sec.id);
         const mode = secAssign?.assignment_mode || (secAssigns.length === 0 ? 'ALL' : 'SELECTED');
         const abList = allocBatches.filter((ab) => ab.section_id === sec.id);
+        const studentSubBatches = Array.from(
+          new Set(
+            inMemoryStore.students
+              .filter((st) => st.section_id === sec.id && st.sub_batch)
+              .map((st) => st.sub_batch as string)
+          )
+        );
+
+        const mergedMap = new Map<string, { id: string; name: string }>();
+        abList.forEach((ab) => mergedMap.set(ab.name, { id: ab.id, name: ab.name }));
+        studentSubBatches.forEach((sb) => {
+          if (!mergedMap.has(sb)) {
+            mergedMap.set(sb, { id: sb, name: sb });
+          }
+        });
+
         return {
           id: sec.id,
           name: sec.name,
@@ -561,7 +577,7 @@ export async function getStaffAssignedScopes(staffId: string) {
           academic_year: b ? `${b.start_year}–${b.end_year}` : 'N/A',
           department: b ? b.department : 'N/A',
           assignment_mode: mode,
-          allocation_batches: abList.map((ab) => ({ id: ab.id, name: ab.name })),
+          allocation_batches: Array.from(mergedMap.values()),
         };
       }),
     };
@@ -633,7 +649,7 @@ export async function getStaffAssignedScopes(staffId: string) {
     }
 
     if (allocBatch) {
-      existing.allocation_batches_map.set(allocBatch.id, { id: allocBatch.id, name: allocBatch.name });
+      existing.allocation_batches_map.set(allocBatch.name || allocBatch.id, { id: allocBatch.id, name: allocBatch.name });
     }
 
     assignedSectionsMap.set(sec.id, existing);
@@ -655,15 +671,52 @@ export async function getStaffAssignedScopes(staffId: string) {
       if (!matchedAlloc && sa.student.sub_batch && sa.student.section?.allocation_batches) {
         matchedAlloc = sa.student.section.allocation_batches.find((ab: any) => ab.name === sa.student.sub_batch) || null;
       }
+      if (!matchedAlloc && sa.student.sub_batch) {
+        matchedAlloc = { id: sa.student.sub_batch, name: sa.student.sub_batch };
+      }
       registerSection(sa.student.section, sa.student.batch, 'SELECTED', matchedAlloc);
     }
   });
 
+  const sectionIds = Array.from(assignedSectionsMap.keys());
+  const [dbAllocBatches, studentsWithSubBatches] = await Promise.all([
+    prisma.allocationBatch.findMany({
+      where: { section_id: { in: sectionIds } },
+    }),
+    prisma.student.findMany({
+      where: { section_id: { in: sectionIds }, sub_batch: { not: null } },
+      select: { section_id: true, sub_batch: true },
+      distinct: ['section_id', 'sub_batch'],
+    }),
+  ]);
+
   const formattedSections = Array.from(assignedSectionsMap.values()).map((sec) => {
-    let allowedAllocBatches = Array.from(sec.allocation_batches_map.values());
-    if (sec.assignment_mode === 'ALL' || allowedAllocBatches.length === 0) {
-      allowedAllocBatches = (sec.all_section_allocation_batches || []).map((ab: any) => ({ id: ab.id, name: ab.name }));
-    }
+    const allocMap = new Map<string, { id: string; name: string }>();
+
+    // 1. Add explicitly assigned allocation batches
+    Array.from(sec.allocation_batches_map.values()).forEach((ab: any) => {
+      if (ab?.name) allocMap.set(ab.name, { id: ab.id, name: ab.name });
+    });
+
+    // 2. Add section database allocation batches
+    dbAllocBatches
+      .filter((ab) => ab.section_id === sec.id)
+      .forEach((ab) => {
+        if (!allocMap.has(ab.name)) {
+          allocMap.set(ab.name, { id: ab.id, name: ab.name });
+        }
+      });
+
+    // 3. Add student sub_batch strings (e.g. Batch-1, Batch-2, Batch-3)
+    studentsWithSubBatches
+      .filter((st) => st.section_id === sec.id && st.sub_batch)
+      .forEach((st) => {
+        const sb = st.sub_batch as string;
+        if (!allocMap.has(sb)) {
+          allocMap.set(sb, { id: sb, name: sb });
+        }
+      });
+
     return {
       id: sec.id,
       name: sec.name,
@@ -671,7 +724,7 @@ export async function getStaffAssignedScopes(staffId: string) {
       academic_year: sec.academic_year,
       department: sec.department,
       assignment_mode: sec.assignment_mode,
-      allocation_batches: allowedAllocBatches,
+      allocation_batches: Array.from(allocMap.values()),
     };
   });
 
