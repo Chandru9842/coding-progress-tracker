@@ -250,18 +250,21 @@ h1, h2, h3, h4 {
   justify-content: center !important;
   z-index: 99999 !important;
   padding: 1.25rem !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
 }
 
 .modal-card-responsive {
   width: 100% !important;
   max-width: min(850px, 94vw) !important;
-  max-height: 90vh !important;
+  max-height: min(90vh, 850px) !important;
   overflow-y: auto !important;
   padding: 2rem !important;
   border-radius: var(--radius-md) !important;
   position: relative !important;
   z-index: 100000 !important;
   box-shadow: 0 25px 60px rgba(0, 0, 0, 0.85), 0 0 30px rgba(99, 102, 241, 0.25) !important;
+  overscroll-behavior: contain !important;
 }
 
 @media (max-width: 1024px) {

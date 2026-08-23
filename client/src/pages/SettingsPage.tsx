@@ -969,15 +969,21 @@ export const SettingsPage: React.FC = () => {
 
       {/* Link New Sheet Modal */}
       {showLinkModal && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(4px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
-        }}>
-          <div className="glass-panel" style={{ width: '100%', maxWidth: '520px', padding: '2rem' }}>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '1.25rem' }}>
-              Link Google Sheet to Academic Scope
-            </h3>
+        <div className="modal-overlay-responsive">
+          <div className="glass-panel modal-card-responsive" style={{ width: '100%', maxWidth: '580px', padding: '2rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>
+                Link Google Sheet to Academic Scope
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowLinkModal(false)}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0.25rem' }}
+                title="Close"
+              >
+                <X size={20} />
+              </button>
+            </div>
 
             <form onSubmit={handleCreateLink} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {isAdmin ? (
