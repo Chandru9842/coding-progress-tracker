@@ -379,7 +379,7 @@ export default function ReportsPage() {
                 boxShadow: '0 2px 4px rgba(16, 185, 129, 0.2)',
                 transition: 'var(--transition-fast)',
               }}
-              title="Download Microsoft Excel (.xlsx) file with auto-sized column widths"
+              title="Recommended: Downloads formatted Microsoft Excel (.xlsx) file with pre-sized wide columns and navy headers"
             >
               <FileSpreadsheet size={16} />
               <span>{exporting ? 'Exporting...' : '📊 Generate & Download Excel Report (.xlsx)'}</span>
@@ -390,13 +390,13 @@ export default function ReportsPage() {
               onClick={handleExportCsv}
               disabled={exporting}
               style={{
-                padding: '0.65rem 1rem',
+                padding: '0.65rem 0.9rem',
                 backgroundColor: 'rgba(255, 255, 255, 0.05)',
                 color: 'var(--text-secondary, #94a3b8)',
                 border: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.1))',
                 borderRadius: 'var(--radius-sm)',
                 fontWeight: 500,
-                fontSize: '0.875rem',
+                fontSize: '0.825rem',
                 cursor: exporting ? 'not-allowed' : 'pointer',
                 opacity: exporting ? 0.6 : 1,
                 display: 'flex',
@@ -404,10 +404,10 @@ export default function ReportsPage() {
                 gap: '0.4rem',
                 transition: 'var(--transition-fast)',
               }}
-              title="Download standard CSV format"
+              title="Raw Plain Text (.csv). Note: CSV files cannot store column width formatting"
             >
-              <Download size={15} />
-              <span>CSV (.csv)</span>
+              <Download size={14} />
+              <span>Plain CSV (.csv)</span>
             </button>
           </div>
         </div>
