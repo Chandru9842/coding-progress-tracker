@@ -72,21 +72,57 @@ function doPost(e) {
     var data = JSON.parse(e.postData.contents);
     var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
     sheet.clear();
-    if (data.headers) sheet.appendRow(data.headers);
-    if (data.rows) {
+
+    if (data.headers) {
+      sheet.appendRow(data.headers);
+      var headerRange = sheet.getRange(1, 1, 1, data.headers.length);
+      headerRange.setBackground("#1E293B"); // Dark Slate Navy Header
+      headerRange.setFontColor("#FFFFFF");  // Bold White Text
+      headerRange.setFontWeight("bold");
+      headerRange.setFontFamily("Calibri");
+      headerRange.setFontSize(11);
+      headerRange.setHorizontalAlignment("center");
+      headerRange.setVerticalAlignment("middle");
+      sheet.setRowHeight(1, 30);
+      sheet.setFrozenRows(1);
+    }
+
+    if (data.rows && data.rows.length > 0) {
       for (var i = 0; i < data.rows.length; i++) {
         sheet.appendRow(data.rows[i]);
       }
+
+      var totalRows = data.rows.length;
+      var totalCols = data.headers ? data.headers.length : sheet.getLastColumn();
+      var dataRange = sheet.getRange(2, 1, totalRows, totalCols);
+      dataRange.setFontFamily("Calibri");
+      dataRange.setFontSize(10);
+      dataRange.setVerticalAlignment("middle");
+
+      // Format Register Number column (Col 7) as Text
+      sheet.getRange(2, 7, totalRows, 1).setNumberFormat("@");
+
+      // Alternate row colors & light borders
+      for (var r = 2; r <= totalRows + 1; r++) {
+        var rowBg = (r % 2 === 0) ? "#F8FAFC" : "#FFFFFF";
+        sheet.getRange(r, 1, 1, totalCols).setBackground(rowBg);
+        sheet.setRowHeight(r, 22);
+      }
+      dataRange.setBorder(true, true, true, true, true, true, "#E2E8F0", SpreadsheetApp.BorderStyle.SOLID);
     }
-    // Auto-fit column widths so text and names never get cut off
+
+    // Auto-fit column widths with generous minimum padding
     var lastCol = sheet.getLastColumn();
     if (lastCol > 0) {
       sheet.autoResizeColumns(1, lastCol);
+      var minWidths = [60, 130, 120, 110, 140, 180, 160, 220, 180];
       for (var col = 1; col <= lastCol; col++) {
         var currWidth = sheet.getColumnWidth(col);
-        sheet.setColumnWidth(col, Math.max(currWidth + 20, 110));
+        var minW = (col <= minWidths.length) ? minWidths[col - 1] : 100;
+        sheet.setColumnWidth(col, Math.max(currWidth + 20, minW));
       }
     }
+
     return ContentService.createTextOutput("SUCCESS");
   } catch (err) {
     return ContentService.createTextOutput("ERROR: " + err.message);

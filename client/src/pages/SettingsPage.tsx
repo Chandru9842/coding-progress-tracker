@@ -1278,7 +1278,7 @@ export const SettingsPage: React.FC = () => {
             <div style={{ position: 'relative', marginBottom: '1.25rem' }}>
               <textarea
                 readOnly
-                rows={12}
+                rows={16}
                 className="form-input"
                 style={{ fontFamily: 'monospace', fontSize: '0.8rem', width: '100%', backgroundColor: '#0f172a', color: '#38bdf8', padding: '0.85rem' }}
                 value={`function doPost(e) {
@@ -1286,20 +1286,57 @@ export const SettingsPage: React.FC = () => {
     var data = JSON.parse(e.postData.contents);
     var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
     sheet.clear();
-    if (data.headers) sheet.appendRow(data.headers);
-    if (data.rows) {
+
+    if (data.headers) {
+      sheet.appendRow(data.headers);
+      var headerRange = sheet.getRange(1, 1, 1, data.headers.length);
+      headerRange.setBackground("#1E293B");
+      headerRange.setFontColor("#FFFFFF");
+      headerRange.setFontWeight("bold");
+      headerRange.setFontFamily("Calibri");
+      headerRange.setFontSize(11);
+      headerRange.setHorizontalAlignment("center");
+      headerRange.setVerticalAlignment("middle");
+      sheet.setRowHeight(1, 30);
+      sheet.setFrozenRows(1);
+    }
+
+    if (data.rows && data.rows.length > 0) {
       for (var i = 0; i < data.rows.length; i++) {
         sheet.appendRow(data.rows[i]);
       }
+
+      var totalRows = data.rows.length;
+      var totalCols = data.headers ? data.headers.length : sheet.getLastColumn();
+      var dataRange = sheet.getRange(2, 1, totalRows, totalCols);
+      dataRange.setFontFamily("Calibri");
+      dataRange.setFontSize(10);
+      dataRange.setVerticalAlignment("middle");
+
+      // Format Register Number column (Col 7) as Text
+      sheet.getRange(2, 7, totalRows, 1).setNumberFormat("@");
+
+      // Alternate row colors & light borders
+      for (var r = 2; r <= totalRows + 1; r++) {
+        var rowBg = (r % 2 === 0) ? "#F8FAFC" : "#FFFFFF";
+        sheet.getRange(r, 1, 1, totalCols).setBackground(rowBg);
+        sheet.setRowHeight(r, 22);
+      }
+      dataRange.setBorder(true, true, true, true, true, true, "#E2E8F0", SpreadsheetApp.BorderStyle.SOLID);
     }
+
+    // Auto-fit column widths with generous minimum padding
     var lastCol = sheet.getLastColumn();
     if (lastCol > 0) {
       sheet.autoResizeColumns(1, lastCol);
+      var minWidths = [60, 130, 120, 110, 140, 180, 160, 220, 180];
       for (var col = 1; col <= lastCol; col++) {
         var currWidth = sheet.getColumnWidth(col);
-        sheet.setColumnWidth(col, Math.max(currWidth + 20, 110));
+        var minW = (col <= minWidths.length) ? minWidths[col - 1] : 100;
+        sheet.setColumnWidth(col, Math.max(currWidth + 20, minW));
       }
     }
+
     return ContentService.createTextOutput("SUCCESS");
   } catch (err) {
     return ContentService.createTextOutput("ERROR: " + err.message);
@@ -1309,9 +1346,9 @@ export const SettingsPage: React.FC = () => {
               <button
                 className="btn btn-secondary"
                 onClick={() => {
-                  const code = `function doPost(e) {\n  try {\n    var data = JSON.parse(e.postData.contents);\n    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();\n    sheet.clear();\n    if (data.headers) sheet.appendRow(data.headers);\n    if (data.rows) {\n      for (var i = 0; i < data.rows.length; i++) {\n        sheet.appendRow(data.rows[i]);\n      }\n    }\n    var lastCol = sheet.getLastColumn();\n    if (lastCol > 0) {\n      sheet.autoResizeColumns(1, lastCol);\n      for (var col = 1; col <= lastCol; col++) {\n        var currWidth = sheet.getColumnWidth(col);\n        sheet.setColumnWidth(col, Math.max(currWidth + 20, 110));\n      }\n    }\n    return ContentService.createTextOutput("SUCCESS");\n  } catch (err) {\n    return ContentService.createTextOutput("ERROR: " + err.message);\n  }\n}`;
+                  const code = `function doPost(e) {\n  try {\n    var data = JSON.parse(e.postData.contents);\n    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();\n    sheet.clear();\n    if (data.headers) {\n      sheet.appendRow(data.headers);\n      var headerRange = sheet.getRange(1, 1, 1, data.headers.length);\n      headerRange.setBackground("#1E293B");\n      headerRange.setFontColor("#FFFFFF");\n      headerRange.setFontWeight("bold");\n      headerRange.setFontFamily("Calibri");\n      headerRange.setFontSize(11);\n      headerRange.setHorizontalAlignment("center");\n      headerRange.setVerticalAlignment("middle");\n      sheet.setRowHeight(1, 30);\n      sheet.setFrozenRows(1);\n    }\n    if (data.rows && data.rows.length > 0) {\n      for (var i = 0; i < data.rows.length; i++) {\n        sheet.appendRow(data.rows[i]);\n      }\n      var totalRows = data.rows.length;\n      var totalCols = data.headers ? data.headers.length : sheet.getLastColumn();\n      var dataRange = sheet.getRange(2, 1, totalRows, totalCols);\n      dataRange.setFontFamily("Calibri");\n      dataRange.setFontSize(10);\n      dataRange.setVerticalAlignment("middle");\n      sheet.getRange(2, 7, totalRows, 1).setNumberFormat("@");\n      for (var r = 2; r <= totalRows + 1; r++) {\n        var rowBg = (r % 2 === 0) ? "#F8FAFC" : "#FFFFFF";\n        sheet.getRange(r, 1, 1, totalCols).setBackground(rowBg);\n        sheet.setRowHeight(r, 22);\n      }\n      dataRange.setBorder(true, true, true, true, true, true, "#E2E8F0", SpreadsheetApp.BorderStyle.SOLID);\n    }\n    var lastCol = sheet.getLastColumn();\n    if (lastCol > 0) {\n      sheet.autoResizeColumns(1, lastCol);\n      var minWidths = [60, 130, 120, 110, 140, 180, 160, 220, 180];\n      for (var col = 1; col <= lastCol; col++) {\n        var currWidth = sheet.getColumnWidth(col);\n        var minW = (col <= minWidths.length) ? minWidths[col - 1] : 100;\n        sheet.setColumnWidth(col, Math.max(currWidth + 20, minW));\n      }\n    }\n    return ContentService.createTextOutput("SUCCESS");\n  } catch (err) {\n    return ContentService.createTextOutput("ERROR: " + err.message);\n  }\n}`;
                   navigator.clipboard.writeText(code);
-                  setMessage({ type: 'success', text: '📋 Apps Script code with Auto-Column Resizing copied!' });
+                  setMessage({ type: 'success', text: '📋 Full Excel-Grade Apps Script copied!' });
                 }}
                 style={{ position: 'absolute', right: '0.5rem', top: '0.5rem', fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
               >
