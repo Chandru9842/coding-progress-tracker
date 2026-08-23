@@ -265,6 +265,26 @@ h1, h2, h3, h4 {
   z-index: 100000 !important;
   box-shadow: 0 25px 60px rgba(0, 0, 0, 0.85), 0 0 30px rgba(99, 102, 241, 0.25) !important;
   overscroll-behavior: contain !important;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(99, 102, 241, 0.5) rgba(255, 255, 255, 0.05);
+}
+
+.modal-card-responsive::-webkit-scrollbar {
+  width: 6px;
+}
+
+.modal-card-responsive::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+}
+
+.modal-card-responsive::-webkit-scrollbar-thumb {
+  background: rgba(99, 102, 241, 0.5);
+  border-radius: 4px;
+}
+
+.modal-card-responsive::-webkit-scrollbar-thumb:hover {
+  background: rgba(99, 102, 241, 0.8);
 }
 
 @media (max-width: 1024px) {

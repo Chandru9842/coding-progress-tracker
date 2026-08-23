@@ -85,6 +85,17 @@ export const SettingsPage: React.FC = () => {
     loadData();
   }, []);
 
+  useEffect(() => {
+    if (showLinkModal || editingLink || showLogsModal || showScriptModal || isEditingProfile) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [showLinkModal, editingLink, showLogsModal, showScriptModal, isEditingProfile]);
+
   const loadData = async () => {
     try {
       setLoading(true);
@@ -969,8 +980,18 @@ export const SettingsPage: React.FC = () => {
 
       {/* Link New Sheet Modal */}
       {showLinkModal && (
-        <div className="modal-overlay-responsive">
-          <div className="glass-panel modal-card-responsive" style={{ width: '100%', maxWidth: '580px', padding: '2rem' }}>
+        <div className="modal-overlay-responsive" onClick={(e) => { if (e.target === e.currentTarget) setShowLinkModal(false); }}>
+          <div
+            className="glass-panel modal-card-responsive"
+            style={{
+              width: '100%',
+              maxWidth: '580px',
+              maxHeight: '85vh',
+              overflowY: 'auto',
+              padding: '2rem',
+              WebkitOverflowScrolling: 'touch',
+            }}
+          >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
               <h3 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>
                 Link Google Sheet to Academic Scope
@@ -1379,8 +1400,18 @@ export const SettingsPage: React.FC = () => {
 
       {/* Edit Linked Sheet Modal */}
       {editingLink && (
-        <div className="modal-overlay-responsive">
-          <div className="glass-panel modal-card-responsive" style={{ width: '100%', maxWidth: '520px', padding: '2rem' }}>
+        <div className="modal-overlay-responsive" onClick={(e) => { if (e.target === e.currentTarget) setEditingLink(null); }}>
+          <div
+            className="glass-panel modal-card-responsive"
+            style={{
+              width: '100%',
+              maxWidth: '580px',
+              maxHeight: '85vh',
+              overflowY: 'auto',
+              padding: '2rem',
+              WebkitOverflowScrolling: 'touch',
+            }}
+          >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
               <h3 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>
                 Edit / Update Linked Google Sheet
