@@ -115,8 +115,10 @@ export const SettingsPage: React.FC = () => {
 
       if (firstSec?.assignment_mode === 'ALL') {
         setSelectedStaffAllocBatchId('ALL');
+      } else if (firstSec?.allocation_batches && firstSec.allocation_batches.length > 0) {
+        setSelectedStaffAllocBatchId(firstSec.allocation_batches[0].id);
       } else {
-        setSelectedStaffAllocBatchId(firstSec?.allocation_batches[0]?.id || 'ALL');
+        setSelectedStaffAllocBatchId('ALL');
       }
     }
 
@@ -963,8 +965,10 @@ export const SettingsPage: React.FC = () => {
                             setSelectedStaffSectionId(firstSec?.id || '');
                             if (firstSec?.assignment_mode === 'ALL') {
                               setSelectedStaffAllocBatchId('ALL');
+                            } else if (firstSec?.allocation_batches && firstSec.allocation_batches.length > 0) {
+                              setSelectedStaffAllocBatchId(firstSec.allocation_batches[0].id);
                             } else {
-                              setSelectedStaffAllocBatchId(firstSec?.allocation_batches[0]?.id || 'ALL');
+                              setSelectedStaffAllocBatchId('ALL');
                             }
                           }}
                           required
@@ -989,8 +993,10 @@ export const SettingsPage: React.FC = () => {
                             const targetSec = staffSections.find((s) => s.id === newSecId);
                             if (targetSec?.assignment_mode === 'ALL') {
                               setSelectedStaffAllocBatchId('ALL');
+                            } else if (targetSec?.allocation_batches && targetSec.allocation_batches.length > 0) {
+                              setSelectedStaffAllocBatchId(targetSec.allocation_batches[0].id);
                             } else {
-                              setSelectedStaffAllocBatchId(targetSec?.allocation_batches[0]?.id || 'ALL');
+                              setSelectedStaffAllocBatchId('ALL');
                             }
                           }}
                           required
@@ -1012,22 +1018,40 @@ export const SettingsPage: React.FC = () => {
                         </label>
                         <select
                           className="form-input"
-                          value={selectedStaffAllocBatchId || 'ALL'}
+                          value={selectedStaffAllocBatchId}
                           onChange={(e) => setSelectedStaffAllocBatchId(e.target.value)}
                           required
                           style={{ width: '100%' }}
                         >
-                          <option value="ALL">Entire Section (All Batches)</option>
                           {(() => {
                             const currentSec = staffSections.find((s) => s.id === selectedStaffSectionId);
-                            if (!currentSec || !currentSec.allocation_batches) return null;
-                            return currentSec.allocation_batches.map((ab) => (
-                              <option key={ab.id} value={ab.id}>
-                                {ab.name}
-                              </option>
-                            ));
+                            if (!currentSec) return null;
+                            const isAllMode = currentSec.assignment_mode === 'ALL';
+                            return (
+                              <>
+                                {isAllMode && (
+                                  <option value="ALL">Entire Section (All Students)</option>
+                                )}
+                                {currentSec.allocation_batches && currentSec.allocation_batches.map((ab) => (
+                                  <option key={ab.id} value={ab.id}>
+                                    {ab.name} {isAllMode ? '' : '(Assigned Batch)'}
+                                  </option>
+                                ))}
+                              </>
+                            );
                           })()}
                         </select>
+                        {(() => {
+                          const currentSec = staffSections.find((s) => s.id === selectedStaffSectionId);
+                          if (currentSec && currentSec.assignment_mode !== 'ALL') {
+                            return (
+                              <div style={{ fontSize: '0.75rem', color: '#818cf8', marginTop: '0.35rem' }}>
+                                📌 You are assigned to specific allocation batches in this section.
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
 
                     </>
