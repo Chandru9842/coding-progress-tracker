@@ -55,7 +55,7 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Referer': `https://leetcode.com/u/${cleanUsername}/`,
       },
-      timeout: 8000,
+      timeout: 5000,
     });
 
     const user = gqlRes.data?.data?.matchedUser;
@@ -76,12 +76,12 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
       };
     }
   } catch (gqlErr: any) {
-    console.warn(`Official LeetCode GraphQL fetch for @${cleanUsername} failed: ${gqlErr.message}`);
+    console.warn(`Official LeetCode GraphQL fetch for @${cleanUsername} failed (${gqlErr.message}). Trying backup...`);
   }
 
   // 2. Try Secondary Backup: Alfa LeetCode Proxy
   try {
-    const alfaRes = await axios.get(`https://alfa-leetcode-api.onrender.com/userProfile/${cleanUsername}`, { timeout: 8000 });
+    const alfaRes = await axios.get(`https://alfa-leetcode-api.onrender.com/userProfile/${cleanUsername}`, { timeout: 4000 });
     if (alfaRes.data && typeof alfaRes.data.totalSolved === 'number') {
       return {
         username: cleanUsername,
@@ -93,7 +93,7 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
       };
     }
   } catch (alfaErr: any) {
-    console.warn(`Alfa LeetCode proxy fetch for @${cleanUsername} failed: ${alfaErr.message}`);
+    console.warn(`Alfa LeetCode proxy fetch for @${cleanUsername} failed (${alfaErr.message}).`);
   }
 
   // If connected to PostgreSQL database, NEVER overwrite real data with fake mock numbers
@@ -117,7 +117,11 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
   };
 }
 
-export async function syncStudentLeetCode(studentId: string, user: { userId: string; role: UserRole }) {
+export async function syncStudentLeetCode(
+  studentId: string,
+  user: { userId: string; role: UserRole },
+  options?: { skipGoogleSheetSync?: boolean }
+) {
   // Authorization Check
   if (user.role === 'STAFF') {
     const isAuth = await isStaffAuthorizedForStudent(user.userId, studentId);
@@ -198,40 +202,100 @@ export async function syncStudentLeetCode(studentId: string, user: { userId: str
     });
   }
 
-  // Trigger Google Sheet update for active links covering this student's batch with Failure Isolation
-  try {
-    const activeLinks = !process.env.DATABASE_URL
-      ? inMemoryStore.googleSheetLinks.filter((l) => l.is_active && l.batch_ids.includes(student.batch_id))
-      : await prisma.googleSheetLink.findMany({
-          where: {
-            is_active: true,
-            batch_ids: { has: student.batch_id },
-          },
-        });
+  // Trigger Google Sheet update for active links covering this student's batch with Failure Isolation (only if not deferred)
+  if (!options?.skipGoogleSheetSync) {
+    try {
+      const activeLinks = !process.env.DATABASE_URL
+        ? inMemoryStore.googleSheetLinks.filter((l) => l.is_active && l.batch_ids.includes(student.batch_id))
+        : await prisma.googleSheetLink.findMany({
+            where: {
+              is_active: true,
+              batch_ids: { has: student.batch_id },
+            },
+          });
 
-    for (const link of activeLinks) {
-      try {
-        await syncGoogleSheetLink(link.id, user);
-      } catch (sheetErr) {
-        console.warn(`[Google Sheets Isolation Warning] Active link ${link.id} sync error:`, sheetErr);
+      for (const link of activeLinks) {
+        try {
+          await syncGoogleSheetLink(link.id, user);
+        } catch (sheetErr) {
+          console.warn(`[Google Sheets Isolation Warning] Active link ${link.id} sync error:`, sheetErr);
+        }
       }
+    } catch (err) {
+      console.warn('[Google Sheets Isolation Warning] Sync check skipped:', err);
     }
-  } catch (err) {
-    console.warn('[Google Sheets Isolation Warning] Sync check skipped:', err);
   }
 
   return {
     studentId,
     studentName: student.name,
     leetcodeUsername: student.leetcode_username,
+    batchId: student.batch_id,
     stats,
     snapshot,
     syncedAt: new Date().toISOString(),
   };
 }
 
+/**
+ * Concurrency worker helper to process asynchronous operations with a bounded concurrency pool.
+ */
+async function runConcurrentTasks<T, R>(
+  items: T[],
+  concurrency: number,
+  taskFn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results: R[] = new Array(items.length);
+  let currentIndex = 0;
+
+  async function worker() {
+    while (true) {
+      const index = currentIndex++;
+      if (index >= items.length) break;
+      results[index] = await taskFn(items[index], index);
+    }
+  }
+
+  const workerCount = Math.min(concurrency, items.length);
+  const workers = Array.from({ length: workerCount }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+/**
+ * Sync active linked Google Sheets for a set of batch IDs once at the end of a bulk sync operation.
+ */
+async function syncGoogleSheetsForBatchIds(batchIds: string[], user: { userId: string; role: UserRole }) {
+  if (!batchIds || batchIds.length === 0) return;
+  const uniqueBatchIds = Array.from(new Set(batchIds.filter(Boolean)));
+  try {
+    const activeLinks = !process.env.DATABASE_URL
+      ? inMemoryStore.googleSheetLinks.filter(
+          (l) => l.is_active && l.batch_ids.some((bId) => uniqueBatchIds.includes(bId))
+        )
+      : await prisma.googleSheetLink.findMany({
+          where: {
+            is_active: true,
+            batch_ids: { hasSome: uniqueBatchIds },
+          },
+        });
+
+    for (const link of activeLinks) {
+      try {
+        await syncGoogleSheetLink(link.id, user);
+      } catch (sheetErr: any) {
+        console.warn(`[Google Sheets Isolation Warning] Active link ${link.id} sync error:`, sheetErr?.message || sheetErr);
+      }
+    }
+  } catch (err: any) {
+    console.warn('[Google Sheets Isolation Warning] Batch sheet sync skipped:', err?.message || err);
+  }
+}
+
 export async function syncBatchLeetCode(batchId: string, user: { userId: string; role: UserRole }) {
-  let studentIds: string[] = [];
+  const startTime = Date.now();
+  let studentList: Array<{ id: string; batch_id: string }> = [];
 
   if (!process.env.DATABASE_URL) {
     let list = inMemoryStore.students.filter((s) => s.batch_id === batchId && s.leetcode_username);
@@ -239,32 +303,40 @@ export async function syncBatchLeetCode(batchId: string, user: { userId: string;
       const authorizedIds = await getAuthorizedStudentIdsForStaff(user.userId);
       list = list.filter((s) => authorizedIds.includes(s.id));
     }
-    studentIds = list.map((s) => s.id);
+    studentList = list.map((s) => ({ id: s.id, batch_id: s.batch_id }));
   } else {
     let where: any = { batch_id: batchId, leetcode_username: { not: null } };
     if (user.role === 'STAFF') {
       const authorizedIds = await getAuthorizedStudentIdsForStaff(user.userId);
       where.id = { in: authorizedIds };
     }
-    const students = await prisma.student.findMany({ where, select: { id: true } });
-    studentIds = students.map((s) => s.id);
+    const students = await prisma.student.findMany({ where, select: { id: true, batch_id: true } });
+    studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
   }
 
-  const results: any[] = [];
-  for (const stId of studentIds) {
+  // Run student syncing concurrently (5 parallel workers)
+  const results = await runConcurrentTasks(studentList, 5, async (st) => {
     try {
-      const res = await syncStudentLeetCode(stId, user);
-      results.push({ studentId: stId, success: true, stats: res.stats });
+      const res = await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
+      return { studentId: st.id, success: true, stats: res.stats };
     } catch (err: any) {
-      results.push({ studentId: stId, success: false, error: err.message });
+      return { studentId: st.id, success: false, error: err.message };
     }
-  }
+  });
+
+  // Trigger Google Sheet sync once for the batch
+  await syncGoogleSheetsForBatchIds([batchId], user);
+
+  const durationMs = Date.now() - startTime;
+  const successfulCount = results.filter((r) => r.success).length;
+  console.log(`[LeetCode Sync] Batch ${batchId} synced: ${successfulCount}/${studentList.length} succeeded in ${(durationMs / 1000).toFixed(2)}s`);
 
   return {
     batchId,
-    totalAttempted: studentIds.length,
-    successful: results.filter((r) => r.success).length,
+    totalAttempted: studentList.length,
+    successful: successfulCount,
     failed: results.filter((r) => !r.success).length,
+    durationSeconds: Number((durationMs / 1000).toFixed(2)),
     results,
   };
 }
@@ -279,7 +351,8 @@ export async function syncFilteredStudentsLeetCode(
   },
   user: { userId: string; role: UserRole }
 ) {
-  let studentIds: string[] = [];
+  const startTime = Date.now();
+  let studentList: Array<{ id: string; batch_id: string }> = [];
 
   if (!process.env.DATABASE_URL) {
     let list = inMemoryStore.students.filter((s) => s.leetcode_username);
@@ -291,7 +364,7 @@ export async function syncFilteredStudentsLeetCode(
     if (filters?.sectionId) list = list.filter((s) => s.section_id === filters.sectionId);
     if (filters?.department) list = list.filter((s) => s.department.toLowerCase() === filters.department!.toLowerCase());
     if (filters?.allocationBatchId) list = list.filter((s) => s.allocation_batch_id === filters.allocationBatchId || s.sub_batch === filters.allocationBatchId);
-    studentIds = list.map((s) => s.id);
+    studentList = list.map((s) => ({ id: s.id, batch_id: s.batch_id }));
   } else {
     const where: any = {
       leetcode_username: { not: null },
@@ -317,24 +390,33 @@ export async function syncFilteredStudentsLeetCode(
       };
     }
 
-    const students = await prisma.student.findMany({ where, select: { id: true } });
-    studentIds = students.map((s) => s.id);
+    const students = await prisma.student.findMany({ where, select: { id: true, batch_id: true } });
+    studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
   }
 
-  const results: any[] = [];
-  for (const stId of studentIds) {
+  // Run student syncing concurrently with a pool of 5 workers
+  const results = await runConcurrentTasks(studentList, 5, async (st) => {
     try {
-      const res = await syncStudentLeetCode(stId, user);
-      results.push({ studentId: stId, success: true, stats: res.stats });
+      const res = await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
+      return { studentId: st.id, success: true, stats: res.stats };
     } catch (err: any) {
-      results.push({ studentId: stId, success: false, error: err.message });
+      return { studentId: st.id, success: false, error: err.message };
     }
-  }
+  });
+
+  // Trigger Google Sheet sync once for all affected batches
+  const batchIds = studentList.map((s) => s.batch_id);
+  await syncGoogleSheetsForBatchIds(batchIds, user);
+
+  const durationMs = Date.now() - startTime;
+  const successfulCount = results.filter((r) => r.success).length;
+  console.log(`[LeetCode Sync] Filtered sync completed: ${successfulCount}/${studentList.length} students succeeded in ${(durationMs / 1000).toFixed(2)}s`);
 
   return {
-    totalAttempted: studentIds.length,
-    successful: results.filter((r) => r.success).length,
+    totalAttempted: studentList.length,
+    successful: successfulCount,
     failed: results.filter((r) => !r.success).length,
+    durationSeconds: Number((durationMs / 1000).toFixed(2)),
     results,
   };
 }
@@ -365,37 +447,47 @@ export async function runPeriodicAutoSync(): Promise<{
   totalAttempted: number;
   successful: number;
   failed: number;
+  durationSeconds?: number;
   timestamp: string;
 }> {
+  const startTime = Date.now();
   const adminContext = { userId: 'system-auto-sync', role: 'ADMIN' as const };
-  let studentIds: string[] = [];
+  let studentList: Array<{ id: string; batch_id: string }> = [];
 
   if (!process.env.DATABASE_URL) {
-    studentIds = inMemoryStore.students.filter((s) => s.leetcode_username).map((s) => s.id);
+    studentList = inMemoryStore.students.filter((s) => s.leetcode_username).map((s) => ({ id: s.id, batch_id: s.batch_id }));
   } else {
     const students = await prisma.student.findMany({
       where: { leetcode_username: { not: null } },
-      select: { id: true },
+      select: { id: true, batch_id: true },
     });
-    studentIds = students.map((s) => s.id);
+    studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
   }
 
-  let successCount = 0;
-  let failCount = 0;
-
-  for (const stId of studentIds) {
+  // Concurrent execution with pool of 5 workers
+  const results = await runConcurrentTasks(studentList, 5, async (st) => {
     try {
-      await syncStudentLeetCode(stId, adminContext);
-      successCount++;
-    } catch (err) {
-      failCount++;
+      await syncStudentLeetCode(st.id, adminContext, { skipGoogleSheetSync: true });
+      return { studentId: st.id, success: true };
+    } catch (err: any) {
+      return { studentId: st.id, success: false, error: err?.message };
     }
-  }
+  });
+
+  const batchIds = studentList.map((s) => s.batch_id);
+  await syncGoogleSheetsForBatchIds(batchIds, adminContext);
+
+  const durationMs = Date.now() - startTime;
+  const successCount = results.filter((r) => r.success).length;
+  const failCount = results.filter((r) => !r.success).length;
+
+  console.log(`[LeetCode AutoSync] Periodic auto-sync completed: ${successCount}/${studentList.length} in ${(durationMs / 1000).toFixed(2)}s`);
 
   return {
-    totalAttempted: studentIds.length,
+    totalAttempted: studentList.length,
     successful: successCount,
     failed: failCount,
+    durationSeconds: Number((durationMs / 1000).toFixed(2)),
     timestamp: new Date().toISOString(),
   };
 }
@@ -404,6 +496,7 @@ export async function runDailyMidnightReconciliation(): Promise<{
   totalAttempted: number;
   successful: number;
   failed: number;
+  durationSeconds?: number;
   istDate: string;
   timestamp: string;
 }> {

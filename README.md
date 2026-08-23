@@ -78,14 +78,13 @@ function doPost(e) {
         sheet.appendRow(data.rows[i]);
       }
     }
-    // Auto-fit column widths so text never overlaps
+    // Auto-fit column widths so text and names never get cut off
     var lastCol = sheet.getLastColumn();
     if (lastCol > 0) {
       sheet.autoResizeColumns(1, lastCol);
-      for (var col = 10; col <= lastCol; col++) {
-        if (sheet.getColumnWidth(col) < 220) {
-          sheet.setColumnWidth(col, 220);
-        }
+      for (var col = 1; col <= lastCol; col++) {
+        var currWidth = sheet.getColumnWidth(col);
+        sheet.setColumnWidth(col, Math.max(currWidth + 20, 110));
       }
     }
     return ContentService.createTextOutput("SUCCESS");

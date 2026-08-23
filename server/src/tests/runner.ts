@@ -11,6 +11,7 @@ import { runPhase6RegressionTests } from './regression/phase6.regression.test.js
 import { runPhase7RegressionTests } from './regression/phase7.regression.test.js';
 import { runPhase8RegressionTests } from './regression/phase8.regression.test.js';
 import { run60StudentResponsibilityRegressionTest } from './regression/responsibility60Student.regression.test.js';
+import { testExcelReportAndSyncOptimization } from './unit/excelAndSyncReport.test.js';
 
 async function main() {
   console.log('===========================================================');
@@ -49,6 +50,7 @@ async function main() {
   await runTest(testEnvironmentValidation);
   await runTest(testAuthMiddleware);
   await runTest(testStudentAuthServiceLogic);
+  await runTest(testExcelReportAndSyncOptimization);
   await runTest(runPhase1RegressionTests);
   await runTest(runPhase2RegressionTests);
   await runTest(runPhase3RegressionTests);

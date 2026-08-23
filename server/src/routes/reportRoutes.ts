@@ -10,6 +10,7 @@ router.get('/filters', reportController.getReportFilters);
 router.get('/data', reportController.getReportData);
 router.get('/student/:studentId/daily-progress', reportController.getStudentDailyProgress);
 router.post('/export-csv', reportController.exportCsvReport);
+router.post('/export-excel', reportController.exportExcelReport);
 router.post('/generate', reportController.generateReport);
 router.get('/', reportController.listReports);
 router.get('/:reportId/download', reportController.downloadReport);

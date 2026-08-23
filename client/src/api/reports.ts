@@ -121,21 +121,15 @@ function extractFileNameFromResponse(response: any, fallbackName?: string): stri
   if (disposition && disposition.includes('filename=')) {
     const match = disposition.match(/filename="?([^";]+)"?/);
     if (match && match[1]) {
-      let serverName = match[1].trim();
-      if (!serverName.toLowerCase().endsWith('.csv')) {
-        serverName += '.csv';
-      }
-      return serverName;
+      return match[1].trim();
     }
   }
 
   const todayStr = new Date().toISOString().split('T')[0];
-  let safeName = fallbackName || `coding_report_${todayStr}_all-time.csv`;
+  let safeName = fallbackName || `coding_report_${todayStr}_all-time.xlsx`;
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (uuidRegex.test(safeName)) {
-    safeName = `coding_report_${todayStr}_report.csv`;
-  } else if (!safeName.toLowerCase().endsWith('.csv')) {
-    safeName += '.csv';
+    safeName = `coding_report_${todayStr}_report.xlsx`;
   }
   return safeName;
 }
@@ -146,12 +140,15 @@ function triggerBrowserDownload(data: any, fileName: string) {
   const todayStr = new Date().toISOString().split('T')[0];
 
   if (!finalFileName || uuidRegex.test(finalFileName)) {
-    finalFileName = `coding_report_${todayStr}_download.csv`;
-  } else if (!finalFileName.toLowerCase().endsWith('.csv')) {
-    finalFileName += '.csv';
+    finalFileName = `coding_report_${todayStr}_download.xlsx`;
   }
 
-  const blob = new Blob([data], { type: 'text/csv;charset=utf-8;' });
+  const isExcel = finalFileName.toLowerCase().endsWith('.xlsx');
+  const mimeType = isExcel
+    ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    : 'text/csv;charset=utf-8;';
+
+  const blob = new Blob([data], { type: mimeType });
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -162,6 +159,33 @@ function triggerBrowserDownload(data: any, fileName: string) {
     window.URL.revokeObjectURL(url);
     document.body.removeChild(a);
   }, 100);
+}
+
+export async function exportExcelReport(data: {
+  academicYear?: string;
+  department?: string;
+  batchId?: string;
+  sectionId?: string;
+  allocationBatchId?: string;
+  staffId?: string;
+  fromDate?: string;
+  toDate?: string;
+  sortBy?: 'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name';
+  sortOrder?: 'asc' | 'desc';
+  activityStatus?: 'all' | 'active' | 'no_activity';
+}) {
+  const response = await api.post('/reports/export-excel', data, {
+    responseType: 'blob',
+  });
+
+  const fileName = extractFileNameFromResponse(
+    response,
+    `coding_report_${new Date().toISOString().split('T')[0]}_export.xlsx`
+  );
+
+  triggerBrowserDownload(response.data, fileName);
+
+  return { fileName };
 }
 
 export async function exportCsvReport(data: {
@@ -208,7 +232,7 @@ export async function downloadReportFile(reportId: string, fileName?: string) {
 
   const resolvedFileName = extractFileNameFromResponse(
     response,
-    fileName || `coding_report_${new Date().toISOString().split('T')[0]}_download.csv`
+    fileName || `coding_report_${new Date().toISOString().split('T')[0]}_download.xlsx`
   );
 
   triggerBrowserDownload(response.data, resolvedFileName);

@@ -1,3 +1,4 @@
+import ExcelJS from 'exceljs';
 import { prisma } from '../db/client.js';
 import { inMemoryStore } from '../db/inMemoryStore.js';
 import { UserRole } from '../types/index.js';
@@ -694,7 +695,7 @@ export async function getStudentDailyProgress(
   return { student: st, snapshots };
 }
 
-export function buildReportFileName(filters: ReportFilterParams): string {
+export function buildReportFileName(filters: ReportFilterParams, ext: 'csv' | 'xlsx' = 'csv'): string {
   const now = new Date();
   const dateStr = now.toISOString().split('T')[0];
 
@@ -732,7 +733,248 @@ export function buildReportFileName(filters: ReportFilterParams): string {
     periodTag = 'custom';
   }
 
-  return `coding_report_${dateStr}_${periodTag}.csv`;
+  return `coding_report_${dateStr}_${periodTag}.${ext}`;
+}
+
+export async function exportExcelReport(
+  filters: ReportFilterParams,
+  user: { userId: string; role: UserRole }
+) {
+  const reportData = await getReportData(filters, user);
+  const fileName = buildReportFileName(filters, 'xlsx');
+  const isPeriodFilter = !!(filters.fromDate || filters.toDate);
+
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'Coding Progress Tracker';
+  workbook.lastModifiedBy = 'Coding Progress Tracker';
+  workbook.created = new Date();
+  workbook.modified = new Date();
+
+  const worksheet = workbook.addWorksheet('Coding Leaderboard Report', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  });
+
+  if (isPeriodFilter) {
+    worksheet.columns = [
+      { header: 'Rank', key: 'rank', width: 8 },
+      { header: 'Academic Year', key: 'academic_year', width: 16 },
+      { header: 'Department', key: 'department', width: 16 },
+      { header: 'Section', key: 'section', width: 14 },
+      { header: 'Allocation Batch', key: 'allocation_batch', width: 18 },
+      { header: 'Mentor', key: 'mentor', width: 22 },
+      { header: 'Register No', key: 'register_no', width: 18 },
+      { header: 'Student Name', key: 'student_name', width: 26 },
+      { header: 'LeetCode ID', key: 'leetcode_id', width: 20 },
+      { header: 'Period Easy', key: 'period_easy', width: 14 },
+      { header: 'Period Medium', key: 'period_medium', width: 16 },
+      { header: 'Period Hard', key: 'period_hard', width: 14 },
+      { header: 'Period Total', key: 'period_total', width: 14 },
+      { header: 'Overall Easy', key: 'overall_easy', width: 14 },
+      { header: 'Overall Medium', key: 'overall_medium', width: 16 },
+      { header: 'Overall Hard', key: 'overall_hard', width: 14 },
+      { header: 'Overall Total', key: 'overall_total', width: 14 },
+    ];
+
+    reportData.students.forEach((st, index) => {
+      worksheet.addRow({
+        rank: index + 1,
+        academic_year: st.batch.academicYear || st.batch.batch_name,
+        department: st.department,
+        section: st.section.name,
+        allocation_batch: st.allocation_batch ? st.allocation_batch.name : '-',
+        mentor: st.mentor_name || 'Unassigned',
+        register_no: st.register_number,
+        student_name: st.name,
+        leetcode_id: st.leetcode_username || '-',
+        period_easy: st.easy_solved,
+        period_medium: st.medium_solved,
+        period_hard: st.hard_solved,
+        period_total: st.total_solved,
+        overall_easy: st.overall_easy !== undefined ? st.overall_easy : st.easy_solved,
+        overall_medium: st.overall_medium !== undefined ? st.overall_medium : st.medium_solved,
+        overall_hard: st.overall_hard !== undefined ? st.overall_hard : st.hard_solved,
+        overall_total: st.overall_total !== undefined ? st.overall_total : st.total_solved,
+      });
+    });
+  } else {
+    worksheet.columns = [
+      { header: 'Rank', key: 'rank', width: 8 },
+      { header: 'Academic Year', key: 'academic_year', width: 16 },
+      { header: 'Department', key: 'department', width: 16 },
+      { header: 'Section', key: 'section', width: 14 },
+      { header: 'Allocation Batch', key: 'allocation_batch', width: 18 },
+      { header: 'Mentor', key: 'mentor', width: 22 },
+      { header: 'Register No', key: 'register_no', width: 18 },
+      { header: 'Student Name', key: 'student_name', width: 26 },
+      { header: 'LeetCode ID', key: 'leetcode_id', width: 20 },
+      { header: 'Easy Solved', key: 'easy_solved', width: 14 },
+      { header: 'Medium Solved', key: 'medium_solved', width: 16 },
+      { header: 'Hard Solved', key: 'hard_solved', width: 14 },
+      { header: 'Total Solved', key: 'total_solved', width: 14 },
+    ];
+
+    reportData.students.forEach((st, index) => {
+      worksheet.addRow({
+        rank: index + 1,
+        academic_year: st.batch.academicYear || st.batch.batch_name,
+        department: st.department,
+        section: st.section.name,
+        allocation_batch: st.allocation_batch ? st.allocation_batch.name : '-',
+        mentor: st.mentor_name || 'Unassigned',
+        register_no: st.register_number,
+        student_name: st.name,
+        leetcode_id: st.leetcode_username || '-',
+        easy_solved: st.overall_easy !== undefined ? st.overall_easy : st.easy_solved,
+        medium_solved: st.overall_medium !== undefined ? st.overall_medium : st.medium_solved,
+        hard_solved: st.overall_hard !== undefined ? st.overall_hard : st.hard_solved,
+        total_solved: st.overall_total !== undefined ? st.overall_total : st.total_solved,
+      });
+    });
+  }
+
+  // Format Header Row (Row 1)
+  const headerRow = worksheet.getRow(1);
+  headerRow.height = 28;
+  headerRow.eachCell((cell) => {
+    cell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF1E293B' }, // Dark slate navy
+    };
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    cell.border = {
+      top: { style: 'thin', color: { argb: 'FF334155' } },
+      left: { style: 'thin', color: { argb: 'FF334155' } },
+      bottom: { style: 'medium', color: { argb: 'FF0F172A' } },
+      right: { style: 'thin', color: { argb: 'FF334155' } },
+    };
+  });
+
+  // Auto-fit dynamic column widths based on longest string + generous padding
+  const minWidthMap: Record<string, number> = {
+    rank: 10,
+    academic_year: 18,
+    department: 18,
+    section: 16,
+    allocation_batch: 20,
+    mentor: 26,
+    register_no: 22,
+    student_name: 32,
+    leetcode_id: 26,
+    easy_solved: 16,
+    medium_solved: 18,
+    hard_solved: 16,
+    total_solved: 16,
+    period_easy: 18,
+    period_medium: 18,
+    period_hard: 18,
+    period_total: 18,
+    overall_easy: 18,
+    overall_medium: 18,
+    overall_hard: 18,
+    overall_total: 18,
+  };
+
+  worksheet.columns.forEach((column) => {
+    const colKey = (column.key as string) || '';
+    const minWidth = minWidthMap[colKey] || 16;
+    let maxLength = column.header ? column.header.toString().length : 12;
+
+    column.eachCell?.({ includeEmpty: false }, (cell, rowNumber) => {
+      if (rowNumber > 1) {
+        const valStr = cell.value !== null && cell.value !== undefined ? cell.value.toString() : '';
+        if (valStr.length > maxLength) {
+          maxLength = valStr.length;
+        }
+      }
+    });
+
+    // Add +6 padding and enforce generous minimum column width
+    column.width = Math.max(maxLength + 6, minWidth);
+  });
+
+  // Format Data Rows
+  worksheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return;
+    row.height = 22;
+    const isEven = rowNumber % 2 === 0;
+
+    row.eachCell((cell, colNumber) => {
+      cell.font = { name: 'Calibri', size: 11, color: { argb: 'FF1E293B' } };
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: isEven ? 'FFF8FAFC' : 'FFFFFFFF' },
+      };
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        right: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+      };
+
+      // Alignment logic based on column key
+      const colKey = worksheet.getColumn(colNumber).key;
+      if (colKey === 'rank' || colKey === 'academic_year' || colKey === 'section') {
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      } else if (colKey === 'register_no') {
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        cell.numFmt = '@'; // Force text format
+      } else if (
+        colKey === 'easy_solved' ||
+        colKey === 'medium_solved' ||
+        colKey === 'hard_solved' ||
+        colKey === 'total_solved' ||
+        colKey === 'period_easy' ||
+        colKey === 'period_medium' ||
+        colKey === 'period_hard' ||
+        colKey === 'period_total' ||
+        colKey === 'overall_easy' ||
+        colKey === 'overall_medium' ||
+        colKey === 'overall_hard' ||
+        colKey === 'overall_total'
+      ) {
+        cell.alignment = { vertical: 'middle', horizontal: 'right' };
+        cell.numFmt = '#,##0';
+      } else {
+        cell.alignment = { vertical: 'middle', horizontal: 'left' };
+      }
+    });
+  });
+
+  const buffer = await workbook.xlsx.writeBuffer();
+
+  // Save audit log
+  if (!process.env.DATABASE_URL) {
+    inMemoryStore.generatedReports.push({
+      id: `rep_${Date.now()}`,
+      file_name: fileName,
+      generated_by_staff_id: user.userId,
+      report_type: 'EXCEL',
+      generated_at: new Date(),
+    });
+  } else {
+    const staffUser = await prisma.user.findUnique({ where: { id: user.userId } });
+    const staffIdToSave = staffUser ? staffUser.id : (await prisma.user.findFirst({ where: { role: 'ADMIN' } }))?.id;
+
+    if (staffIdToSave) {
+      await prisma.generatedReport.create({
+        data: {
+          file_name: fileName,
+          generated_by_staff_id: staffIdToSave,
+          report_type: 'EXCEL',
+        },
+      });
+    }
+  }
+
+  return {
+    fileName,
+    buffer,
+    report: { file_name: fileName },
+    totalRecords: reportData.students.length,
+  };
 }
 
 export async function exportCsvReport(
@@ -741,7 +983,7 @@ export async function exportCsvReport(
 ) {
   const reportData = await getReportData(filters, user);
 
-  const fileName = buildReportFileName(filters);
+  const fileName = buildReportFileName(filters, 'csv');
 
   const isPeriodFilter = !!(filters.fromDate || filters.toDate);
 

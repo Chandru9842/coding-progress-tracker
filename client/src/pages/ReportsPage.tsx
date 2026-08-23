@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, FileSpreadsheet, Download } from 'lucide-react';
 import { Layout } from '../components/Layout.js';
 import {
   getReportFilters,
   getReportData,
   getStudentDailyProgress,
   exportCsvReport,
+  exportExcelReport,
   getReportsList,
   downloadReportFile,
   syncReportStudents,
@@ -146,6 +147,7 @@ export default function ReportsPage() {
     setSyncingLeetcode(true);
     setSuccessMsg(null);
     setError(null);
+    const startTime = Date.now();
     try {
       const res = await syncReportStudents({
         batchId: batchId || undefined,
@@ -155,7 +157,8 @@ export default function ReportsPage() {
         staffId: staffId || undefined,
       });
 
-      setSuccessMsg(res.message || `Successfully synchronized LeetCode data for ${res.successful || 0} student(s)`);
+      const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
+      setSuccessMsg(res.message ? `${res.message} (completed in ${res.durationSeconds || elapsedSec}s)` : `⚡ Successfully synchronized LeetCode data for ${res.successful || 0} student(s) in ${elapsedSec}s`);
 
       const refreshedData = await getReportData({
         academicYear: academicYear || undefined,
@@ -207,6 +210,34 @@ export default function ReportsPage() {
     }
   };
 
+  const handleExportExcel = async () => {
+    setExporting(true);
+    setSuccessMsg(null);
+    setError(null);
+    try {
+      const res = await exportExcelReport({
+        academicYear: academicYear || undefined,
+        department: department || undefined,
+        batchId: batchId || undefined,
+        sectionId: sectionId || undefined,
+        allocationBatchId: allocationBatchId || undefined,
+        staffId: staffId || undefined,
+        fromDate: fromDate || undefined,
+        toDate: toDate || undefined,
+        sortBy,
+        sortOrder,
+        activityStatus,
+      });
+      setSuccessMsg(`📊 Excel report exported successfully with auto-fitted columns as ${res.fileName}`);
+      const updatedList = await getReportsList();
+      setReportsList(updatedList);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to export Excel report');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const handleExportCsv = async () => {
     setExporting(true);
     setSuccessMsg(null);
@@ -225,7 +256,7 @@ export default function ReportsPage() {
         sortOrder,
         activityStatus,
       });
-      setSuccessMsg(`Report exported successfully as ${res.fileName}`);
+      setSuccessMsg(`📄 CSV report exported successfully as ${res.fileName}`);
       const updatedList = await getReportsList();
       setReportsList(updatedList);
     } catch (err: any) {
@@ -329,12 +360,12 @@ export default function ReportsPage() {
             </button>
 
             <button
-              id="export-csv-btn"
-              onClick={handleExportCsv}
+              id="export-excel-btn"
+              onClick={handleExportExcel}
               disabled={exporting}
               style={{
                 padding: '0.65rem 1.25rem',
-                backgroundColor: 'var(--primary, #6366f1)',
+                backgroundColor: '#10b981',
                 color: '#ffffff',
                 border: 'none',
                 borderRadius: 'var(--radius-sm)',
@@ -345,9 +376,38 @@ export default function ReportsPage() {
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.5rem',
+                boxShadow: '0 2px 4px rgba(16, 185, 129, 0.2)',
+                transition: 'var(--transition-fast)',
               }}
+              title="Download Microsoft Excel (.xlsx) file with auto-sized column widths"
             >
-              {exporting ? 'Exporting...' : '📥 Generate & Download CSV Report'}
+              <FileSpreadsheet size={16} />
+              <span>{exporting ? 'Exporting...' : '📊 Generate & Download Excel Report (.xlsx)'}</span>
+            </button>
+
+            <button
+              id="export-csv-btn"
+              onClick={handleExportCsv}
+              disabled={exporting}
+              style={{
+                padding: '0.65rem 1rem',
+                backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                color: 'var(--text-secondary, #94a3b8)',
+                border: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.1))',
+                borderRadius: 'var(--radius-sm)',
+                fontWeight: 500,
+                fontSize: '0.875rem',
+                cursor: exporting ? 'not-allowed' : 'pointer',
+                opacity: exporting ? 0.6 : 1,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                transition: 'var(--transition-fast)',
+              }}
+              title="Download standard CSV format"
+            >
+              <Download size={15} />
+              <span>CSV (.csv)</span>
             </button>
           </div>
         </div>
@@ -872,7 +932,7 @@ export default function ReportsPage() {
           </h3>
           {reportsList.length === 0 ? (
             <div style={{ padding: '1.5rem 0', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
-              No reports generated yet. Click "Generate & Download CSV Report" above to create an audit record.
+              No reports generated yet. Click "Generate & Download Excel Report" above to create an audit record.
             </div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
@@ -890,7 +950,18 @@ export default function ReportsPage() {
                   {reportsList.map((rep) => (
                     <tr key={rep.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                       <td style={{ padding: '0.65rem 0.75rem', fontFamily: 'monospace', color: '#818cf8' }}>{rep.file_name}</td>
-                      <td style={{ padding: '0.65rem 0.75rem' }}>{rep.report_type}</td>
+                      <td style={{ padding: '0.65rem 0.75rem' }}>
+                        <span style={{
+                          padding: '0.2rem 0.5rem',
+                          borderRadius: '4px',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          backgroundColor: rep.file_name.endsWith('.xlsx') || rep.report_type === 'EXCEL' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(99, 102, 241, 0.15)',
+                          color: rep.file_name.endsWith('.xlsx') || rep.report_type === 'EXCEL' ? '#34d399' : '#818cf8',
+                        }}>
+                          {rep.file_name.endsWith('.xlsx') || rep.report_type === 'EXCEL' ? 'EXCEL (.xlsx)' : 'CSV (.csv)'}
+                        </span>
+                      </td>
                       <td style={{ padding: '0.65rem 0.75rem', color: 'var(--text-secondary)' }}>
                         {rep.batch ? rep.batch.batch_name : 'All Batches'}
                         {rep.section ? ` (${rep.section.name})` : ''}
@@ -902,16 +973,21 @@ export default function ReportsPage() {
                         <button
                           onClick={() => downloadReportFile(rep.id, rep.file_name)}
                           style={{
-                            padding: '0.25rem 0.6rem',
+                            padding: '0.3rem 0.75rem',
                             backgroundColor: 'var(--bg-input, #0f172a)',
                             color: '#818cf8',
                             border: '1px solid var(--border-subtle)',
                             borderRadius: '4px',
                             fontSize: '0.75rem',
                             cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.35rem',
                           }}
+                          title={`Download ${rep.file_name}`}
                         >
-                          Download CSV
+                          <Download size={13} />
+                          <span>Download</span>
                         </button>
                       </td>
                     </tr>

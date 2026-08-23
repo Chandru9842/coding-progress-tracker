@@ -1292,8 +1292,13 @@ export const SettingsPage: React.FC = () => {
         sheet.appendRow(data.rows[i]);
       }
     }
-    if (sheet.getLastColumn() > 0) {
-      sheet.autoResizeColumns(1, sheet.getLastColumn());
+    var lastCol = sheet.getLastColumn();
+    if (lastCol > 0) {
+      sheet.autoResizeColumns(1, lastCol);
+      for (var col = 1; col <= lastCol; col++) {
+        var currWidth = sheet.getColumnWidth(col);
+        sheet.setColumnWidth(col, Math.max(currWidth + 20, 110));
+      }
     }
     return ContentService.createTextOutput("SUCCESS");
   } catch (err) {
@@ -1304,7 +1309,7 @@ export const SettingsPage: React.FC = () => {
               <button
                 className="btn btn-secondary"
                 onClick={() => {
-                  const code = `function doPost(e) {\n  try {\n    var data = JSON.parse(e.postData.contents);\n    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();\n    sheet.clear();\n    if (data.headers) sheet.appendRow(data.headers);\n    if (data.rows) {\n      for (var i = 0; i < data.rows.length; i++) {\n        sheet.appendRow(data.rows[i]);\n      }\n    }\n    if (sheet.getLastColumn() > 0) {\n      sheet.autoResizeColumns(1, sheet.getLastColumn());\n    }\n    return ContentService.createTextOutput("SUCCESS");\n  } catch (err) {\n    return ContentService.createTextOutput("ERROR: " + err.message);\n  }\n}`;
+                  const code = `function doPost(e) {\n  try {\n    var data = JSON.parse(e.postData.contents);\n    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();\n    sheet.clear();\n    if (data.headers) sheet.appendRow(data.headers);\n    if (data.rows) {\n      for (var i = 0; i < data.rows.length; i++) {\n        sheet.appendRow(data.rows[i]);\n      }\n    }\n    var lastCol = sheet.getLastColumn();\n    if (lastCol > 0) {\n      sheet.autoResizeColumns(1, lastCol);\n      for (var col = 1; col <= lastCol; col++) {\n        var currWidth = sheet.getColumnWidth(col);\n        sheet.setColumnWidth(col, Math.max(currWidth + 20, 110));\n      }\n    }\n    return ContentService.createTextOutput("SUCCESS");\n  } catch (err) {\n    return ContentService.createTextOutput("ERROR: " + err.message);\n  }\n}`;
                   navigator.clipboard.writeText(code);
                   setMessage({ type: 'success', text: '📋 Apps Script code with Auto-Column Resizing copied!' });
                 }}

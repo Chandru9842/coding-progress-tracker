@@ -139,6 +139,54 @@ export async function exportCsvReport(req: AuthenticatedRequest, res: Response):
   }
 }
 
+export async function exportExcelReport(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const {
+      academicYear,
+      department,
+      batchId,
+      sectionId,
+      allocationBatchId,
+      staffId,
+      fromDate,
+      toDate,
+      sortBy,
+      sortOrder,
+      activityStatus,
+    } = req.body;
+
+    const result = await reportService.exportExcelReport(
+      {
+        academicYear,
+        department,
+        batchId,
+        sectionId,
+        allocationBatchId,
+        staffId,
+        fromDate,
+        toDate,
+        sortBy,
+        sortOrder,
+        activityStatus,
+      },
+      { userId: req.user.userId, role: req.user.role }
+    );
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${result.fileName}"`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+    res.status(200).send(Buffer.from(result.buffer));
+  } catch (error: any) {
+    const statusCode = error.statusCode || 500;
+    res.status(statusCode).json({ error: error.message || 'Failed to export Excel report' });
+  }
+}
+
 export async function generateReport(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     if (!req.user) {
@@ -207,22 +255,43 @@ export async function downloadReport(req: AuthenticatedRequest, res: Response): 
       return;
     }
 
-    const result = await reportService.exportCsvReport(
-      {
-        batchId: report.batch_id || undefined,
-        sectionId: report.section_id || undefined,
-      },
-      { userId: req.user.userId, role: req.user.role }
-    );
+    const isExcel = (report.file_name && report.file_name.endsWith('.xlsx')) || report.report_type === 'EXCEL';
 
-    const downloadFileName = (report.file_name && report.file_name.endsWith('.csv'))
-      ? report.file_name
-      : result.fileName;
+    if (isExcel) {
+      const result = await reportService.exportExcelReport(
+        {
+          batchId: report.batch_id || undefined,
+          sectionId: report.section_id || undefined,
+        },
+        { userId: req.user.userId, role: req.user.role }
+      );
 
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${downloadFileName}"`);
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
-    res.status(200).send(result.csvContent);
+      const downloadFileName = (report.file_name && report.file_name.endsWith('.xlsx'))
+        ? report.file_name
+        : result.fileName;
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${downloadFileName}"`);
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+      res.status(200).send(Buffer.from(result.buffer));
+    } else {
+      const result = await reportService.exportCsvReport(
+        {
+          batchId: report.batch_id || undefined,
+          sectionId: report.section_id || undefined,
+        },
+        { userId: req.user.userId, role: req.user.role }
+      );
+
+      const downloadFileName = (report.file_name && report.file_name.endsWith('.csv'))
+        ? report.file_name
+        : result.fileName;
+
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${downloadFileName}"`);
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+      res.status(200).send(result.csvContent);
+    }
   } catch (error: any) {
     res.status(500).json({ error: 'Failed to download report' });
   }
