@@ -531,6 +531,7 @@ export interface GoogleSheetLink {
   spreadsheet_name?: string | null;
   spreadsheet_url?: string | null;
   webhook_url?: string | null;
+  start_date?: string | null;
   academic_year?: string | null;
   department?: string | null;
   section_id?: string | null;
@@ -569,6 +570,7 @@ export const googleSheetsApi = {
     spreadsheet_id: string;
     spreadsheet_name?: string;
     webhook_url?: string;
+    start_date?: string | null;
     academic_year?: string;
     department?: string;
     section_id?: string;
@@ -589,6 +591,7 @@ export const googleSheetsApi = {
       spreadsheet_id?: string;
       spreadsheet_name?: string;
       webhook_url?: string;
+      start_date?: string | null;
       academic_year?: string;
       department?: string;
       section_id?: string;

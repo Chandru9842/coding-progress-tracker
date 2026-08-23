@@ -26,6 +26,8 @@ export const SettingsPage: React.FC = () => {
   const [editLinkName, setEditLinkName] = useState<string>('');
   const [editSpreadsheetId, setEditSpreadsheetId] = useState<string>('');
   const [editWebhookUrl, setEditWebhookUrl] = useState<string>('');
+  const [editDateScopeMode, setEditDateScopeMode] = useState<'ALL' | 'TODAY' | 'YESTERDAY' | 'CUSTOM'>('ALL');
+  const [editCustomStartDate, setEditCustomStartDate] = useState<string>('');
   const [updatingLink, setUpdatingLink] = useState<boolean>(false);
 
 
@@ -52,9 +54,22 @@ export const SettingsPage: React.FC = () => {
   const [linkName, setLinkName] = useState<string>('');
   const [spreadsheetId, setSpreadsheetId] = useState<string>('');
   const [webhookUrl, setWebhookUrl] = useState<string>('');
+  const [dateScopeMode, setDateScopeMode] = useState<'ALL' | 'TODAY' | 'YESTERDAY' | 'CUSTOM'>('ALL');
+  const [customStartDate, setCustomStartDate] = useState<string>('');
   const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>('');
   const [selectedDepartment, setSelectedDepartment] = useState<string>('ALL');
   const [selectedBatchIds, setSelectedBatchIds] = useState<Set<string>>(new Set());
+
+  const getTodayDateStr = () => {
+    const d = new Date();
+    return d.toISOString().split('T')[0];
+  };
+
+  const getYesterdayDateStr = () => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().split('T')[0];
+  };
 
   // Logs Modal state
   const [showLogsModal, setShowLogsModal] = useState<boolean>(false);
@@ -98,6 +113,9 @@ export const SettingsPage: React.FC = () => {
   const handleOpenLinkModal = async () => {
     setLinkName('');
     setSpreadsheetId('');
+    setWebhookUrl('');
+    setDateScopeMode('ALL');
+    setCustomStartDate(getTodayDateStr());
 
     if (isAdmin) {
       setSelectedDepartment('ALL');
@@ -195,12 +213,22 @@ export const SettingsPage: React.FC = () => {
       setSubmitting(true);
       let payload: any = {};
 
+      let effectiveStartDate: string | null = null;
+      if (dateScopeMode === 'TODAY') {
+        effectiveStartDate = getTodayDateStr();
+      } else if (dateScopeMode === 'YESTERDAY') {
+        effectiveStartDate = getYesterdayDateStr();
+      } else if (dateScopeMode === 'CUSTOM') {
+        effectiveStartDate = customStartDate.trim() || getTodayDateStr();
+      }
+
       if (isAdmin) {
         const generatedName = linkName.trim() || `${selectedAcademicYear} ${selectedDepartment !== 'ALL' ? selectedDepartment : 'All Departments'} Master Sheet`;
         payload = {
           name: generatedName,
           spreadsheet_id: spreadsheetId,
           webhook_url: webhookUrl.trim() || undefined,
+          start_date: effectiveStartDate || undefined,
           academic_year: selectedAcademicYear,
           department: selectedDepartment,
           is_auto_sync_enabled: true,
@@ -217,6 +245,7 @@ export const SettingsPage: React.FC = () => {
           name: generatedName,
           spreadsheet_id: spreadsheetId,
           webhook_url: webhookUrl.trim() || undefined,
+          start_date: effectiveStartDate || undefined,
           academic_year: selectedStaffAcademicYear,
           department: targetSec?.department,
           section_id: selectedStaffSectionId,
@@ -235,6 +264,8 @@ export const SettingsPage: React.FC = () => {
       setLinkName('');
       setSpreadsheetId('');
       setWebhookUrl('');
+      setDateScopeMode('ALL');
+      setCustomStartDate('');
 
       setSelectedAcademicYear('');
       setSelectedDepartment('ALL');
@@ -350,6 +381,20 @@ export const SettingsPage: React.FC = () => {
     setEditLinkName(link.name);
     setEditSpreadsheetId(link.spreadsheet_id || link.spreadsheet_url || '');
     setEditWebhookUrl(link.webhook_url || '');
+
+    if (!link.start_date) {
+      setEditDateScopeMode('ALL');
+      setEditCustomStartDate(getTodayDateStr());
+    } else if (link.start_date === getTodayDateStr()) {
+      setEditDateScopeMode('TODAY');
+      setEditCustomStartDate(link.start_date);
+    } else if (link.start_date === getYesterdayDateStr()) {
+      setEditDateScopeMode('YESTERDAY');
+      setEditCustomStartDate(link.start_date);
+    } else {
+      setEditDateScopeMode('CUSTOM');
+      setEditCustomStartDate(link.start_date);
+    }
   };
 
   const handleSaveEditLink = async (e: React.FormEvent) => {
@@ -365,7 +410,20 @@ export const SettingsPage: React.FC = () => {
       setMessage(null);
       const val = editSpreadsheetId.trim();
       const whVal = editWebhookUrl.trim();
-      let payload: any = { name: editLinkName.trim() };
+
+      let effectiveEditStartDate: string | null = null;
+      if (editDateScopeMode === 'TODAY') {
+        effectiveEditStartDate = getTodayDateStr();
+      } else if (editDateScopeMode === 'YESTERDAY') {
+        effectiveEditStartDate = getYesterdayDateStr();
+      } else if (editDateScopeMode === 'CUSTOM') {
+        effectiveEditStartDate = editCustomStartDate.trim() || getTodayDateStr();
+      }
+
+      let payload: any = {
+        name: editLinkName.trim(),
+        start_date: effectiveEditStartDate,
+      };
 
       if (val.startsWith('https://script.google.com') || val.includes('/macros/s/')) {
         payload.webhook_url = val;
@@ -774,9 +832,33 @@ export const SettingsPage: React.FC = () => {
                         </span>
                       </div>
 
-                      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
                         <span>Scope: <strong>{linkedBatchNames}</strong></span>
                         <span>Sheet ID: <code style={{ fontSize: '0.8rem' }}>{link.spreadsheet_id}</code></span>
+                        {link.start_date ? (
+                          <span style={{
+                            fontSize: '0.75rem',
+                            padding: '0.15rem 0.5rem',
+                            borderRadius: '4px',
+                            backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                            color: '#38bdf8',
+                            border: '1px solid rgba(56, 189, 248, 0.3)',
+                            fontWeight: 600,
+                          }}>
+                            🗓️ From {link.start_date} onwards
+                          </span>
+                        ) : (
+                          <span style={{
+                            fontSize: '0.75rem',
+                            padding: '0.15rem 0.5rem',
+                            borderRadius: '4px',
+                            backgroundColor: 'rgba(148, 163, 184, 0.12)',
+                            color: '#94a3b8',
+                            fontWeight: 500,
+                          }}>
+                            🌐 Full History
+                          </span>
+                        )}
                       </div>
 
                       {link.last_sync_at && (
@@ -1106,6 +1188,128 @@ export const SettingsPage: React.FC = () => {
                 </div>
               </div>
 
+              {/* Date Scope / Start Date Selector */}
+              <div style={{
+                backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                padding: '1rem',
+                borderRadius: '8px',
+                border: '1px solid var(--border-subtle)',
+              }}>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--text-primary)' }}>
+                  🗓️ Snapshot History & Start Date Scope
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                  <label style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.5rem 0.75rem',
+                    borderRadius: '6px',
+                    backgroundColor: dateScopeMode === 'ALL' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                    border: `1px solid ${dateScopeMode === 'ALL' ? '#6366f1' : 'var(--border-subtle)'}`,
+                    cursor: 'pointer',
+                    fontSize: '0.82rem',
+                    fontWeight: dateScopeMode === 'ALL' ? 600 : 400,
+                  }}>
+                    <input
+                      type="radio"
+                      name="dateScopeMode"
+                      value="ALL"
+                      checked={dateScopeMode === 'ALL'}
+                      onChange={() => setDateScopeMode('ALL')}
+                    />
+                    <span>🌐 Full History (All Past Dates)</span>
+                  </label>
+
+                  <label style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.5rem 0.75rem',
+                    borderRadius: '6px',
+                    backgroundColor: dateScopeMode === 'TODAY' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                    border: `1px solid ${dateScopeMode === 'TODAY' ? '#6366f1' : 'var(--border-subtle)'}`,
+                    cursor: 'pointer',
+                    fontSize: '0.82rem',
+                    fontWeight: dateScopeMode === 'TODAY' ? 600 : 400,
+                  }}>
+                    <input
+                      type="radio"
+                      name="dateScopeMode"
+                      value="TODAY"
+                      checked={dateScopeMode === 'TODAY'}
+                      onChange={() => setDateScopeMode('TODAY')}
+                    />
+                    <span>⚡ From Today ({getTodayDateStr()})</span>
+                  </label>
+
+                  <label style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.5rem 0.75rem',
+                    borderRadius: '6px',
+                    backgroundColor: dateScopeMode === 'YESTERDAY' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                    border: `1px solid ${dateScopeMode === 'YESTERDAY' ? '#6366f1' : 'var(--border-subtle)'}`,
+                    cursor: 'pointer',
+                    fontSize: '0.82rem',
+                    fontWeight: dateScopeMode === 'YESTERDAY' ? 600 : 400,
+                  }}>
+                    <input
+                      type="radio"
+                      name="dateScopeMode"
+                      value="YESTERDAY"
+                      checked={dateScopeMode === 'YESTERDAY'}
+                      onChange={() => setDateScopeMode('YESTERDAY')}
+                    />
+                    <span>⏪ From Yesterday ({getYesterdayDateStr()})</span>
+                  </label>
+
+                  <label style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.5rem 0.75rem',
+                    borderRadius: '6px',
+                    backgroundColor: dateScopeMode === 'CUSTOM' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                    border: `1px solid ${dateScopeMode === 'CUSTOM' ? '#6366f1' : 'var(--border-subtle)'}`,
+                    cursor: 'pointer',
+                    fontSize: '0.82rem',
+                    fontWeight: dateScopeMode === 'CUSTOM' ? 600 : 400,
+                  }}>
+                    <input
+                      type="radio"
+                      name="dateScopeMode"
+                      value="CUSTOM"
+                      checked={dateScopeMode === 'CUSTOM'}
+                      onChange={() => setDateScopeMode('CUSTOM')}
+                    />
+                    <span>🗓️ Custom Start Date</span>
+                  </label>
+                </div>
+
+                {dateScopeMode === 'CUSTOM' && (
+                  <div style={{ marginTop: '0.5rem', marginBottom: '0.5rem' }}>
+                    <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                      Select Starting Date:
+                    </label>
+                    <input
+                      type="date"
+                      className="form-input"
+                      value={customStartDate || getTodayDateStr()}
+                      onChange={(e) => setCustomStartDate(e.target.value)}
+                      style={{ width: '100%', maxWidth: '240px' }}
+                    />
+                  </div>
+                )}
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  {dateScopeMode === 'ALL' && 'Includes all historical date snapshot columns available in the database plus all upcoming days.'}
+                  {dateScopeMode === 'TODAY' && `Starts clean with today's date column (${getTodayDateStr()}). Future daily snapshots will automatically be appended as new columns.`}
+                  {dateScopeMode === 'YESTERDAY' && `Includes yesterday (${getYesterdayDateStr()}) and today, and appends future snapshots automatically.`}
+                  {dateScopeMode === 'CUSTOM' && `Only includes date columns on or after ${customStartDate || 'selected start date'}. Upcoming days will be added automatically.`}
+                </div>
+              </div>
+
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setShowLinkModal(false)}>
                   Cancel
@@ -1238,6 +1442,127 @@ export const SettingsPage: React.FC = () => {
                 </span>
               </div>
 
+              {/* Date Scope / Start Date Selector */}
+              <div style={{
+                backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                padding: '1rem',
+                borderRadius: '8px',
+                border: '1px solid var(--border-subtle)',
+              }}>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--text-primary)' }}>
+                  🗓️ Snapshot History & Start Date Scope
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                  <label style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.5rem 0.75rem',
+                    borderRadius: '6px',
+                    backgroundColor: editDateScopeMode === 'ALL' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                    border: `1px solid ${editDateScopeMode === 'ALL' ? '#6366f1' : 'var(--border-subtle)'}`,
+                    cursor: 'pointer',
+                    fontSize: '0.82rem',
+                    fontWeight: editDateScopeMode === 'ALL' ? 600 : 400,
+                  }}>
+                    <input
+                      type="radio"
+                      name="editDateScopeMode"
+                      value="ALL"
+                      checked={editDateScopeMode === 'ALL'}
+                      onChange={() => setEditDateScopeMode('ALL')}
+                    />
+                    <span>🌐 Full History (All Past Dates)</span>
+                  </label>
+
+                  <label style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.5rem 0.75rem',
+                    borderRadius: '6px',
+                    backgroundColor: editDateScopeMode === 'TODAY' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                    border: `1px solid ${editDateScopeMode === 'TODAY' ? '#6366f1' : 'var(--border-subtle)'}`,
+                    cursor: 'pointer',
+                    fontSize: '0.82rem',
+                    fontWeight: editDateScopeMode === 'TODAY' ? 600 : 400,
+                  }}>
+                    <input
+                      type="radio"
+                      name="editDateScopeMode"
+                      value="TODAY"
+                      checked={editDateScopeMode === 'TODAY'}
+                      onChange={() => setEditDateScopeMode('TODAY')}
+                    />
+                    <span>⚡ From Today ({getTodayDateStr()})</span>
+                  </label>
+
+                  <label style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.5rem 0.75rem',
+                    borderRadius: '6px',
+                    backgroundColor: editDateScopeMode === 'YESTERDAY' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                    border: `1px solid ${editDateScopeMode === 'YESTERDAY' ? '#6366f1' : 'var(--border-subtle)'}`,
+                    cursor: 'pointer',
+                    fontSize: '0.82rem',
+                    fontWeight: editDateScopeMode === 'YESTERDAY' ? 600 : 400,
+                  }}>
+                    <input
+                      type="radio"
+                      name="editDateScopeMode"
+                      value="YESTERDAY"
+                      checked={editDateScopeMode === 'YESTERDAY'}
+                      onChange={() => setEditDateScopeMode('YESTERDAY')}
+                    />
+                    <span>⏪ From Yesterday ({getYesterdayDateStr()})</span>
+                  </label>
+
+                  <label style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.5rem 0.75rem',
+                    borderRadius: '6px',
+                    backgroundColor: editDateScopeMode === 'CUSTOM' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                    border: `1px solid ${editDateScopeMode === 'CUSTOM' ? '#6366f1' : 'var(--border-subtle)'}`,
+                    cursor: 'pointer',
+                    fontSize: '0.82rem',
+                    fontWeight: editDateScopeMode === 'CUSTOM' ? 600 : 400,
+                  }}>
+                    <input
+                      type="radio"
+                      name="editDateScopeMode"
+                      value="CUSTOM"
+                      checked={editDateScopeMode === 'CUSTOM'}
+                      onChange={() => setEditDateScopeMode('CUSTOM')}
+                    />
+                    <span>🗓️ Custom Start Date</span>
+                  </label>
+                </div>
+
+                {editDateScopeMode === 'CUSTOM' && (
+                  <div style={{ marginTop: '0.5rem', marginBottom: '0.5rem' }}>
+                    <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                      Select Starting Date:
+                    </label>
+                    <input
+                      type="date"
+                      className="form-input"
+                      value={editCustomStartDate || getTodayDateStr()}
+                      onChange={(e) => setEditCustomStartDate(e.target.value)}
+                      style={{ width: '100%', maxWidth: '240px' }}
+                    />
+                  </div>
+                )}
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  {editDateScopeMode === 'ALL' && 'Includes all historical date snapshot columns available in the database plus all upcoming days.'}
+                  {editDateScopeMode === 'TODAY' && `Starts clean with today's date column (${getTodayDateStr()}). Future daily snapshots will automatically be appended as new columns.`}
+                  {editDateScopeMode === 'YESTERDAY' && `Includes yesterday (${getYesterdayDateStr()}) and today, and appends future snapshots automatically.`}
+                  {editDateScopeMode === 'CUSTOM' && `Only includes date columns on or after ${editCustomStartDate || 'selected start date'}. Upcoming days will be added automatically.`}
+                </div>
+              </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
                 <button

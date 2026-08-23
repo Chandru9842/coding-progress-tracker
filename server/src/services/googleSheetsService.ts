@@ -15,6 +15,7 @@ export interface GoogleSheetLinkDTO {
   spreadsheet_name?: string | null;
   spreadsheet_url?: string | null;
   webhook_url?: string | null;
+  start_date?: string | null;
   academic_year?: string | null;
   department?: string | null;
   section_id?: string | null;
@@ -36,6 +37,7 @@ export interface CreateSheetLinkInput {
   spreadsheet_id: string;
   spreadsheet_name?: string;
   webhook_url?: string;
+  start_date?: string | null;
   academic_year?: string;
   department?: string;
   section_id?: string;
@@ -78,11 +80,18 @@ export function extractSpreadsheetId(input: string): string {
   return candidate.includes('.') || candidate.includes(':') || candidate.length < 10 ? '' : candidate;
 }
 
-export function sanitizeGoogleSheetLink<T extends { spreadsheet_id: string; spreadsheet_url?: string | null; webhook_url?: string | null }>(link: T): T {
+export function sanitizeGoogleSheetLink<T extends { spreadsheet_id: string; spreadsheet_url?: string | null; webhook_url?: string | null; start_date?: string | null }>(link: T): T {
   if (!link) return link;
 
   let rawUrl = (link as any).spreadsheet_url || '';
   let storedWebhook: string | null = (link as any).webhook_url || null;
+  let storedStartDate: string | null = (link as any).start_date || null;
+
+  if (rawUrl.includes('@@START_DATE@@')) {
+    const sParts = rawUrl.split('@@START_DATE@@');
+    rawUrl = sParts[0];
+    storedStartDate = sParts[1] || null;
+  }
 
   if (rawUrl.includes('@@WEBHOOK@@')) {
     const parts = rawUrl.split('@@WEBHOOK@@');
@@ -90,6 +99,8 @@ export function sanitizeGoogleSheetLink<T extends { spreadsheet_id: string; spre
     storedWebhook = parts[1];
   } else if (rawUrl.startsWith('https://script.google.com') || rawUrl.includes('/macros/s/')) {
     storedWebhook = rawUrl;
+  } else {
+    link.spreadsheet_url = rawUrl;
   }
 
   const rawId = link.spreadsheet_id || '';
@@ -107,6 +118,9 @@ export function sanitizeGoogleSheetLink<T extends { spreadsheet_id: string; spre
   if (storedWebhook) {
     (link as any).webhook_url = storedWebhook;
   }
+  if (storedStartDate) {
+    (link as any).start_date = storedStartDate;
+  }
 
   return link;
 }
@@ -118,12 +132,17 @@ export function sanitizeGoogleSheetLink<T extends { spreadsheet_id: string; spre
  */
 export function buildGoogleSheetMatrix(
   students: any[],
-  snapshots: any[]
+  snapshots: any[],
+  startDate?: string | null
 ): GoogleSheetMatrix {
   const dateSet = new Set<string>();
   snapshots.forEach((snap) => {
     const dStr = toISTDateString(snap.snapshot_date);
-    if (dStr) dateSet.add(dStr);
+    if (dStr) {
+      if (!startDate || dStr >= startDate) {
+        dateSet.add(dStr);
+      }
+    }
   });
 
   const sortedDates = Array.from(dateSet).sort();
@@ -262,7 +281,7 @@ export async function createGoogleSheetLink(
   user: { userId: string; role: 'ADMIN' | 'STAFF' },
   input: CreateSheetLinkInput
 ): Promise<GoogleSheetLinkDTO> {
-  const { name, spreadsheet_id: raw_spreadsheet_id, spreadsheet_name, webhook_url, academic_year, department, section_id, allocation_batch_id, is_auto_sync_enabled, sync_students, sync_daily_progress } = input;
+  const { name, spreadsheet_id: raw_spreadsheet_id, spreadsheet_name, webhook_url, start_date, academic_year, department, section_id, allocation_batch_id, is_auto_sync_enabled, sync_students, sync_daily_progress } = input;
   let batch_ids = input.batch_ids || [];
 
   if (!raw_spreadsheet_id || !name) {
@@ -349,7 +368,13 @@ export async function createGoogleSheetLink(
   }
 
   const baseSheetUrl = `https://docs.google.com/spreadsheets/d/${cleanSpreadsheetId}/edit`;
-  const spreadsheet_url = webhook_url ? `${baseSheetUrl}@@WEBHOOK@@${webhook_url.trim()}` : baseSheetUrl;
+  let spreadsheet_url = baseSheetUrl;
+  if (webhook_url && webhook_url.trim()) {
+    spreadsheet_url += `@@WEBHOOK@@${webhook_url.trim()}`;
+  }
+  if (start_date && start_date.trim()) {
+    spreadsheet_url += `@@START_DATE@@${start_date.trim()}`;
+  }
 
   if (!process.env.DATABASE_URL) {
     const newLink: InMemoryGoogleSheetLink = {
@@ -360,6 +385,7 @@ export async function createGoogleSheetLink(
       spreadsheet_name: spreadsheet_name || 'Linked Sheet',
       spreadsheet_url,
       webhook_url: webhook_url || null,
+      start_date: start_date || null,
       academic_year: academic_year || null,
       department: department || null,
       section_id: section_id || null,
@@ -573,12 +599,30 @@ export async function updateGoogleSheetLink(
     cleanSpreadsheetId = existing.spreadsheet_id;
   }
 
-  const existingBaseUrl = existing.spreadsheet_url?.split('@@WEBHOOK@@')[0] || null;
-  const existingWebhook = existing.spreadsheet_url?.includes('@@WEBHOOK@@') ? existing.spreadsheet_url.split('@@WEBHOOK@@')[1] : null;
+  const rawUrl = existing.spreadsheet_url || '';
+  const existingBaseUrl = rawUrl.split('@@WEBHOOK@@')[0]?.split('@@START_DATE@@')[0] || null;
+  let existingWebhook: string | null = null;
+  let existingStartDate: string | null = null;
+
+  if (rawUrl.includes('@@START_DATE@@')) {
+    existingStartDate = rawUrl.split('@@START_DATE@@')[1] || null;
+  }
+  if (rawUrl.includes('@@WEBHOOK@@')) {
+    const afterWh = rawUrl.split('@@WEBHOOK@@')[1];
+    existingWebhook = afterWh.split('@@START_DATE@@')[0] || null;
+  }
 
   const baseSheetUrl = cleanSpreadsheetId ? `https://docs.google.com/spreadsheets/d/${cleanSpreadsheetId}/edit` : existingBaseUrl;
   const effectiveWebhook = input.webhook_url !== undefined ? (input.webhook_url ? input.webhook_url.trim() : null) : existingWebhook;
-  const spreadsheetUrl = effectiveWebhook && baseSheetUrl ? `${baseSheetUrl}@@WEBHOOK@@${effectiveWebhook}` : (baseSheetUrl || effectiveWebhook || null);
+  const effectiveStartDate = input.start_date !== undefined ? (input.start_date ? input.start_date.trim() : null) : existingStartDate;
+
+  let spreadsheetUrl = baseSheetUrl || '';
+  if (effectiveWebhook) {
+    spreadsheetUrl += `@@WEBHOOK@@${effectiveWebhook}`;
+  }
+  if (effectiveStartDate) {
+    spreadsheetUrl += `@@START_DATE@@${effectiveStartDate}`;
+  }
 
   let batch_ids = input.batch_ids || existing.batch_ids;
 
@@ -778,14 +822,21 @@ export async function syncGoogleSheetLink(
     });
   }
 
-  const matrix = buildGoogleSheetMatrix(studentRows, snapshotRows);
+  // Extract Start Date
+  let startDate: string | null = (link as any).start_date || null;
+  if (!startDate && link.spreadsheet_url && link.spreadsheet_url.includes('@@START_DATE@@')) {
+    startDate = link.spreadsheet_url.split('@@START_DATE@@')[1] || null;
+  }
+
+  const matrix = buildGoogleSheetMatrix(studentRows, snapshotRows, startDate);
   const now = new Date();
-  const details = `Idempotently synchronized ${matrix.studentCount} student rows (one row per student) and ${matrix.dateColumnsCount} date columns for linked batches [${link.batch_ids.join(', ')}] into Google Sheet ID [${link.spreadsheet_id}].`;
+  const details = `Idempotently synchronized ${matrix.studentCount} student rows (one row per student) and ${matrix.dateColumnsCount} date columns (from ${startDate || 'all history'}) for linked batches [${link.batch_ids.join(', ')}] into Google Sheet ID [${link.spreadsheet_id}].`;
 
   // Dispatch Webhook POST if Google Apps Script URL or webhook_url is linked
   let webhookUrl: string | null = (link as any).webhook_url || null;
   if (!webhookUrl && link.spreadsheet_url && link.spreadsheet_url.includes('@@WEBHOOK@@')) {
-    webhookUrl = link.spreadsheet_url.split('@@WEBHOOK@@')[1];
+    const afterWh = link.spreadsheet_url.split('@@WEBHOOK@@')[1];
+    webhookUrl = afterWh.split('@@START_DATE@@')[0] || null;
   } else if (!webhookUrl && link.spreadsheet_url && (link.spreadsheet_url.startsWith('https://script.google.com') || link.spreadsheet_url.includes('/macros/s/'))) {
     webhookUrl = link.spreadsheet_url;
   } else if (!webhookUrl && link.spreadsheet_id && (link.spreadsheet_id.startsWith('https://script.google.com') || link.spreadsheet_id.includes('/macros/s/'))) {
