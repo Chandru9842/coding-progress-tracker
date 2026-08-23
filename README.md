@@ -32,7 +32,7 @@ graph TD
     Frontend -->|JWT Auth / HTTP REST| Backend["⚡ Express + Node.js API (Vercel Serverless)"]
     Backend -->|Prisma ORM| Database["🐘 PostgreSQL (Supabase Database)"]
     
-    Cron["⏰ Vercel Daily Cron / Internal Timer (4:30 AM IST)"] -->|Trigger| ReconcileEngine["🔄 LeetCode Reconciliation Engine"]
+    Cron["⏰ Vercel Daily Cron / Internal Timer (12:30 AM IST)"] -->|Trigger| ReconcileEngine["🔄 LeetCode Reconciliation Engine"]
     ReconcileEngine -->|GraphQL Query| LeetCode["🧩 LeetCode Public GraphQL API"]
     ReconcileEngine -->|Store Daily Snapshots| Database
     ReconcileEngine -->|"POST JSON (text/plain)"| AppsScript["📜 Google Apps Script Web App"]
@@ -236,7 +236,7 @@ npx vercel --prod
 
 - Serverless API handles requests at `/api/v1/*`
 - Static Vite Frontend served via global Vercel Edge CDN
-- Vercel Daily Cron triggers reconciliation automatically at `4:30 AM IST` (`0 23 * * *` UTC)
+- Vercel Daily Cron triggers reconciliation automatically at `12:30 AM IST` (`0 19 * * *` UTC)
 
 ---
 

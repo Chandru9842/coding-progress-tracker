@@ -13,12 +13,12 @@ app.listen(PORT, async () => {
 
   // Local Background Scheduler Adapter (15-min near-real-time periodic polling)
   if (process.env.NODE_ENV !== 'test') {
-    console.log('[Auto-Sync Scheduler] Initialized background polling adapter (15m near-real-time + 12:00 AM IST reconciliation).');
+    console.log('[Auto-Sync Scheduler] Initialized background polling adapter (15m near-real-time + 12:30 AM IST reconciliation).');
     
     // Trigger initial background sync safely
     runPeriodicAutoSync().catch((err) => console.warn('[Auto-Sync Startup Warning]:', err));
 
-    // Initialize 12:00 AM Midnight Auto-Sync Cron for Google Sheets
+    // Initialize 12:30 AM Midnight Auto-Sync Cron for Google Sheets
     startMidnightCronScheduler();
 
     // Set 15-minute polling interval
