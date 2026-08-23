@@ -5,7 +5,7 @@ import { syncGoogleSheetLink } from './googleSheetsService.js';
 let cronTimer: NodeJS.Timeout | null = null;
 
 export async function runMidnightAutoSync(): Promise<void> {
-  console.log('[CRON] Starting 12:30 PM IST Google Sheets Auto-Sync...');
+  console.log('[CRON] Starting 1:00 PM IST Google Sheets Auto-Sync...');
 
   try {
     let activeLinks: { id: string; owner_user_id: string }[] = [];
@@ -32,7 +32,7 @@ export async function runMidnightAutoSync(): Promise<void> {
       }
     }
   } catch (error: any) {
-    console.error('[CRON] Failed to execute 12:30 PM IST auto-sync task:', error?.message || error);
+    console.error('[CRON] Failed to execute 1:00 PM IST auto-sync task:', error?.message || error);
   }
 }
 
@@ -40,18 +40,18 @@ export function startMidnightCronScheduler(): void {
   const scheduleNextRun = () => {
     const now = new Date();
     const nextRun = new Date(now);
-    nextRun.setHours(12, 30, 0, 0); // 12:30 PM IST today
+    nextRun.setHours(13, 0, 0, 0); // 1:00 PM IST today
 
     if (nextRun.getTime() <= now.getTime()) {
-      nextRun.setDate(nextRun.getDate() + 1); // Tomorrow 12:30 PM IST
+      nextRun.setDate(nextRun.getDate() + 1); // Tomorrow 1:00 PM IST
     }
 
     const msUntilRun = Math.max(1000, nextRun.getTime() - now.getTime());
-    console.log(`[CRON] 12:30 PM IST Auto-Sync Scheduler initialized. Next run in ${Math.round(msUntilRun / 1000 / 60)} minutes (at 12:30 PM IST).`);
+    console.log(`[CRON] 1:00 PM IST Auto-Sync Scheduler initialized. Next run in ${Math.round(msUntilRun / 1000 / 60)} minutes (at 1:00 PM IST).`);
 
     cronTimer = setTimeout(async () => {
       await runMidnightAutoSync();
-      scheduleNextRun(); // Reschedule for next 12:30 PM IST
+      scheduleNextRun(); // Reschedule for next 1:00 PM IST
     }, msUntilRun);
   };
 

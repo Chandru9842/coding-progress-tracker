@@ -127,6 +127,7 @@ export interface InMemoryGoogleSheetLink {
   spreadsheet_id: string;
   spreadsheet_name?: string | null;
   spreadsheet_url?: string | null;
+  webhook_url?: string | null;
   academic_year?: string | null;
   department?: string | null;
   section_id?: string | null;

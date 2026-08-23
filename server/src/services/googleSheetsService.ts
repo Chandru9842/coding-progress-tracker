@@ -249,7 +249,7 @@ export async function createGoogleSheetLink(
   user: { userId: string; role: 'ADMIN' | 'STAFF' },
   input: CreateSheetLinkInput
 ): Promise<GoogleSheetLinkDTO> {
-  const { name, spreadsheet_id: raw_spreadsheet_id, spreadsheet_name, academic_year, department, section_id, allocation_batch_id, is_auto_sync_enabled, sync_students, sync_daily_progress } = input;
+  const { name, spreadsheet_id: raw_spreadsheet_id, spreadsheet_name, webhook_url, academic_year, department, section_id, allocation_batch_id, is_auto_sync_enabled, sync_students, sync_daily_progress } = input;
   let batch_ids = input.batch_ids || [];
 
   if (!raw_spreadsheet_id || !name) {
@@ -345,6 +345,7 @@ export async function createGoogleSheetLink(
       spreadsheet_id: cleanSpreadsheetId,
       spreadsheet_name: spreadsheet_name || 'Linked Sheet',
       spreadsheet_url,
+      webhook_url: webhook_url || null,
       academic_year: academic_year || null,
       department: department || null,
       section_id: section_id || null,
@@ -381,6 +382,7 @@ export async function createGoogleSheetLink(
       spreadsheet_id: cleanSpreadsheetId,
       spreadsheet_name: spreadsheet_name || 'Linked Sheet',
       spreadsheet_url,
+      webhook_url: webhook_url || null,
       academic_year: academic_year || null,
       department: department || null,
       section_id: section_id || null,
@@ -518,6 +520,7 @@ export async function updateGoogleSheetLink(
       name: input.name || existing.name,
       spreadsheet_id: cleanSpreadsheetId,
       spreadsheet_url: `https://docs.google.com/spreadsheets/d/${cleanSpreadsheetId}/edit`,
+      webhook_url: input.webhook_url !== undefined ? input.webhook_url : (existing as any).webhook_url,
       academic_year: input.academic_year !== undefined ? input.academic_year : existing.academic_year,
       department: input.department !== undefined ? input.department : existing.department,
       section_id: input.section_id !== undefined ? input.section_id : existing.section_id,
@@ -586,11 +589,13 @@ export async function updateGoogleSheetLink(
       spreadsheet_id: cleanSpreadsheetId,
       spreadsheet_name: input.spreadsheet_name || existing.spreadsheet_name,
       spreadsheet_url: spreadsheetUrl,
+      webhook_url: input.webhook_url !== undefined ? input.webhook_url : existing.webhook_url,
       academic_year: input.academic_year !== undefined ? input.academic_year : existing.academic_year,
       department: input.department !== undefined ? input.department : existing.department,
       section_id: input.section_id !== undefined ? input.section_id : existing.section_id,
       allocation_batch_id: input.allocation_batch_id !== undefined ? input.allocation_batch_id : existing.allocation_batch_id,
       batch_ids,
+      updated_at: new Date(),
     },
     include: {
       owner: { select: { id: true, name: true, email: true, role: true } },
