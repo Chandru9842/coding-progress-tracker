@@ -151,12 +151,12 @@ export async function triggerDailyMidnightReconciliation(req: AuthenticatedReque
 
     const result = await leetcodeService.runDailyMidnightReconciliation();
     res.status(200).json({
-      message: 'Daily 4:30 AM IST reconciliation sync completed',
-      scheduledTimeIST: '4:30 AM IST (23:00 UTC)',
-      data: result,
+      message: 'Daily 12:30 PM IST reconciliation sync completed',
+      scheduledTimeIST: '12:30 PM IST (07:00 UTC)',
+      result,
     });
   } catch (error: any) {
-    res.status(500).json({ error: 'Failed to execute daily 4:30 AM IST reconciliation' });
+    res.status(500).json({ error: 'Failed to execute daily 12:30 PM IST reconciliation' });
   }
 }
 
@@ -172,7 +172,7 @@ export async function getSyncStatus(req: AuthenticatedRequest, res: Response): P
     res.status(200).json({
       status: 'ACTIVE',
       periodicPollingIntervalMinutes: 15,
-      dailyReconciliationIST: '4:30 AM IST (23:00 UTC)',
+      dailyReconciliationIST: '12:30 PM IST (07:00 UTC)',
       currentISTDate: istDate,
       vercelCronConfig: {
         cronEndpoint: '/api/v1/cron/daily-sync',
