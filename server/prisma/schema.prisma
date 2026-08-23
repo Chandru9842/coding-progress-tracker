@@ -195,7 +195,6 @@ model GoogleSheetLink {
   spreadsheet_id        String
   spreadsheet_name      String?
   spreadsheet_url       String?
-  webhook_url           String?
   academic_year         String?
   department            String?
   section_id            String?
