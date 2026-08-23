@@ -194,21 +194,19 @@ export async function getAuthorizedStudentIdsForStaff(
     return Array.from(studentIds);
   }
 
-  // 1. Fetch all staff assignments in parallel in ONE roundtrip
-  const [directAssignments, sectionAssignments, batchAssignments] = await Promise.all([
-    prisma.staffStudentAssignment.findMany({
-      where: { staff_id: staffId },
-      select: { student_id: true },
-    }),
-    prisma.staffSectionAssignment.findMany({
-      where: { staff_id: staffId },
-      select: { section_id: true, assignment_mode: true, allocation_batch_id: true },
-    }),
-    prisma.staffBatchAssignment.findMany({
-      where: { staff_id: staffId },
-      select: { batch_id: true },
-    }),
-  ]);
+  // 1. Fetch staff assignments sequentially to avoid connection contention in constrained pools
+  const directAssignments = await prisma.staffStudentAssignment.findMany({
+    where: { staff_id: staffId },
+    select: { student_id: true },
+  });
+  const sectionAssignments = await prisma.staffSectionAssignment.findMany({
+    where: { staff_id: staffId },
+    select: { section_id: true, assignment_mode: true, allocation_batch_id: true },
+  });
+  const batchAssignments = await prisma.staffBatchAssignment.findMany({
+    where: { staff_id: staffId },
+    select: { batch_id: true },
+  });
 
   const studentIds = new Set<string>(directAssignments.map((a) => a.student_id));
 
