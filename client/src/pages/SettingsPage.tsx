@@ -1023,22 +1023,15 @@ export const SettingsPage: React.FC = () => {
                           required
                           style={{ width: '100%' }}
                         >
+                          <option value="ALL">Entire Section (All Students)</option>
                           {(() => {
                             const currentSec = staffSections.find((s) => s.id === selectedStaffSectionId);
-                            if (!currentSec) return null;
-                            const isAllMode = currentSec.assignment_mode === 'ALL';
-                            return (
-                              <>
-                                {isAllMode && (
-                                  <option value="ALL">Entire Section (All Students)</option>
-                                )}
-                                {currentSec.allocation_batches && currentSec.allocation_batches.map((ab) => (
-                                  <option key={ab.id} value={ab.id}>
-                                    {ab.name} {isAllMode ? '' : '(Assigned Batch)'}
-                                  </option>
-                                ))}
-                              </>
-                            );
+                            if (!currentSec || !currentSec.allocation_batches) return null;
+                            return currentSec.allocation_batches.map((ab) => (
+                              <option key={ab.id} value={ab.id}>
+                                {ab.name}
+                              </option>
+                            ));
                           })()}
                         </select>
                         {(() => {

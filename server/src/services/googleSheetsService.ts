@@ -315,7 +315,7 @@ export async function createGoogleSheetLink(
 
     if (allocation_batch_id && allocation_batch_id !== 'ALL') {
       const targetSec = staffScopes.sections.find((s) => s.id === section_id);
-      const isAllowedAlloc = targetSec?.allocation_batches.some((ab: any) => ab.id === allocation_batch_id);
+      const isAllowedAlloc = targetSec?.allocation_batches.some((ab: any) => ab.id === allocation_batch_id || ab.name === allocation_batch_id);
       if (!isAllowedAlloc) {
         const err: any = new Error(`Forbidden: You are not authorized to link Google Sheets for unassigned allocation batch [${allocation_batch_id}]`);
         err.statusCode = 403;

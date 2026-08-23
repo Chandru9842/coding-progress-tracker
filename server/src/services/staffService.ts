@@ -651,14 +651,18 @@ export async function getStaffAssignedScopes(staffId: string) {
 
   studentAssigns.forEach((sa) => {
     if (sa.student?.section && sa.student?.batch) {
-      registerSection(sa.student.section, sa.student.batch, 'SELECTED', sa.student.allocation_batch);
+      let matchedAlloc: any = sa.student.allocation_batch || null;
+      if (!matchedAlloc && sa.student.sub_batch && sa.student.section?.allocation_batches) {
+        matchedAlloc = sa.student.section.allocation_batches.find((ab: any) => ab.name === sa.student.sub_batch) || null;
+      }
+      registerSection(sa.student.section, sa.student.batch, 'SELECTED', matchedAlloc);
     }
   });
 
   const formattedSections = Array.from(assignedSectionsMap.values()).map((sec) => {
     let allowedAllocBatches = Array.from(sec.allocation_batches_map.values());
-    if (sec.assignment_mode === 'ALL') {
-      allowedAllocBatches = sec.all_section_allocation_batches.map((ab: any) => ({ id: ab.id, name: ab.name }));
+    if (sec.assignment_mode === 'ALL' || allowedAllocBatches.length === 0) {
+      allowedAllocBatches = (sec.all_section_allocation_batches || []).map((ab: any) => ({ id: ab.id, name: ab.name }));
     }
     return {
       id: sec.id,
