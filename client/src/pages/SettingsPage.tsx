@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
-import { User, Mail, Shield, Calendar, FileSpreadsheet, RefreshCw, CheckCircle2, AlertCircle, Plus, ExternalLink, Trash2, History, Pencil, Key, Save, X, Search, Edit2, Copy, Download, Code } from 'lucide-react';
+import { User, Mail, Shield, Calendar, FileSpreadsheet, RefreshCw, CheckCircle2, AlertCircle, Plus, ExternalLink, Trash2, History, Pencil, Key, Save, X, Search, Edit2, Copy, Download, Code, Link2, Unlink } from 'lucide-react';
 
 import { authApi, googleSheetsApi, batchApi, staffApi, GoogleSheetLink, GoogleSheetLinkLog, Batch } from '../services/api.js';
 
@@ -28,6 +28,7 @@ export const SettingsPage: React.FC = () => {
   const [editWebhookUrl, setEditWebhookUrl] = useState<string>('');
   const [editDateScopeMode, setEditDateScopeMode] = useState<'ALL' | 'TODAY' | 'YESTERDAY' | 'CUSTOM'>('ALL');
   const [editCustomStartDate, setEditCustomStartDate] = useState<string>('');
+  const [editIsActive, setEditIsActive] = useState<boolean>(true);
   const [updatingLink, setUpdatingLink] = useState<boolean>(false);
 
 
@@ -358,15 +359,38 @@ export const SettingsPage: React.FC = () => {
   };
 
 
-  const handleDeleteLink = async (linkId: string) => {
-    if (!window.confirm('Deactivate this linked sheet? Historical sheet data will be preserved in Google Sheets.')) return;
+  const handleDeactivateLink = async (link: GoogleSheetLink) => {
+    if (!window.confirm(`Unlink "${link.name}"?\n\nIt will be moved to the Historical Links archive and stop automated daily syncing. Sheet data in Google Sheets remains preserved.`)) return;
     try {
       setMessage(null);
-      await googleSheetsApi.deleteLink(linkId);
-      setMessage({ type: 'success', text: 'Google Sheet link deactivated successfully.' });
+      await googleSheetsApi.deleteLink(link.id, false);
+      setMessage({ type: 'success', text: `Google Sheet [${link.name}] unlinked (moved to Historical).` });
       await loadData();
     } catch (err: any) {
-      setMessage({ type: 'error', text: err.response?.data?.error || 'Failed to deactivate link.' });
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Failed to unlink Google Sheet.' });
+    }
+  };
+
+  const handleReactivateLink = async (link: GoogleSheetLink) => {
+    try {
+      setMessage(null);
+      await googleSheetsApi.updateLink(link.id, { is_active: true });
+      setMessage({ type: 'success', text: `Google Sheet [${link.name}] reactivated and linked successfully!` });
+      await loadData();
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Failed to reactivate Google Sheet link.' });
+    }
+  };
+
+  const handlePermanentDeleteLink = async (link: GoogleSheetLink) => {
+    if (!window.confirm(`⚠️ PERMANENTLY DELETE "${link.name}"?\n\nThis will completely remove this sheet entry and its sync history from the system.\n(Your actual Google Sheet file in Google Drive will remain untouched.)`)) return;
+    try {
+      setMessage(null);
+      await googleSheetsApi.deleteLink(link.id, true);
+      setMessage({ type: 'success', text: `Google Sheet [${link.name}] permanently deleted.` });
+      await loadData();
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Failed to permanently delete Google Sheet link.' });
     }
   };
 
@@ -392,6 +416,7 @@ export const SettingsPage: React.FC = () => {
     setEditLinkName(link.name);
     setEditSpreadsheetId(link.spreadsheet_id || link.spreadsheet_url || '');
     setEditWebhookUrl(link.webhook_url || '');
+    setEditIsActive(link.is_active);
 
     if (!link.start_date) {
       setEditDateScopeMode('ALL');
@@ -434,6 +459,7 @@ export const SettingsPage: React.FC = () => {
       let payload: any = {
         name: editLinkName.trim(),
         start_date: effectiveEditStartDate,
+        is_active: editIsActive,
       };
 
       if (val.startsWith('https://script.google.com') || val.includes('/macros/s/')) {
@@ -959,16 +985,35 @@ export const SettingsPage: React.FC = () => {
                         <History size={14} />
                       </button>
 
-                      {link.is_active && (
+                      {link.is_active ? (
                         <button
                           className="btn btn-secondary"
-                          onClick={() => handleDeleteLink(link.id)}
-                          style={{ padding: '0.4rem 0.6rem', color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.3)' }}
-                          title="Deactivate Link"
+                          onClick={() => handleDeactivateLink(link)}
+                          style={{ padding: '0.4rem 0.6rem', color: '#f59e0b', borderColor: 'rgba(245, 158, 11, 0.3)' }}
+                          title="Unlink Sheet (Move to Historical Archive)"
                         >
-                          <Trash2 size={14} />
+                          <Unlink size={14} />
+                        </button>
+                      ) : (
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => handleReactivateLink(link)}
+                          style={{ padding: '0.4rem 0.65rem', color: '#34d399', borderColor: 'rgba(16, 185, 129, 0.3)', display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.8rem', fontWeight: 600 }}
+                          title="Relink / Reactivate this sheet for live tracking"
+                        >
+                          <Link2 size={13} />
+                          <span>Relink</span>
                         </button>
                       )}
+
+                      <button
+                        className="btn btn-secondary"
+                        onClick={() => handlePermanentDeleteLink(link)}
+                        style={{ padding: '0.4rem 0.6rem', color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+                        title="Delete Permanently from System"
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     </div>
                   </div>
                 );
@@ -1599,6 +1644,41 @@ export const SettingsPage: React.FC = () => {
                   {editDateScopeMode === 'YESTERDAY' && `Includes yesterday (${getYesterdayDateStr()}) and today, and appends future snapshots automatically.`}
                   {editDateScopeMode === 'CUSTOM' && `Only includes date columns on or after ${editCustomStartDate || 'selected start date'}. Upcoming days will be added automatically.`}
                 </div>
+              </div>
+
+              {/* Link Active / Historical Status Switch */}
+              <div style={{
+                backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                padding: '0.85rem 1rem',
+                borderRadius: '8px',
+                border: '1px solid var(--border-subtle)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}>
+                <div>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 600, display: 'block', color: 'var(--text-primary)' }}>
+                    Link Status
+                  </span>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    {editIsActive ? '⚡ Active: Live automatic background syncing is enabled.' : '📁 Historical: Archived sheet (sync paused).' }
+                  </span>
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={editIsActive}
+                    onChange={(e) => setEditIsActive(e.target.checked)}
+                    style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                  />
+                  <span style={{
+                    fontSize: '0.8rem',
+                    fontWeight: 700,
+                    color: editIsActive ? '#34d399' : '#94a3b8',
+                  }}>
+                    {editIsActive ? 'Active (Live)' : 'Historical'}
+                  </span>
+                </label>
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>

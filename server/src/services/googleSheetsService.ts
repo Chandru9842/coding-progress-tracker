@@ -43,6 +43,7 @@ export interface CreateSheetLinkInput {
   section_id?: string;
   allocation_batch_id?: string;
   batch_ids?: string[];
+  is_active?: boolean;
   is_auto_sync_enabled?: boolean;
   sync_students?: boolean;
   sync_daily_progress?: boolean;
@@ -560,6 +561,7 @@ export async function updateGoogleSheetLink(
       spreadsheet_id: cleanSpreadsheetId,
       spreadsheet_url: `https://docs.google.com/spreadsheets/d/${cleanSpreadsheetId}/edit`,
       webhook_url: input.webhook_url !== undefined ? input.webhook_url : (existing as any).webhook_url,
+      is_active: input.is_active !== undefined ? input.is_active : existing.is_active,
       academic_year: input.academic_year !== undefined ? input.academic_year : existing.academic_year,
       department: input.department !== undefined ? input.department : existing.department,
       section_id: input.section_id !== undefined ? input.section_id : existing.section_id,
@@ -650,6 +652,7 @@ export async function updateGoogleSheetLink(
       spreadsheet_id: cleanSpreadsheetId,
       spreadsheet_name: input.spreadsheet_name || existing.spreadsheet_name,
       spreadsheet_url: spreadsheetUrl,
+      is_active: input.is_active !== undefined ? input.is_active : existing.is_active,
       academic_year: input.academic_year !== undefined ? input.academic_year : existing.academic_year,
       department: input.department !== undefined ? input.department : existing.department,
       section_id: input.section_id !== undefined ? input.section_id : existing.section_id,
@@ -916,16 +919,36 @@ export async function syncGoogleSheetLink(
 
 export async function deleteGoogleSheetLink(
   linkId: string,
-  user: { userId: string; role: 'ADMIN' | 'STAFF' }
+  user: { userId: string; role: 'ADMIN' | 'STAFF' },
+  permanent?: boolean
 ): Promise<{ message: string }> {
   await getGoogleSheetLinkById(linkId, user);
 
   if (!process.env.DATABASE_URL) {
-    const memLink = inMemoryStore.googleSheetLinks.find((l) => l.id === linkId);
-    if (memLink) {
-      memLink.is_active = false;
+    const linkIndex = inMemoryStore.googleSheetLinks.findIndex((l) => l.id === linkId);
+    if (linkIndex !== -1) {
+      if (permanent) {
+        inMemoryStore.googleSheetLinks.splice(linkIndex, 1);
+        inMemoryStore.googleSheetLinkLogs = inMemoryStore.googleSheetLinkLogs.filter(
+          (l) => l.sheet_link_id !== linkId
+        );
+        return { message: 'Google Sheet link permanently deleted from system.' };
+      } else {
+        inMemoryStore.googleSheetLinks[linkIndex].is_active = false;
+        return { message: 'Google Sheet Link deactivated successfully. Spreadsheet data remains preserved.' };
+      }
     }
-    return { message: 'Google Sheet Link deactivated successfully. Spreadsheet data remains preserved.' };
+    return { message: 'Google Sheet Link deleted.' };
+  }
+
+  if (permanent) {
+    await prisma.googleSheetLinkSyncLog.deleteMany({
+      where: { sheet_link_id: linkId },
+    });
+    await prisma.googleSheetLink.delete({
+      where: { id: linkId },
+    });
+    return { message: 'Google Sheet link permanently deleted from system.' };
   }
 
   await prisma.googleSheetLink.update({

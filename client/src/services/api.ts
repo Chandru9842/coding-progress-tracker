@@ -592,6 +592,7 @@ export const googleSheetsApi = {
       spreadsheet_name?: string;
       webhook_url?: string;
       start_date?: string | null;
+      is_active?: boolean;
       academic_year?: string;
       department?: string;
       section_id?: string;
@@ -602,7 +603,6 @@ export const googleSheetsApi = {
     const res = await api.put<{ link: GoogleSheetLink }>(`/google-sheets/links/${linkId}`, data);
     return res.data.link;
   },
-
 
   getLinkDetail: async (linkId: string): Promise<GoogleSheetLink> => {
     const res = await api.get<{ link: GoogleSheetLink }>(`/google-sheets/links/${linkId}`);
@@ -619,8 +619,9 @@ export const googleSheetsApi = {
     return res.data;
   },
 
-  deleteLink: async (linkId: string): Promise<void> => {
-    await api.delete(`/google-sheets/links/${linkId}`);
+  deleteLink: async (linkId: string, permanent: boolean = false): Promise<{ message?: string }> => {
+    const res = await api.delete(`/google-sheets/links/${linkId}${permanent ? '?permanent=true' : ''}`);
+    return res.data;
   },
 
   getLogs: async (linkId: string): Promise<GoogleSheetLinkLog[]> => {

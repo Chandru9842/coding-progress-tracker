@@ -76,14 +76,19 @@ export async function deleteLink(req: AuthenticatedRequest, res: Response): Prom
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    const result = await googleSheetsService.deleteGoogleSheetLink(req.params.linkId, {
-      userId: req.user.userId,
-      role: req.user.role,
-    });
+    const permanent = req.query.permanent === 'true';
+    const result = await googleSheetsService.deleteGoogleSheetLink(
+      req.params.linkId,
+      {
+        userId: req.user.userId,
+        role: req.user.role,
+      },
+      permanent
+    );
     res.status(200).json(result);
   } catch (error: any) {
     const statusCode = error.statusCode || 500;
-    res.status(statusCode).json({ error: error.message || 'Failed to deactivate Google Sheet link' });
+    res.status(statusCode).json({ error: error.message || 'Failed to delete Google Sheet link' });
   }
 }
 
