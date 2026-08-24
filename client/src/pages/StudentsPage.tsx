@@ -530,6 +530,7 @@ export const StudentsPage: React.FC = () => {
                       />
                     </th>
                   )}
+                  <th style={{ padding: '1rem', width: '60px', textAlign: 'center', whiteSpace: 'nowrap' }}>Rank</th>
                   <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Register Number</th>
                   <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Student Name</th>
                   <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Department</th>
@@ -544,12 +545,12 @@ export const StudentsPage: React.FC = () => {
               <tbody>
                 {students.length === 0 ? (
                   <tr>
-                    <td colSpan={canManage ? 10 : 8} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    <td colSpan={canManage ? 11 : 9} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
                       {search || filterBatchId ? 'No students match your filter criteria.' : 'No students yet.'}
                     </td>
                   </tr>
                 ) : (
-                  students.map((student) => {
+                  students.map((student, index) => {
                     const isSelected = selectedStudentIds.has(student.id);
                     return (
                       <tr
@@ -572,6 +573,20 @@ export const StudentsPage: React.FC = () => {
                             />
                           </td>
                         )}
+                        <td style={{ padding: '1rem', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                          <span style={{
+                            display: 'inline-block',
+                            minWidth: '26px',
+                            padding: '0.15rem 0.45rem',
+                            borderRadius: '4px',
+                            backgroundColor: index < 3 ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.04)',
+                            color: index < 3 ? 'var(--primary)' : 'var(--text-secondary)',
+                            fontSize: '0.82rem',
+                            fontWeight: 700,
+                          }}>
+                            {index + 1}
+                          </span>
+                        </td>
                         <td style={{ padding: '1rem', fontWeight: 700, color: 'var(--primary)', whiteSpace: 'nowrap' }}>
                           {student.register_number}
                         </td>

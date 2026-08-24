@@ -581,6 +581,7 @@ export const BatchDetailPage: React.FC = () => {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                   <thead>
                     <tr style={{ backgroundColor: 'rgba(15, 23, 42, 0.8)', borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+                      <th style={{ padding: '0.6rem 0.8rem', textAlign: 'center', width: '50px' }}>Rank</th>
                       <th style={{ padding: '0.6rem 0.8rem', textAlign: 'left' }}>Reg No</th>
                       <th style={{ padding: '0.6rem 0.8rem', textAlign: 'left' }}>Student Name</th>
                       <th style={{ padding: '0.6rem 0.8rem', textAlign: 'left' }}>Mentor</th>
@@ -589,8 +590,22 @@ export const BatchDetailPage: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {allocDetailStudents.map((st) => (
+                    {allocDetailStudents.map((st, index) => (
                       <tr key={st.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                        <td style={{ padding: '0.6rem 0.8rem', textAlign: 'center' }}>
+                          <span style={{
+                            display: 'inline-block',
+                            minWidth: '22px',
+                            padding: '0.1rem 0.35rem',
+                            borderRadius: '4px',
+                            backgroundColor: index < 3 ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.04)',
+                            color: index < 3 ? 'var(--primary)' : 'var(--text-secondary)',
+                            fontSize: '0.78rem',
+                            fontWeight: 700,
+                          }}>
+                            {index + 1}
+                          </span>
+                        </td>
                         <td style={{ padding: '0.6rem 0.8rem', fontWeight: 600, color: 'var(--primary)' }}>{st.register_number}</td>
                         <td style={{ padding: '0.6rem 0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>{st.name}</td>
                         <td style={{ padding: '0.6rem 0.8rem', color: 'var(--accent-staff)' }}>{st.mentor?.name || 'Unassigned'}</td>
