@@ -296,3 +296,55 @@ export async function downloadReport(req: AuthenticatedRequest, res: Response): 
     res.status(500).json({ error: 'Failed to download report' });
   }
 }
+
+export async function deleteReport(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    const result = await reportService.deleteReport(req.params.reportId, {
+      userId: req.user.userId,
+      role: req.user.role,
+    });
+    res.status(200).json(result);
+  } catch (error: any) {
+    const statusCode = error.statusCode || 500;
+    res.status(statusCode).json({ error: error.message || 'Failed to delete report audit entry' });
+  }
+}
+
+export async function bulkDeleteReports(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    const { reportIds } = req.body;
+    const result = await reportService.bulkDeleteReports(reportIds, {
+      userId: req.user.userId,
+      role: req.user.role,
+    });
+    res.status(200).json(result);
+  } catch (error: any) {
+    const statusCode = error.statusCode || 500;
+    res.status(statusCode).json({ error: error.message || 'Failed to bulk delete report audit entries' });
+  }
+}
+
+export async function clearAllReports(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    const result = await reportService.clearAllReports({
+      userId: req.user.userId,
+      role: req.user.role,
+    });
+    res.status(200).json(result);
+  } catch (error: any) {
+    const statusCode = error.statusCode || 500;
+    res.status(statusCode).json({ error: error.message || 'Failed to clear report audit history' });
+  }
+}

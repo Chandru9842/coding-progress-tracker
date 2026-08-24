@@ -244,3 +244,19 @@ export async function syncGoogleSheets(data: { webhookUrl?: string; batchId?: st
   const response = await api.post('/reports/sync-sheets', data);
   return response.data;
 }
+
+export async function deleteReportItem(reportId: string): Promise<{ message: string }> {
+  const response = await api.delete(`/reports/${reportId}`);
+  return response.data;
+}
+
+export async function bulkDeleteReportItems(reportIds: string[]): Promise<{ message: string; count: number }> {
+  const response = await api.post('/reports/bulk-delete', { reportIds });
+  return response.data;
+}
+
+export async function clearAllReportItems(): Promise<{ message: string; count: number }> {
+  const response = await api.delete('/reports/clear-all');
+  return response.data;
+}
+

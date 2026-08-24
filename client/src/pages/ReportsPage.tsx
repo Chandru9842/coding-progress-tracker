@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, FileSpreadsheet, Download } from 'lucide-react';
+import { RefreshCw, FileSpreadsheet, Download, Trash2, CheckCircle2, AlertCircle, X } from 'lucide-react';
 import { Layout } from '../components/Layout.js';
 import {
   getReportFilters,
@@ -10,6 +10,9 @@ import {
   getReportsList,
   downloadReportFile,
   syncReportStudents,
+  deleteReportItem,
+  bulkDeleteReportItems,
+  clearAllReportItems,
   ReportFilterOptions,
   ReportDataResponse,
   StudentReportItem,
@@ -75,11 +78,95 @@ export default function ReportsPage() {
 
   const [reportData, setReportData] = useState<ReportDataResponse | null>(null);
   const [reportsList, setReportsList] = useState<ReportItem[]>([]);
+  const [selectedReportIds, setSelectedReportIds] = useState<Set<string>>(new Set());
+  const [deletingReport, setDeletingReport] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [exporting, setExporting] = useState<boolean>(false);
   const [syncingLeetcode, setSyncingLeetcode] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  // Report Selection & Deletion Handlers
+  const handleToggleSelectReport = (reportId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setSelectedReportIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(reportId)) {
+        next.delete(reportId);
+      } else {
+        next.add(reportId);
+      }
+      return next;
+    });
+  };
+
+  const handleToggleSelectAllReports = () => {
+    if (selectedReportIds.size === reportsList.length && reportsList.length > 0) {
+      setSelectedReportIds(new Set());
+    } else {
+      setSelectedReportIds(new Set(reportsList.map((r) => r.id)));
+    }
+  };
+
+  const handleClearReportSelection = () => {
+    setSelectedReportIds(new Set());
+  };
+
+  const handleDeleteSingleReport = async (rep: ReportItem, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!window.confirm(`Delete report audit entry "${rep.file_name}"?`)) return;
+    try {
+      setDeletingReport(true);
+      setError(null);
+      await deleteReportItem(rep.id);
+      setReportsList((prev) => prev.filter((r) => r.id !== rep.id));
+      setSelectedReportIds((prev) => {
+        const next = new Set(prev);
+        next.delete(rep.id);
+        return next;
+      });
+      setSuccessMsg(`Deleted "${rep.file_name}" from audit history.`);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to delete report audit entry');
+    } finally {
+      setDeletingReport(false);
+    }
+  };
+
+  const handleBulkDeleteReports = async () => {
+    if (selectedReportIds.size === 0) return;
+    if (!window.confirm(`Delete ${selectedReportIds.size} selected report audit record(s)?`)) return;
+    try {
+      setDeletingReport(true);
+      setError(null);
+      const toDelete = Array.from(selectedReportIds);
+      await bulkDeleteReportItems(toDelete);
+      setReportsList((prev) => prev.filter((r) => !selectedReportIds.has(r.id)));
+      setSelectedReportIds(new Set());
+      setSuccessMsg(`Successfully deleted ${toDelete.length} report audit record(s).`);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to bulk delete reports');
+    } finally {
+      setDeletingReport(false);
+    }
+  };
+
+  const handleClearAllReports = async () => {
+    if (reportsList.length === 0) return;
+    if (!window.confirm(`⚠️ Clear all ${reportsList.length} report export audit records from history?`)) return;
+    try {
+      setDeletingReport(true);
+      setError(null);
+      await clearAllReportItems();
+      setReportsList([]);
+      setSelectedReportIds(new Set());
+      setSuccessMsg('All report export audit history cleared.');
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to clear report history');
+    } finally {
+      setDeletingReport(false);
+    }
+  };
 
   // Student Daily Progress Modal State
   const [selectedStudent, setSelectedStudent] = useState<StudentReportItem | null>(null);
@@ -927,9 +1014,91 @@ export default function ReportsPage() {
           borderRadius: 'var(--radius-md)',
           padding: '1.5rem',
         }}>
-          <h3 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '1rem' }}>
-            Report Export Audit History
-          </h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <h3 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)', margin: 0 }}>
+              Report Export Audit History
+            </h3>
+            {reportsList.length > 0 && (
+              <button
+                type="button"
+                onClick={handleClearAllReports}
+                disabled={deletingReport}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  padding: '0.3rem 0.65rem',
+                  backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                  color: '#f87171',
+                  border: '1px solid rgba(239, 68, 68, 0.25)',
+                  borderRadius: '4px',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+                title="Clear all export records"
+              >
+                <Trash2 size={13} />
+                <span>Clear All History</span>
+              </button>
+            )}
+          </div>
+
+          {/* Bulk Action Controls Bar for Reports */}
+          {selectedReportIds.size > 0 && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '0.75rem 1rem',
+              backgroundColor: 'rgba(99, 102, 241, 0.12)',
+              border: '1px solid rgba(99, 102, 241, 0.3)',
+              borderRadius: 'var(--radius-sm)',
+              marginBottom: '1rem',
+              flexWrap: 'wrap',
+              gap: '0.75rem',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                <span style={{ fontSize: '0.875rem' }}>
+                  Selected: <strong style={{ color: 'var(--primary)' }}>{selectedReportIds.size}</strong> of {reportsList.length} Report(s)
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={handleClearReportSelection}
+                  style={{ fontSize: '0.8rem', padding: '0.35rem 0.65rem' }}
+                >
+                  Clear Selection
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleBulkDeleteReports}
+                  disabled={deletingReport}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    padding: '0.35rem 0.75rem',
+                    backgroundColor: '#ef4444',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: 'var(--radius-sm)',
+                    fontWeight: 600,
+                    fontSize: '0.8rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <Trash2 size={13} />
+                  <span>Delete Selected ({selectedReportIds.size})</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {reportsList.length === 0 ? (
             <div style={{ padding: '1.5rem 0', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
               No reports generated yet. Click "Generate & Download Excel Report" above to create an audit record.
@@ -939,6 +1108,15 @@ export default function ReportsPage() {
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+                    <th style={{ padding: '0.6rem 0.75rem', width: '36px', textAlign: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={reportsList.length > 0 && selectedReportIds.size === reportsList.length}
+                        onChange={handleToggleSelectAllReports}
+                        style={{ cursor: 'pointer' }}
+                        title="Select All Reports"
+                      />
+                    </th>
                     <th style={{ padding: '0.6rem 0.75rem' }}>File Name</th>
                     <th style={{ padding: '0.6rem 0.75rem' }}>Report Type</th>
                     <th style={{ padding: '0.6rem 0.75rem' }}>Scope</th>
@@ -947,51 +1125,89 @@ export default function ReportsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {reportsList.map((rep) => (
-                    <tr key={rep.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                      <td style={{ padding: '0.65rem 0.75rem', fontFamily: 'monospace', color: '#818cf8' }}>{rep.file_name}</td>
-                      <td style={{ padding: '0.65rem 0.75rem' }}>
-                        <span style={{
-                          padding: '0.2rem 0.5rem',
-                          borderRadius: '4px',
-                          fontSize: '0.75rem',
-                          fontWeight: 600,
-                          backgroundColor: rep.file_name.endsWith('.xlsx') || rep.report_type === 'EXCEL' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(99, 102, 241, 0.15)',
-                          color: rep.file_name.endsWith('.xlsx') || rep.report_type === 'EXCEL' ? '#34d399' : '#818cf8',
-                        }}>
-                          {rep.file_name.endsWith('.xlsx') || rep.report_type === 'EXCEL' ? 'EXCEL (.xlsx)' : 'CSV (.csv)'}
-                        </span>
-                      </td>
-                      <td style={{ padding: '0.65rem 0.75rem', color: 'var(--text-secondary)' }}>
-                        {rep.batch ? rep.batch.batch_name : 'All Batches'}
-                        {rep.section ? ` (${rep.section.name})` : ''}
-                      </td>
-                      <td style={{ padding: '0.65rem 0.75rem', color: 'var(--text-muted)' }}>
-                        {new Date(rep.generated_at).toLocaleString()}
-                      </td>
-                      <td style={{ padding: '0.65rem 0.75rem', textAlign: 'right' }}>
-                        <button
-                          onClick={() => downloadReportFile(rep.id, rep.file_name)}
-                          style={{
-                            padding: '0.3rem 0.75rem',
-                            backgroundColor: 'var(--bg-input, #0f172a)',
-                            color: '#818cf8',
-                            border: '1px solid var(--border-subtle)',
+                  {reportsList.map((rep) => {
+                    const isSelected = selectedReportIds.has(rep.id);
+                    return (
+                      <tr
+                        key={rep.id}
+                        style={{
+                          borderBottom: '1px solid var(--border-subtle)',
+                          backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.08)' : 'transparent',
+                          transition: 'background-color 0.15s ease',
+                        }}
+                      >
+                        <td style={{ padding: '0.65rem 0.75rem', textAlign: 'center' }}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => handleToggleSelectReport(rep.id, e as any)}
+                            style={{ cursor: 'pointer' }}
+                          />
+                        </td>
+                        <td style={{ padding: '0.65rem 0.75rem', fontFamily: 'monospace', color: '#818cf8' }}>{rep.file_name}</td>
+                        <td style={{ padding: '0.65rem 0.75rem' }}>
+                          <span style={{
+                            padding: '0.2rem 0.5rem',
                             borderRadius: '4px',
                             fontSize: '0.75rem',
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '0.35rem',
-                          }}
-                          title={`Download ${rep.file_name}`}
-                        >
-                          <Download size={13} />
-                          <span>Download</span>
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                            fontWeight: 600,
+                            backgroundColor: rep.file_name.endsWith('.xlsx') || rep.report_type === 'EXCEL' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(99, 102, 241, 0.15)',
+                            color: rep.file_name.endsWith('.xlsx') || rep.report_type === 'EXCEL' ? '#34d399' : '#818cf8',
+                          }}>
+                            {rep.file_name.endsWith('.xlsx') || rep.report_type === 'EXCEL' ? 'EXCEL (.xlsx)' : 'CSV (.csv)'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.65rem 0.75rem', color: 'var(--text-secondary)' }}>
+                          {rep.batch ? rep.batch.batch_name : 'All Batches'}
+                          {rep.section ? ` (${rep.section.name})` : ''}
+                        </td>
+                        <td style={{ padding: '0.65rem 0.75rem', color: 'var(--text-muted)' }}>
+                          {new Date(rep.generated_at).toLocaleString()}
+                        </td>
+                        <td style={{ padding: '0.65rem 0.75rem', textAlign: 'right' }}>
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                            <button
+                              onClick={() => downloadReportFile(rep.id, rep.file_name)}
+                              style={{
+                                padding: '0.3rem 0.65rem',
+                                backgroundColor: 'var(--bg-input, #0f172a)',
+                                color: '#818cf8',
+                                border: '1px solid var(--border-subtle)',
+                                borderRadius: '4px',
+                                fontSize: '0.75rem',
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.3rem',
+                              }}
+                              title={`Download ${rep.file_name}`}
+                            >
+                              <Download size={13} />
+                              <span>Download</span>
+                            </button>
+                            <button
+                              onClick={(e) => handleDeleteSingleReport(rep, e)}
+                              disabled={deletingReport}
+                              style={{
+                                padding: '0.3rem 0.5rem',
+                                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                                color: '#f87171',
+                                border: '1px solid rgba(239, 68, 68, 0.25)',
+                                borderRadius: '4px',
+                                fontSize: '0.75rem',
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                              }}
+                              title={`Delete ${rep.file_name} from history`}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

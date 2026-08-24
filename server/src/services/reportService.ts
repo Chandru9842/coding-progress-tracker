@@ -1089,6 +1089,105 @@ export async function getReportsList(user: { userId: string; role: UserRole }) {
   return list;
 }
 
+export async function deleteReport(
+  reportId: string,
+  user: { userId: string; role: UserRole }
+): Promise<{ message: string }> {
+  if (!process.env.DATABASE_URL) {
+    const idx = inMemoryStore.generatedReports.findIndex((r: any) => r.id === reportId);
+    if (idx === -1) {
+      const err: any = new Error('Report not found');
+      err.statusCode = 404;
+      throw err;
+    }
+    const rep = inMemoryStore.generatedReports[idx];
+    if (user.role !== 'ADMIN' && rep.generated_by_staff_id !== user.userId) {
+      const err: any = new Error('Forbidden: You can only delete your own generated reports');
+      err.statusCode = 403;
+      throw err;
+    }
+    inMemoryStore.generatedReports.splice(idx, 1);
+    return { message: 'Report audit entry deleted successfully.' };
+  }
+
+  const existing = await prisma.generatedReport.findUnique({ where: { id: reportId } });
+  if (!existing) {
+    const err: any = new Error('Report not found');
+    err.statusCode = 404;
+    throw err;
+  }
+  if (user.role !== 'ADMIN' && existing.generated_by_staff_id !== user.userId) {
+    const err: any = new Error('Forbidden: You can only delete your own generated reports');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  await prisma.generatedReport.delete({ where: { id: reportId } });
+  return { message: 'Report audit entry deleted successfully.' };
+}
+
+export async function bulkDeleteReports(
+  reportIds: string[],
+  user: { userId: string; role: UserRole }
+): Promise<{ message: string; count: number }> {
+  if (!reportIds || reportIds.length === 0) {
+    return { message: 'No reports selected for deletion.', count: 0 };
+  }
+
+  if (!process.env.DATABASE_URL) {
+    let deletedCount = 0;
+    inMemoryStore.generatedReports = inMemoryStore.generatedReports.filter((r: any) => {
+      if (reportIds.includes(r.id)) {
+        if (user.role === 'ADMIN' || r.generated_by_staff_id === user.userId) {
+          deletedCount++;
+          return false;
+        }
+      }
+      return true;
+    });
+    return { message: `Successfully deleted ${deletedCount} report audit log(s).`, count: deletedCount };
+  }
+
+  const where: any = {
+    id: { in: reportIds },
+  };
+  if (user.role !== 'ADMIN') {
+    where.generated_by_staff_id = user.userId;
+  }
+
+  const result = await prisma.generatedReport.deleteMany({ where });
+  return { message: `Successfully deleted ${result.count} report audit log(s).`, count: result.count };
+}
+
+export async function clearAllReports(
+  user: { userId: string; role: UserRole }
+): Promise<{ message: string; count: number }> {
+  if (!process.env.DATABASE_URL) {
+    let deletedCount = 0;
+    if (user.role === 'ADMIN') {
+      deletedCount = inMemoryStore.generatedReports.length;
+      inMemoryStore.generatedReports = [];
+    } else {
+      inMemoryStore.generatedReports = inMemoryStore.generatedReports.filter((r: any) => {
+        if (r.generated_by_staff_id === user.userId) {
+          deletedCount++;
+          return false;
+        }
+        return true;
+      });
+    }
+    return { message: `Cleared ${deletedCount} report audit log(s).`, count: deletedCount };
+  }
+
+  const where: any = {};
+  if (user.role !== 'ADMIN') {
+    where.generated_by_staff_id = user.userId;
+  }
+
+  const result = await prisma.generatedReport.deleteMany({ where });
+  return { message: `Cleared ${result.count} report audit log(s).`, count: result.count };
+}
+
 // Aliases for controller compatibility
 export const getReportFilters = getReportFilterOptions;
 export const generateReport = exportCsvReport;

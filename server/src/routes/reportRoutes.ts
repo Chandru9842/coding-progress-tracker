@@ -13,6 +13,9 @@ router.post('/export-csv', reportController.exportCsvReport);
 router.post('/export-excel', reportController.exportExcelReport);
 router.post('/generate', reportController.generateReport);
 router.get('/', reportController.listReports);
+router.post('/bulk-delete', reportController.bulkDeleteReports);
+router.delete('/clear-all', reportController.clearAllReports);
+router.delete('/:reportId', reportController.deleteReport);
 router.get('/:reportId/download', reportController.downloadReport);
 
 export default router;
