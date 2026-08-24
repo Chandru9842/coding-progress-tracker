@@ -9,6 +9,7 @@ const sampleUserData = `
 92,814723104042,GOKULRAM V,CSE,Dr.A.Muthuraj,9486715098,,https://leetcode.com/u/Gokulram_V/,35,31/3/1
 93,814723104043,GOWTHAM S,CSE,Dr.A.Muthuraj,9486715098,,https://leetcode.com/u/gowthams14/,123,62/46/15
 ,814723104301,Saravanakumar V,CSE,Dr.A.Muthuraj,9486715098,,https://leetcode.com/u/saravanakumar12345678/,58,14/30/14
+120,814723104064,yugguguigu,cse,chandru.m,9789224484,,https://leetcode.com/u/Arularasan010/,,
 `;
 
 async function testSmartCSVImport() {
@@ -31,6 +32,16 @@ async function testSmartCSVImport() {
   console.log(`✔ Total Parsed: ${parsed.totalParsed}, Valid: ${parsed.validCount}`);
   console.log('✔ Detected Mentors:', parsed.detectedMentors);
   console.log('✔ Rows:', parsed.rows.map(r => ({ reg: r.cleanRegisterNumber, name: r.name, mentor: r.cleanMentor, lc: r.cleanLeetCode })));
+
+  if (!parsed.detectedMentors.includes('Chandru M')) {
+    throw new Error('Expected "Chandru M" to be in detected mentors!');
+  }
+
+  const chandruStudent = parsed.rows.find((r) => r.cleanRegisterNumber === '814723104064');
+  if (!chandruStudent || chandruStudent.cleanMentor !== 'Chandru M' || chandruStudent.cleanLeetCode !== 'Arularasan010') {
+    throw new Error('Failed to accurately parse student with mentor chandru.m');
+  }
+  console.log('✔ Verified detection of mentor "chandru.m" -> "Chandru M" and LeetCode handle "Arularasan010"');
 
   const muthurajStudents = parsed.rows.filter((r) => r.cleanMentor.includes('Muthuraj'));
   console.log(`✔ Muthuraj Students Count: ${muthurajStudents.length}`);

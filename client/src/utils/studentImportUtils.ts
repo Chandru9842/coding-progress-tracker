@@ -71,27 +71,40 @@ export function extractCleanLeetCodeUsername(input: string | null | undefined): 
   return str;
 }
 
-/**
- * Normalizes mentor names for clean grouping and fuzzy matching:
- * e.g. "Dr.A.Muthuraj" -> "Dr. A. Muthuraj"
- */
 export function normalizeMentorName(name: string | null | undefined): string {
   if (!name) return '';
   let str = name.trim();
   if (!str) return '';
 
-  // Fix missing spaces after Dr. / Mr. / Mrs.
-  str = str.replace(/^Dr\.([A-Za-z])/i, 'Dr. $1');
-  str = str.replace(/^Mr\.([A-Za-z])/i, 'Mr. $1');
-  str = str.replace(/^Mrs\.([A-Za-z])/i, 'Mrs. $1');
-  str = str.replace(/^Prof\.([A-Za-z])/i, 'Prof. $1');
+  // Extract title prefix if present (mrs before mr)
+  let prefix = '';
+  const titleMatch = str.match(/^(dr|mrs|mr|ms|prof)\.?\s*/i);
+  if (titleMatch) {
+    const title = titleMatch[1].toLowerCase();
+    prefix = (title === 'dr' ? 'Dr.' : title === 'mrs' ? 'Mrs.' : title === 'mr' ? 'Mr.' : title === 'ms' ? 'Ms.' : 'Prof.') + ' ';
+    str = str.substring(titleMatch[0].length);
+  }
 
-  // Fix initials like Dr. A.Muthuraj -> Dr. A. Muthuraj
-  str = str.replace(/\.([A-Za-z])/g, '. $1');
-  // Collapse multiple spaces
-  str = str.replace(/\s+/g, ' ').trim();
+  // Replace dots and underscores with spaces
+  str = str.replace(/[._]/g, ' ');
 
-  return str;
+  // Capitalize each word
+  const words = str
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => {
+      if (w.length === 1) {
+        return w.toUpperCase() + '.';
+      }
+      return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+    });
+
+  let joined = (prefix + words.join(' ')).trim();
+  if (!prefix && joined.endsWith('.')) {
+    joined = joined.replace(/\.$/, '');
+  }
+
+  return joined;
 }
 
 /**
@@ -203,8 +216,8 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
         continue;
       }
 
-      // 4. Check for Mentor (starts with Dr. / Mr. / Mrs. / Prof.)
-      if (!rawMentor && /^(dr\.|mr\.|mrs\.|prof\.)/i.test(cell)) {
+      // 4. Check for Mentor (starts with Dr. / Mr. / Mrs. / Prof. or cell in column 4)
+      if (!rawMentor && (/^(dr\.|mr\.|mrs\.|prof\.)/i.test(cell) || (c === 4 && !KNOWN_DEPTS.has(upperCell) && !/^\d+$/.test(cell.replace(/\s+/g, '')) && !cell.includes('leetcode')))) {
         rawMentor = cell;
         continue;
       }
@@ -235,8 +248,15 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
     if (!name && cells[2]) {
       name = cells[2];
     }
-    if (!rawMentor && cells[4] && /^(dr\.|mr\.|mrs\.|prof\.)/i.test(cells[4])) {
-      rawMentor = cells[4];
+    if (!rawMentor && cells[4] && cells[4].trim()) {
+      const c4 = cells[4].trim();
+      const isPhone = /^[0-9\s-]{10,14}$/.test(c4);
+      const isUrl = c4.includes('leetcode');
+      const isDept = KNOWN_DEPTS.has(c4.toUpperCase());
+      const isNum = /^\d+$/.test(c4);
+      if (!isPhone && !isUrl && !isDept && !isNum) {
+        rawMentor = c4;
+      }
     }
     if (!leetcodeUrl && cells[7] && cells[7].includes('leetcode')) {
       leetcodeUrl = cells[7];

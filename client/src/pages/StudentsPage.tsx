@@ -81,7 +81,7 @@ export const StudentsPage: React.FC = () => {
   const [importFileName, setImportFileName] = useState<string>('');
   const [importRows, setImportRows] = useState<ParsedImportRow[]>([]);
   const [detectedMentors, setDetectedMentors] = useState<string[]>([]);
-  const [selectedMentorFilter, setSelectedMentorFilter] = useState<string>('ALL');
+  const [selectedMentorFilters, setSelectedMentorFilters] = useState<Set<string>>(new Set(['ALL']));
   const [importBatchId, setImportBatchId] = useState<string>('');
   const [importSectionId, setImportSectionId] = useState<string>('');
   const [importAllocBatchId, setImportAllocBatchId] = useState<string>('');
@@ -337,7 +337,7 @@ export const StudentsPage: React.FC = () => {
     setImportFileName('');
     setImportRows([]);
     setDetectedMentors([]);
-    setSelectedMentorFilter('ALL');
+    setSelectedMentorFilters(new Set(['ALL']));
     setImportSearch('');
     setImportResult(null);
 
@@ -356,6 +356,7 @@ export const StudentsPage: React.FC = () => {
     setShowImportModal(false);
     setImportFileName('');
     setImportRows([]);
+    setSelectedMentorFilters(new Set(['ALL']));
     setImportResult(null);
   };
 
@@ -381,15 +382,37 @@ export const StudentsPage: React.FC = () => {
           return mNorm.includes(userNorm) || userNorm.includes(mNorm);
         });
         if (matched) {
-          setSelectedMentorFilter(matched);
+          setSelectedMentorFilters(new Set([matched]));
         } else {
-          setSelectedMentorFilter('ALL');
+          setSelectedMentorFilters(new Set(['ALL']));
         }
       } else {
-        setSelectedMentorFilter('ALL');
+        setSelectedMentorFilters(new Set(['ALL']));
       }
     };
     reader.readAsText(file);
+  };
+
+  const handleToggleMentorFilter = (mentor: string) => {
+    if (mentor === 'ALL') {
+      setSelectedMentorFilters(new Set(['ALL']));
+      return;
+    }
+
+    setSelectedMentorFilters((prev) => {
+      const next = new Set(prev);
+      next.delete('ALL');
+
+      if (next.has(mentor)) {
+        next.delete(mentor);
+        if (next.size === 0) {
+          next.add('ALL');
+        }
+      } else {
+        next.add(mentor);
+      }
+      return next;
+    });
   };
 
   const handleToggleImportRow = (rowId: string) => {
@@ -409,8 +432,8 @@ export const StudentsPage: React.FC = () => {
 
   const getFilteredImportRows = () => {
     return importRows.filter((row) => {
-      // Mentor filter
-      if (selectedMentorFilter !== 'ALL' && row.cleanMentor !== selectedMentorFilter) {
+      // Mentor filter (supports multi-selection of mentors)
+      if (!selectedMentorFilters.has('ALL') && !selectedMentorFilters.has(row.cleanMentor)) {
         return false;
       }
       // Text search
@@ -427,9 +450,10 @@ export const StudentsPage: React.FC = () => {
   };
 
   const handleExecuteImport = async () => {
-    const selectedRows = importRows.filter((r) => r.selected && r.isValid);
-    if (selectedRows.length === 0) {
-      alert('Please select at least one valid student to import.');
+    // CRITICAL: Strictly import ONLY the rows that are matching active filter AND selected!
+    const targetRowsToImport = getFilteredImportRows().filter((r) => r.selected && r.isValid);
+    if (targetRowsToImport.length === 0) {
+      alert('Please select at least one valid student to import from the filtered list.');
       return;
     }
 
@@ -443,7 +467,7 @@ export const StudentsPage: React.FC = () => {
       setImportResult(null);
 
       const payload = {
-        students: selectedRows.map((r) => ({
+        students: targetRowsToImport.map((r) => ({
           register_number: r.cleanRegisterNumber,
           name: r.name,
           department: r.department || 'CSE',
@@ -1441,28 +1465,28 @@ export const StudentsPage: React.FC = () => {
                       </span>
                       <button
                         type="button"
-                        onClick={() => setSelectedMentorFilter('ALL')}
+                        onClick={() => handleToggleMentorFilter('ALL')}
                         style={{
                           padding: '0.25rem 0.6rem',
                           borderRadius: '16px',
                           fontSize: '0.75rem',
                           fontWeight: 600,
-                          backgroundColor: selectedMentorFilter === 'ALL' ? 'var(--primary)' : 'rgba(255, 255, 255, 0.06)',
-                          color: selectedMentorFilter === 'ALL' ? '#ffffff' : 'var(--text-secondary)',
-                          border: '1px solid var(--border-subtle)',
+                          backgroundColor: selectedMentorFilters.has('ALL') ? 'var(--primary)' : 'rgba(255, 255, 255, 0.06)',
+                          color: selectedMentorFilters.has('ALL') ? '#ffffff' : 'var(--text-secondary)',
+                          border: selectedMentorFilters.has('ALL') ? '1px solid var(--primary)' : '1px solid var(--border-subtle)',
                           cursor: 'pointer',
                         }}
                       >
-                        All Students ({importRows.length})
+                        {selectedMentorFilters.has('ALL') ? '✓ ' : ''}All Students ({importRows.length})
                       </button>
                       {detectedMentors.map((mentor) => {
                         const count = importRows.filter((r) => r.cleanMentor === mentor).length;
-                        const isSelected = selectedMentorFilter === mentor;
+                        const isSelected = selectedMentorFilters.has(mentor) && !selectedMentorFilters.has('ALL');
                         return (
                           <button
                             key={mentor}
                             type="button"
-                            onClick={() => setSelectedMentorFilter(mentor)}
+                            onClick={() => handleToggleMentorFilter(mentor)}
                             style={{
                               padding: '0.25rem 0.6rem',
                               borderRadius: '16px',
@@ -1473,8 +1497,9 @@ export const StudentsPage: React.FC = () => {
                               border: isSelected ? '1px solid var(--primary)' : '1px solid var(--border-subtle)',
                               cursor: 'pointer',
                             }}
+                            title={`Click to toggle ${mentor}`}
                           >
-                            👤 {mentor} ({count})
+                            {isSelected ? '✓ ' : ''}👤 {mentor} ({count})
                           </button>
                         );
                       })}
@@ -1633,7 +1658,7 @@ export const StudentsPage: React.FC = () => {
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                 {importRows.length > 0 && (
                   <span>
-                    Ready to import <strong>{importRows.filter((r) => r.selected && r.isValid).length}</strong> student(s) into selected Batch.
+                    Ready to import <strong>{getFilteredImportRows().filter((r) => r.selected && r.isValid).length}</strong> student(s) into selected Batch.
                   </span>
                 )}
               </div>
@@ -1651,7 +1676,7 @@ export const StudentsPage: React.FC = () => {
                   type="button"
                   className="btn-primary"
                   onClick={handleExecuteImport}
-                  disabled={isImporting || importRows.filter((r) => r.selected && r.isValid).length === 0}
+                  disabled={isImporting || getFilteredImportRows().filter((r) => r.selected && r.isValid).length === 0}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', minWidth: '170px', justifyContent: 'center' }}
                 >
                   {isImporting ? (
@@ -1662,7 +1687,7 @@ export const StudentsPage: React.FC = () => {
                   ) : (
                     <>
                       <Upload size={16} />
-                      <span>Import Selected ({importRows.filter((r) => r.selected && r.isValid).length})</span>
+                      <span>Import Selected ({getFilteredImportRows().filter((r) => r.selected && r.isValid).length})</span>
                     </>
                   )}
                 </button>
