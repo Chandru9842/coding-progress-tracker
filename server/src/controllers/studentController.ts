@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest, UserRole } from '../types/index.js';
 import * as studentService from '../services/studentService.js';
+import * as importService from '../services/studentImportService.js';
 import {
   isStaffAuthorizedForStudent,
   isStaffAuthorizedForSection,
@@ -223,6 +224,31 @@ export async function bulkDeleteStudents(req: AuthenticatedRequest, res: Respons
   } catch (error: any) {
     const statusCode = error.statusCode || 500;
     res.status(statusCode).json({ error: error.message || 'Failed to delete selected students' });
+  }
+}
+
+export async function bulkImportStudents(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const { students, targetScope } = req.body;
+    if (!students || !Array.isArray(students) || students.length === 0) {
+      res.status(400).json({ error: 'students array is required' });
+      return;
+    }
+
+    const result = await importService.bulkImportStudents(
+      { students, targetScope },
+      { userId: req.user.userId, role: req.user.role }
+    );
+
+    res.status(200).json(result);
+  } catch (error: any) {
+    const statusCode = error.statusCode || 500;
+    res.status(statusCode).json({ error: error.message || 'Failed to bulk import students' });
   }
 }
 

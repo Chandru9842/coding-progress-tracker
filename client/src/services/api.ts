@@ -87,6 +87,7 @@ export type StaffDetail = StaffUser;
 export interface Batch {
   id: string;
   batch_name: string;
+  academicYear?: string;
   start_year: number;
   end_year: number;
   department: string;
@@ -481,6 +482,39 @@ export const studentApi = {
   bulkDeleteStudents: async (studentIds: string[]): Promise<void> => {
     clearClientCache('students_');
     await api.post('/students/bulk-delete', { studentIds });
+  },
+
+  bulkImportStudents: async (payload: {
+    students: Array<{
+      register_number: string;
+      name: string;
+      department?: string;
+      batch_id?: string;
+      section_id?: string;
+      allocation_batch_id?: string;
+      sub_batch?: string;
+      leetcode_username: string;
+      mentor_name?: string;
+      mentor_id?: string;
+    }>;
+    targetScope?: {
+      batch_id?: string;
+      section_id?: string;
+      allocation_batch_id?: string;
+      sub_batch?: string;
+      department?: string;
+    };
+  }): Promise<{
+    message: string;
+    totalProcessed: number;
+    createdCount: number;
+    updatedCount: number;
+    failedCount: number;
+    errors: Array<{ register_number: string; error: string }>;
+  }> => {
+    clearClientCache('students_');
+    const res = await api.post('/students/bulk-import', payload);
+    return res.data;
   },
 };
 

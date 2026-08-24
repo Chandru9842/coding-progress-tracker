@@ -7,6 +7,7 @@ import {
   updateStudent,
   deleteStudent,
   bulkDeleteStudents,
+  bulkImportStudents,
 } from '../controllers/studentController.js';
 
 const router = Router();
@@ -18,6 +19,7 @@ router.use(requireAuth);
 router.get('/students', requireStaff, getStudents);
 router.get('/students/:studentId', requireStaff, getStudentDetail);
 router.post('/students', requireStaff, createStudent);
+router.post('/students/bulk-import', requireStaff, bulkImportStudents);
 router.post('/students/bulk-delete', requireStaff, bulkDeleteStudents);
 router.patch('/students/:studentId', requireStaff, updateStudent);
 router.delete('/students/:studentId', requireStaff, deleteStudent);

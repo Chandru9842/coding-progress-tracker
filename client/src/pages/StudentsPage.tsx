@@ -3,7 +3,31 @@ import { useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
 import { studentApi, batchApi, staffApi, syncApi, Student, Batch, StaffUser } from '../services/api.js';
-import { Users, UserPlus, Search, Edit2, Trash2, Loader2, Filter, RefreshCw, X, CheckCircle2, UserCheck, ShieldAlert } from 'lucide-react';
+import {
+  Users,
+  UserPlus,
+  Search,
+  Edit2,
+  Trash2,
+  Loader2,
+  Filter,
+  RefreshCw,
+  X,
+  CheckCircle2,
+  UserCheck,
+  ShieldAlert,
+  Upload,
+  Download,
+  FileSpreadsheet,
+  AlertCircle,
+  Sparkles,
+} from 'lucide-react';
+import {
+  analyzeAndParseStudents,
+  downloadSampleCSVFile,
+  ParsedImportRow,
+  ParseResult,
+} from '../utils/studentImportUtils.js';
 
 export const StudentsPage: React.FC = () => {
   const { user } = useAuth();
@@ -51,6 +75,29 @@ export const StudentsPage: React.FC = () => {
     mentor_id: '',
   });
   const [submitting, setSubmitting] = useState<boolean>(false);
+
+  // Smart CSV / Excel Import Modal States
+  const [showImportModal, setShowImportModal] = useState<boolean>(false);
+  const [importFileName, setImportFileName] = useState<string>('');
+  const [importRows, setImportRows] = useState<ParsedImportRow[]>([]);
+  const [detectedMentors, setDetectedMentors] = useState<string[]>([]);
+  const [selectedMentorFilter, setSelectedMentorFilter] = useState<string>('ALL');
+  const [importBatchId, setImportBatchId] = useState<string>('');
+  const [importSectionId, setImportSectionId] = useState<string>('');
+  const [importAllocBatchId, setImportAllocBatchId] = useState<string>('');
+  const [importSubBatchCustom, setImportSubBatchCustom] = useState<string>('');
+  const [importAllocBatches, setImportAllocBatches] = useState<any[]>([]);
+  const [importSearch, setImportSearch] = useState<string>('');
+  const [isImporting, setIsImporting] = useState<boolean>(false);
+  const [importResult, setImportResult] = useState<{
+    success: boolean;
+    message: string;
+    createdCount?: number;
+    updatedCount?: number;
+    failedCount?: number;
+    errors?: Array<{ register_number: string; error: string }>;
+  } | null>(null);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
 
   const [debouncedSearch, setDebouncedSearch] = useState<string>('');
 
@@ -181,6 +228,16 @@ export const StudentsPage: React.FC = () => {
   }, [studentForm.section_id]);
 
   useEffect(() => {
+    if (importSectionId) {
+      batchApi.getAllocationBatches(importSectionId)
+        .then((abs) => setImportAllocBatches(abs || []))
+        .catch(() => setImportAllocBatches([]));
+    } else {
+      setImportAllocBatches([]);
+    }
+  }, [importSectionId]);
+
+  useEffect(() => {
     Promise.all([
       batchApi.getAllBatches().then(setBatches),
       staffApi.getAllStaff(true).then(setStaffList),
@@ -275,6 +332,159 @@ export const StudentsPage: React.FC = () => {
     }
   };
 
+  // Smart CSV / Excel Import Handlers
+  const handleOpenImportModal = () => {
+    setImportFileName('');
+    setImportRows([]);
+    setDetectedMentors([]);
+    setSelectedMentorFilter('ALL');
+    setImportSearch('');
+    setImportResult(null);
+
+    // Prepopulate default batch and section if available
+    if (batches.length > 0) {
+      const defaultB = batches[0];
+      setImportBatchId(defaultB.id);
+      if (defaultB.sections && defaultB.sections.length > 0) {
+        setImportSectionId(defaultB.sections[0].id);
+      }
+    }
+    setShowImportModal(true);
+  };
+
+  const handleCloseImportModal = () => {
+    setShowImportModal(false);
+    setImportFileName('');
+    setImportRows([]);
+    setImportResult(null);
+  };
+
+  const handleFileProcess = (file: File) => {
+    if (!file) return;
+    setImportFileName(file.name);
+    setImportResult(null);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      if (!text) return;
+
+      const result = analyzeAndParseStudents(text);
+      setImportRows(result.rows);
+      setDetectedMentors(result.detectedMentors);
+
+      // Smart Auto-Filter for logged in user (e.g. Dr. A. Muthuraj)
+      if (user?.name) {
+        const userNorm = user.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const matched = result.detectedMentors.find((m) => {
+          const mNorm = m.toLowerCase().replace(/[^a-z0-9]/g, '');
+          return mNorm.includes(userNorm) || userNorm.includes(mNorm);
+        });
+        if (matched) {
+          setSelectedMentorFilter(matched);
+        } else {
+          setSelectedMentorFilter('ALL');
+        }
+      } else {
+        setSelectedMentorFilter('ALL');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleToggleImportRow = (rowId: string) => {
+    setImportRows((prev) =>
+      prev.map((r) => (r.id === rowId ? { ...r, selected: !r.selected } : r))
+    );
+  };
+
+  const handleToggleAllVisibleImportRows = (selectAll: boolean) => {
+    const visibleIds = new Set(
+      getFilteredImportRows().map((r) => r.id)
+    );
+    setImportRows((prev) =>
+      prev.map((r) => (visibleIds.has(r.id) && r.isValid ? { ...r, selected: selectAll } : r))
+    );
+  };
+
+  const getFilteredImportRows = () => {
+    return importRows.filter((row) => {
+      // Mentor filter
+      if (selectedMentorFilter !== 'ALL' && row.cleanMentor !== selectedMentorFilter) {
+        return false;
+      }
+      // Text search
+      if (importSearch.trim()) {
+        const s = importSearch.toLowerCase();
+        const matchesReg = row.cleanRegisterNumber.toLowerCase().includes(s);
+        const matchesName = row.name.toLowerCase().includes(s);
+        const matchesHandle = row.cleanLeetCode.toLowerCase().includes(s);
+        const matchesMentor = row.cleanMentor.toLowerCase().includes(s);
+        if (!matchesReg && !matchesName && !matchesHandle && !matchesMentor) return false;
+      }
+      return true;
+    });
+  };
+
+  const handleExecuteImport = async () => {
+    const selectedRows = importRows.filter((r) => r.selected && r.isValid);
+    if (selectedRows.length === 0) {
+      alert('Please select at least one valid student to import.');
+      return;
+    }
+
+    if (!importBatchId || !importSectionId) {
+      alert('Please select a target Academic Year (Batch) and Section.');
+      return;
+    }
+
+    try {
+      setIsImporting(true);
+      setImportResult(null);
+
+      const payload = {
+        students: selectedRows.map((r) => ({
+          register_number: r.cleanRegisterNumber,
+          name: r.name,
+          department: r.department || 'CSE',
+          batch_id: importBatchId,
+          section_id: importSectionId,
+          allocation_batch_id: importAllocBatchId || undefined,
+          sub_batch: importSubBatchCustom || undefined,
+          leetcode_username: r.cleanLeetCode,
+          mentor_name: r.cleanMentor !== 'Unassigned' ? r.cleanMentor : undefined,
+        })),
+        targetScope: {
+          batch_id: importBatchId,
+          section_id: importSectionId,
+          allocation_batch_id: importAllocBatchId || undefined,
+          sub_batch: importSubBatchCustom || undefined,
+        },
+      };
+
+      const res = await studentApi.bulkImportStudents(payload);
+
+      setImportResult({
+        success: true,
+        message: res.message,
+        createdCount: res.createdCount,
+        updatedCount: res.updatedCount,
+        failedCount: res.failedCount,
+        errors: res.errors,
+      });
+
+      // Refresh student roster
+      fetchStudents(false);
+    } catch (err: any) {
+      setImportResult({
+        success: false,
+        message: err.response?.data?.error || 'Failed to import students from spreadsheet.',
+      });
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   return (
     <Layout title="Student Management">
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -302,14 +512,33 @@ export const StudentsPage: React.FC = () => {
             </button>
 
             {canManage && (
-              <button
-                className="btn-primary"
-                onClick={handleOpenCreateModal}
-                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-              >
-                <UserPlus size={16} />
-                <span>Add Student Record</span>
-              </button>
+              <>
+                <button
+                  className="btn-secondary"
+                  onClick={handleOpenImportModal}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    borderColor: 'rgba(99, 102, 241, 0.4)',
+                    backgroundColor: 'rgba(99, 102, 241, 0.08)',
+                    color: '#818cf8',
+                    fontWeight: 600,
+                  }}
+                >
+                  <Upload size={16} />
+                  <span>Bulk Import CSV / Excel</span>
+                </button>
+
+                <button
+                  className="btn-primary"
+                  onClick={handleOpenCreateModal}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                >
+                  <UserPlus size={16} />
+                  <span>Add Student Record</span>
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -915,6 +1144,530 @@ export const StudentsPage: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Smart CSV / Excel Bulk Import Modal */}
+      {showImportModal && (
+        <div className="modal-overlay-responsive" style={{ zIndex: 1100 }}>
+          <div className="modal-card-responsive" style={{
+            backgroundColor: 'var(--bg-card, #1e293b)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-lg, 12px)',
+            width: '100%',
+            maxWidth: '950px',
+            maxHeight: '90vh',
+            display: 'flex',
+            flexDirection: 'column',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)',
+            padding: 0,
+            overflow: 'hidden',
+          }}>
+            {/* Modal Header */}
+            <div style={{
+              padding: '1.25rem 1.5rem',
+              borderBottom: '1px solid var(--border-subtle)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              backgroundColor: 'rgba(15, 23, 42, 0.6)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div style={{
+                  padding: '0.5rem',
+                  borderRadius: '8px',
+                  backgroundColor: 'rgba(99, 102, 241, 0.15)',
+                  color: '#818cf8',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                  <Sparkles size={20} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+                    Smart CSV / Excel Student Bulk Import
+                  </h3>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.2rem 0 0 0' }}>
+                    Auto-cleans LeetCode URLs, detects mentors, and assigns target batches & sections.
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <button
+                  type="button"
+                  onClick={downloadSampleCSVFile}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    padding: '0.35rem 0.65rem',
+                    backgroundColor: 'rgba(52, 211, 153, 0.1)',
+                    color: '#34d399',
+                    border: '1px solid rgba(52, 211, 153, 0.25)',
+                    borderRadius: '6px',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                  title="Download a formatted sample spreadsheet"
+                >
+                  <Download size={13} />
+                  <span>Sample Template</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCloseImportModal}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--text-muted)',
+                    cursor: 'pointer',
+                    padding: '0.35rem',
+                    borderRadius: '4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: '1.5rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              
+              {/* Target Batch, Section & Allocation Batch Controls */}
+              <div style={{
+                backgroundColor: 'rgba(30, 41, 59, 0.5)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: '8px',
+                padding: '1rem',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                gap: '1rem',
+              }}>
+                <div>
+                  <label className="form-label" style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+                    Target Academic Year (Batch) *
+                  </label>
+                  <select
+                    className="form-input"
+                    value={importBatchId}
+                    onChange={(e) => {
+                      const newBatchId = e.target.value;
+                      setImportBatchId(newBatchId);
+                      const b = batches.find((item) => item.id === newBatchId);
+                      if (b && b.sections && b.sections.length > 0) {
+                        setImportSectionId(b.sections[0].id);
+                      } else {
+                        setImportSectionId('');
+                      }
+                    }}
+                    style={{ fontSize: '0.85rem' }}
+                  >
+                    <option value="">Select Target Batch</option>
+                    {batches.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.academicYear || b.batch_name} ({b.department})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="form-label" style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+                    Target Section *
+                  </label>
+                  <select
+                    className="form-input"
+                    value={importSectionId}
+                    onChange={(e) => setImportSectionId(e.target.value)}
+                    style={{ fontSize: '0.85rem' }}
+                  >
+                    <option value="">Select Section</option>
+                    {batches
+                      .find((b) => b.id === importBatchId)
+                      ?.sections?.map((sec) => (
+                        <option key={sec.id} value={sec.id}>
+                          Section {sec.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="form-label" style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+                    Target Allocation Batch (Optional)
+                  </label>
+                  {importAllocBatches.length > 0 ? (
+                    <select
+                      className="form-input"
+                      value={importAllocBatchId}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setImportAllocBatchId(val);
+                        const match = importAllocBatches.find((ab: any) => ab.id === val);
+                        if (match) setImportSubBatchCustom(match.name);
+                      }}
+                      style={{ fontSize: '0.85rem' }}
+                    >
+                      <option value="">Inherit / None</option>
+                      {importAllocBatches.map((ab: any) => (
+                        <option key={ab.id} value={ab.id}>{ab.name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="e.g. Batch-1, Batch-3"
+                      value={importSubBatchCustom}
+                      onChange={(e) => setImportSubBatchCustom(e.target.value)}
+                      style={{ fontSize: '0.85rem' }}
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* Upload Dropzone */}
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDragging(true);
+                }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDragging(false);
+                  if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                    handleFileProcess(e.dataTransfer.files[0]);
+                  }
+                }}
+                style={{
+                  border: isDragging ? '2px dashed var(--primary)' : '2px dashed var(--border-subtle)',
+                  borderRadius: '10px',
+                  padding: '1.5rem',
+                  textAlign: 'center',
+                  backgroundColor: isDragging ? 'rgba(99, 102, 241, 0.08)' : 'rgba(15, 23, 42, 0.4)',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                }}
+                onClick={() => {
+                  const input = document.getElementById('csv-file-input') as HTMLInputElement;
+                  if (input) input.click();
+                }}
+              >
+                <input
+                  id="csv-file-input"
+                  type="file"
+                  accept=".csv,.txt,.tsv"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      handleFileProcess(e.target.files[0]);
+                    }
+                  }}
+                />
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
+                  <div style={{
+                    padding: '0.75rem',
+                    borderRadius: '50%',
+                    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                    color: 'var(--primary)',
+                  }}>
+                    <FileSpreadsheet size={28} />
+                  </div>
+                  <div style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {importFileName ? (
+                      <span style={{ color: '#818cf8' }}>📄 Loaded: {importFileName}</span>
+                    ) : (
+                      'Click to upload or drag & drop CSV spreadsheet'
+                    )}
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                    Supports raw institutional rosters, LeetCode profile links, and multi-mentor sheets.
+                  </div>
+                </div>
+              </div>
+
+              {/* Status Alert if Import Result Exists */}
+              {importResult && (
+                <div style={{
+                  padding: '1rem',
+                  borderRadius: '8px',
+                  backgroundColor: importResult.success ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                  border: `1px solid ${importResult.success ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                  color: importResult.success ? '#34d399' : '#f87171',
+                  fontSize: '0.85rem',
+                }}>
+                  <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    {importResult.success ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+                    <span>{importResult.message}</span>
+                  </div>
+                  {importResult.errors && importResult.errors.length > 0 && (
+                    <ul style={{ margin: '0.5rem 0 0 1.25rem', padding: 0, fontSize: '0.78rem' }}>
+                      {importResult.errors.slice(0, 5).map((err, idx) => (
+                        <li key={idx}><strong>{err.register_number}</strong>: {err.error}</li>
+                      ))}
+                      {importResult.errors.length > 5 && <li>...and {importResult.errors.length - 5} more issues.</li>}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              {/* Preview Table & Filtering Controls */}
+              {importRows.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  {/* Filter Toolbar */}
+                  <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: '0.75rem',
+                    padding: '0.75rem',
+                    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+                    borderRadius: '8px',
+                    border: '1px solid var(--border-subtle)',
+                  }}>
+                    {/* Mentor Filter Pills */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        Mentor Filter:
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedMentorFilter('ALL')}
+                        style={{
+                          padding: '0.25rem 0.6rem',
+                          borderRadius: '16px',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          backgroundColor: selectedMentorFilter === 'ALL' ? 'var(--primary)' : 'rgba(255, 255, 255, 0.06)',
+                          color: selectedMentorFilter === 'ALL' ? '#ffffff' : 'var(--text-secondary)',
+                          border: '1px solid var(--border-subtle)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        All Students ({importRows.length})
+                      </button>
+                      {detectedMentors.map((mentor) => {
+                        const count = importRows.filter((r) => r.cleanMentor === mentor).length;
+                        const isSelected = selectedMentorFilter === mentor;
+                        return (
+                          <button
+                            key={mentor}
+                            type="button"
+                            onClick={() => setSelectedMentorFilter(mentor)}
+                            style={{
+                              padding: '0.25rem 0.6rem',
+                              borderRadius: '16px',
+                              fontSize: '0.75rem',
+                              fontWeight: 600,
+                              backgroundColor: isSelected ? 'var(--primary)' : 'rgba(255, 255, 255, 0.06)',
+                              color: isSelected ? '#ffffff' : 'var(--text-secondary)',
+                              border: isSelected ? '1px solid var(--primary)' : '1px solid var(--border-subtle)',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            👤 {mentor} ({count})
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Search inside preview */}
+                    <div style={{ position: 'relative', width: '220px' }}>
+                      <Search size={14} style={{ position: 'absolute', left: '0.65rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                      <input
+                        type="text"
+                        placeholder="Search parsed students..."
+                        value={importSearch}
+                        onChange={(e) => setImportSearch(e.target.value)}
+                        className="form-input"
+                        style={{ paddingLeft: '2rem', paddingRight: '0.5rem', paddingTop: '0.35rem', paddingBottom: '0.35rem', fontSize: '0.8rem' }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Table Selection Helper */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', color: 'var(--text-secondary)', padding: '0 0.25rem' }}>
+                    <div>
+                      Showing <strong>{getFilteredImportRows().length}</strong> student(s) &bull; Selected:{' '}
+                      <strong style={{ color: 'var(--primary)' }}>
+                        {getFilteredImportRows().filter((r) => r.selected && r.isValid).length}
+                      </strong>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleAllVisibleImportRows(true)}
+                        style={{ background: 'none', border: 'none', color: '#818cf8', cursor: 'pointer', fontSize: '0.78rem', textDecoration: 'underline' }}
+                      >
+                        Select All Visible
+                      </button>
+                      <span>|</span>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleAllVisibleImportRows(false)}
+                        style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.78rem', textDecoration: 'underline' }}
+                      >
+                        Deselect All
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Preview Scrollable Table */}
+                  <div style={{
+                    maxHeight: '320px',
+                    overflowY: 'auto',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: '8px',
+                    backgroundColor: 'var(--bg-card)',
+                  }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.82rem' }}>
+                      <thead style={{ position: 'sticky', top: 0, backgroundColor: '#0f172a', zIndex: 2 }}>
+                        <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)', fontSize: '0.72rem', textTransform: 'uppercase' }}>
+                          <th style={{ padding: '0.6rem 0.75rem', width: '36px', textAlign: 'center' }}>
+                            <input
+                              type="checkbox"
+                              checked={
+                                getFilteredImportRows().length > 0 &&
+                                getFilteredImportRows().every((r) => r.selected || !r.isValid)
+                              }
+                              onChange={(e) => handleToggleAllVisibleImportRows(e.target.checked)}
+                              style={{ cursor: 'pointer' }}
+                            />
+                          </th>
+                          <th style={{ padding: '0.6rem 0.75rem' }}>Register No</th>
+                          <th style={{ padding: '0.6rem 0.75rem' }}>Student Name</th>
+                          <th style={{ padding: '0.6rem 0.75rem' }}>Dept</th>
+                          <th style={{ padding: '0.6rem 0.75rem' }}>LeetCode Handle</th>
+                          <th style={{ padding: '0.6rem 0.75rem' }}>Detected Mentor</th>
+                          <th style={{ padding: '0.6rem 0.75rem', textAlign: 'right' }}>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {getFilteredImportRows().map((row) => (
+                          <tr
+                            key={row.id}
+                            style={{
+                              borderBottom: '1px solid var(--border-subtle)',
+                              backgroundColor: row.selected ? 'rgba(99, 102, 241, 0.07)' : 'transparent',
+                              opacity: row.isValid ? 1 : 0.6,
+                            }}
+                          >
+                            <td style={{ padding: '0.55rem 0.75rem', textAlign: 'center' }}>
+                              <input
+                                type="checkbox"
+                                checked={row.selected}
+                                disabled={!row.isValid}
+                                onChange={() => handleToggleImportRow(row.id)}
+                                style={{ cursor: row.isValid ? 'pointer' : 'not-allowed' }}
+                              />
+                            </td>
+                            <td style={{ padding: '0.55rem 0.75rem', fontFamily: 'monospace', fontWeight: 600, color: 'var(--text-primary)' }}>
+                              {row.cleanRegisterNumber || <span style={{ color: '#f87171' }}>Missing</span>}
+                            </td>
+                            <td style={{ padding: '0.55rem 0.75rem', color: 'var(--text-primary)' }}>
+                              {row.name}
+                            </td>
+                            <td style={{ padding: '0.55rem 0.75rem', color: 'var(--text-secondary)' }}>
+                              <span style={{ padding: '0.15rem 0.4rem', borderRadius: '4px', backgroundColor: 'rgba(255, 255, 255, 0.06)', fontSize: '0.72rem' }}>
+                                {row.department}
+                              </span>
+                            </td>
+                            <td style={{ padding: '0.55rem 0.75rem', fontFamily: 'monospace', color: '#818cf8' }}>
+                              @{row.cleanLeetCode || <span style={{ color: '#f87171' }}>Missing</span>}
+                            </td>
+                            <td style={{ padding: '0.55rem 0.75rem', color: 'var(--text-secondary)' }}>
+                              {row.cleanMentor}
+                            </td>
+                            <td style={{ padding: '0.55rem 0.75rem', textAlign: 'right' }}>
+                              {row.isValid ? (
+                                <span style={{
+                                  padding: '0.15rem 0.45rem',
+                                  borderRadius: '4px',
+                                  fontSize: '0.7rem',
+                                  fontWeight: 600,
+                                  backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                                  color: '#34d399',
+                                }}>
+                                  Ready
+                                </span>
+                              ) : (
+                                <span style={{
+                                  padding: '0.15rem 0.45rem',
+                                  borderRadius: '4px',
+                                  fontSize: '0.7rem',
+                                  fontWeight: 600,
+                                  backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                                  color: '#f87171',
+                                }} title={row.validationError}>
+                                  Invalid
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div style={{
+              padding: '1rem 1.5rem',
+              borderTop: '1px solid var(--border-subtle)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              backgroundColor: 'rgba(15, 23, 42, 0.6)',
+            }}>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                {importRows.length > 0 && (
+                  <span>
+                    Ready to import <strong>{importRows.filter((r) => r.selected && r.isValid).length}</strong> student(s) into selected Batch.
+                  </span>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={handleCloseImportModal}
+                  disabled={isImporting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleExecuteImport}
+                  disabled={isImporting || importRows.filter((r) => r.selected && r.isValid).length === 0}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', minWidth: '170px', justifyContent: 'center' }}
+                >
+                  {isImporting ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      <span>Importing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload size={16} />
+                      <span>Import Selected ({importRows.filter((r) => r.selected && r.isValid).length})</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
