@@ -9,6 +9,8 @@ export interface ParsedImportRow {
   cleanRegisterNumber: string;
   name: string;
   department: string;
+  academicYear?: string;
+  currentYear?: string;
   rawMentor: string;
   cleanMentor: string;
   phone: string;
@@ -165,6 +167,8 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
     let rawMentor = '';
     let phone = '';
     let leetcodeUrl = '';
+    let academicYear = '';
+    let currentYear = '';
     let solvedCount: number | undefined;
 
     for (let c = 0; c < cells.length; c++) {
@@ -173,6 +177,16 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
 
       if (cell.includes('leetcode.com') || cell.includes('leetcode.cn') || cell.startsWith('@')) {
         leetcodeUrl = cell;
+        continue;
+      }
+
+      if (!academicYear && /^(20\d\d)\s*[-/–]\s*(20\d\d)$/.test(cell)) {
+        academicYear = cell.replace(/\s+/g, '').replace('/', '-');
+        continue;
+      }
+
+      if (!currentYear && /^(1st|2nd|3rd|4th|I|II|III|IV)\s*year/i.test(cell)) {
+        currentYear = cell.trim();
         continue;
       }
 
@@ -258,6 +272,8 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
       cleanRegisterNumber: cleanRegNo,
       name: cleanName || 'Unnamed Student',
       department: dept,
+      academicYear: academicYear || undefined,
+      currentYear: currentYear || undefined,
       rawMentor: rawMentor,
       cleanMentor: cleanMentor || 'Unassigned',
       phone: phone,

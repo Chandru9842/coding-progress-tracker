@@ -9,6 +9,8 @@ export interface ParsedImportRow {
   cleanRegisterNumber: string;
   name: string;
   department: string;
+  academicYear?: string;
+  currentYear?: string;
   rawMentor: string;
   cleanMentor: string;
   phone: string;
@@ -189,6 +191,8 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
     let rawMentor = '';
     let phone = '';
     let leetcodeUrl = '';
+    let academicYear = '';
+    let currentYear = '';
     let solvedCount: number | undefined;
 
     // Search cells by pattern
@@ -202,39 +206,51 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
         continue;
       }
 
-      // 2. Check for Register Number: 10-16 digits/characters (e.g. 814723104001, 717821P101)
+      // 2. Check for Academic Year range (e.g. 2023-2027, 2024-2028)
+      if (!academicYear && /^(20\d\d)\s*[-/–]\s*(20\d\d)$/.test(cell)) {
+        academicYear = cell.replace(/\s+/g, '').replace('/', '-');
+        continue;
+      }
+
+      // 3. Check for Study Year (e.g. 1st Year, 2nd Year, 3rd Year, 4th Year, II Year, III Year, IV Year)
+      if (!currentYear && /^(1st|2nd|3rd|4th|I|II|III|IV)\s*year/i.test(cell)) {
+        currentYear = cell.trim();
+        continue;
+      }
+
+      // 4. Check for Register Number: 10-16 digits/characters (e.g. 814723104001, 717821P101)
       const digitsOnly = cell.replace(/\s+/g, '');
       if (!regNo && digitsOnly.length >= 8 && digitsOnly.length <= 16 && /^[0-9A-Za-z]+$/.test(digitsOnly) && /\d/.test(digitsOnly)) {
         regNo = digitsOnly.toUpperCase();
         continue;
       }
 
-      // 3. Check for Department
+      // 5. Check for Department
       const upperCell = cell.toUpperCase();
       if (KNOWN_DEPTS.has(upperCell)) {
         dept = upperCell;
         continue;
       }
 
-      // 4. Check for Mentor (starts with Dr. / Mr. / Mrs. / Prof. or cell in column 4)
+      // 6. Check for Mentor (starts with Dr. / Mr. / Mrs. / Prof. or cell in column 4)
       if (!rawMentor && (/^(dr\.|mr\.|mrs\.|prof\.)/i.test(cell) || (c === 4 && !KNOWN_DEPTS.has(upperCell) && !/^\d+$/.test(cell.replace(/\s+/g, '')) && !cell.includes('leetcode')))) {
         rawMentor = cell;
         continue;
       }
 
-      // 5. Check for Phone Number: 10 digits with or without spaces
+      // 7. Check for Phone Number: 10 digits with or without spaces
       if (!phone && /^[0-9\s-]{10,14}$/.test(cell) && cell.replace(/\D/g, '').length === 10) {
         phone = cell;
         continue;
       }
 
-      // 6. Check for Solved Count integer
+      // 8. Check for Solved Count integer
       if (solvedCount === undefined && /^\d+$/.test(cell) && parseInt(cell) < 4000 && parseInt(cell) > 0) {
         solvedCount = parseInt(cell);
         continue;
       }
 
-      // 7. Check for Student Name (alphabetic words, uppercase names like "AADEESH C", "SARAVANAKUMAR V")
+      // 9. Check for Student Name (alphabetic words, uppercase names like "AADEESH C", "SARAVANAKUMAR V")
       if (!name && /^[A-Za-z\s.'()_-]{3,60}$/.test(cell) && !/^(dr\.|mr\.|mrs\.|prof\.)/i.test(cell)) {
         name = cell;
         continue;
@@ -292,6 +308,8 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
       cleanRegisterNumber: cleanRegNo,
       name: cleanName || 'Unnamed Student',
       department: dept,
+      academicYear: academicYear || undefined,
+      currentYear: currentYear || undefined,
       rawMentor: rawMentor,
       cleanMentor: cleanMentor || 'Unassigned',
       phone: phone,

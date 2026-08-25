@@ -10,6 +10,7 @@ const sampleUserData = `
 93,814723104043,GOWTHAM S,CSE,Dr.A.Muthuraj,9486715098,,https://leetcode.com/u/gowthams14/,123,62/46/15
 ,814723104301,Saravanakumar V,CSE,Dr.A.Muthuraj,9486715098,,https://leetcode.com/u/saravanakumar12345678/,58,14/30/14
 120,814723104064,yugguguigu,cse,chandru.m,9789224484,,https://leetcode.com/u/Arularasan010/,,
+121,814723104065,VIKRAM S,CSE,Mrs.K.Devi,95003 34806,2023-2027,https://leetcode.com/u/vikram_s/,120,2nd Year
 `;
 
 async function testSmartCSVImport() {
@@ -31,11 +32,17 @@ async function testSmartCSVImport() {
   const parsed = analyzeAndParseStudents(sampleUserData);
   console.log(`✔ Total Parsed: ${parsed.totalParsed}, Valid: ${parsed.validCount}`);
   console.log('✔ Detected Mentors:', parsed.detectedMentors);
-  console.log('✔ Rows:', parsed.rows.map(r => ({ reg: r.cleanRegisterNumber, name: r.name, mentor: r.cleanMentor, lc: r.cleanLeetCode })));
+  console.log('✔ Rows:', parsed.rows.map(r => ({ reg: r.cleanRegisterNumber, name: r.name, mentor: r.cleanMentor, year: r.academicYear, studyYear: r.currentYear, lc: r.cleanLeetCode })));
 
   if (!parsed.detectedMentors.includes('Chandru M')) {
     throw new Error('Expected "Chandru M" to be in detected mentors!');
   }
+
+  const vikram = parsed.rows.find((r) => r.cleanRegisterNumber === '814723104065');
+  if (!vikram || vikram.academicYear !== '2023-2027' || vikram.currentYear !== '2nd Year') {
+    throw new Error('Failed to auto-detect academic year or study year for student Vikram S');
+  }
+  console.log('✔ Auto-detected academic year "2023-2027" and study year "2nd Year"');
 
   const chandruStudent = parsed.rows.find((r) => r.cleanRegisterNumber === '814723104064');
   if (!chandruStudent || chandruStudent.cleanMentor !== 'Chandru M' || chandruStudent.cleanLeetCode !== 'Arularasan010') {

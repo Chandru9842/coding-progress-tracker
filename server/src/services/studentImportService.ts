@@ -11,6 +11,7 @@ export interface BulkImportStudentRow {
   section_id?: string;
   allocation_batch_id?: string;
   sub_batch?: string;
+  current_year?: string;
   leetcode_username: string;
   mentor_name?: string;
   mentor_id?: string;
@@ -23,6 +24,7 @@ export interface BulkImportInput {
     section_id?: string;
     allocation_batch_id?: string;
     sub_batch?: string;
+    current_year?: string;
     department?: string;
   };
 }
@@ -154,6 +156,7 @@ export async function bulkImportStudents(
     const effectiveDept = row.department || defaultDept;
     const effectiveAllocBatchId = row.allocation_batch_id || defaultAllocBatchId || null;
     const effectiveSubBatch = row.sub_batch || defaultSubBatch || null;
+    const effectiveCurrentYear = row.current_year || targetScope?.current_year || undefined;
 
     if (!effectiveBatchId || !effectiveSectionId) {
       failedCount++;
@@ -207,6 +210,7 @@ export async function bulkImportStudents(
             section_id: effectiveSectionId,
             allocation_batch_id: effectiveAllocBatchId || existing.allocation_batch_id,
             sub_batch: effectiveSubBatch || existing.sub_batch,
+            current_year: effectiveCurrentYear || existing.current_year || '1',
             leetcode_username: rawLeetCode,
           };
           updatedCount++;
@@ -221,7 +225,7 @@ export async function bulkImportStudents(
             section_id: effectiveSectionId,
             allocation_batch_id: effectiveAllocBatchId || null,
             sub_batch: effectiveSubBatch || null,
-            current_year: '1',
+            current_year: effectiveCurrentYear || '1',
             leetcode_username: rawLeetCode,
             created_at: new Date(),
           });
@@ -265,6 +269,7 @@ export async function bulkImportStudents(
               section_id: effectiveSectionId,
               allocation_batch_id: effectiveAllocBatchId || existing.allocation_batch_id,
               sub_batch: effectiveSubBatch || existing.sub_batch,
+              ...(effectiveCurrentYear ? { current_year: effectiveCurrentYear } : {}),
               leetcode_username: rawLeetCode,
               updated_at: new Date(),
             },
@@ -280,7 +285,7 @@ export async function bulkImportStudents(
               section_id: effectiveSectionId,
               allocation_batch_id: effectiveAllocBatchId || null,
               sub_batch: effectiveSubBatch || null,
-              current_year: '1',
+              current_year: effectiveCurrentYear || '1',
               leetcode_username: rawLeetCode,
             },
           });

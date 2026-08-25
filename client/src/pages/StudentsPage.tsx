@@ -86,6 +86,7 @@ export const StudentsPage: React.FC = () => {
   const [importSectionId, setImportSectionId] = useState<string>('');
   const [importAllocBatchId, setImportAllocBatchId] = useState<string>('');
   const [importSubBatchCustom, setImportSubBatchCustom] = useState<string>('');
+  const [importCurrentYear, setImportCurrentYear] = useState<string>('');
   const [importAllocBatches, setImportAllocBatches] = useState<any[]>([]);
   const [importSearch, setImportSearch] = useState<string>('');
   const [isImporting, setIsImporting] = useState<boolean>(false);
@@ -339,6 +340,7 @@ export const StudentsPage: React.FC = () => {
     setDetectedMentors([]);
     setSelectedMentorFilters(new Set(['ALL']));
     setImportSearch('');
+    setImportCurrentYear('');
     setImportResult(null);
 
     // Prepopulate default batch and section if available
@@ -357,6 +359,7 @@ export const StudentsPage: React.FC = () => {
     setImportFileName('');
     setImportRows([]);
     setSelectedMentorFilters(new Set(['ALL']));
+    setImportCurrentYear('');
     setImportResult(null);
   };
 
@@ -475,6 +478,7 @@ export const StudentsPage: React.FC = () => {
           section_id: importSectionId,
           allocation_batch_id: importAllocBatchId || undefined,
           sub_batch: importSubBatchCustom || undefined,
+          current_year: r.currentYear || importCurrentYear || undefined,
           leetcode_username: r.cleanLeetCode,
           mentor_name: r.cleanMentor !== 'Unassigned' ? r.cleanMentor : undefined,
         })),
@@ -483,6 +487,7 @@ export const StudentsPage: React.FC = () => {
           section_id: importSectionId,
           allocation_batch_id: importAllocBatchId || undefined,
           sub_batch: importSubBatchCustom || undefined,
+          current_year: importCurrentYear || undefined,
         },
       };
 
@@ -843,8 +848,41 @@ export const StudentsPage: React.FC = () => {
                         <td style={{ padding: '1rem', fontWeight: 700, color: 'var(--primary)', whiteSpace: 'nowrap' }}>
                           {student.register_number}
                         </td>
-                        <td style={{ padding: '1rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
-                          {student.name}
+                        <td style={{ padding: '1rem', whiteSpace: 'nowrap' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                            <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.9rem' }}>
+                              {student.name}
+                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                              <span style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.25rem',
+                                padding: '0.1rem 0.45rem',
+                                borderRadius: '4px',
+                                backgroundColor: 'rgba(99, 102, 241, 0.12)',
+                                color: '#818cf8',
+                                fontSize: '0.72rem',
+                                fontWeight: 600,
+                              }}>
+                                📅 {student.batch?.batch_name || (student as any).academic_year || 'Year N/A'}
+                              </span>
+                              {student.current_year && (
+                                <span style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  padding: '0.1rem 0.4rem',
+                                  borderRadius: '4px',
+                                  backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                                  color: 'var(--text-secondary)',
+                                  fontSize: '0.7rem',
+                                  fontWeight: 500,
+                                }}>
+                                  {student.current_year}
+                                </span>
+                              )}
+                            </div>
+                          </div>
                         </td>
                         <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                           {student.department}
@@ -1264,14 +1302,14 @@ export const StudentsPage: React.FC = () => {
             {/* Modal Body */}
             <div style={{ padding: '1.5rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
               
-              {/* Target Batch, Section & Allocation Batch Controls */}
+              {/* Target Scope Configuration */}
               <div style={{
-                backgroundColor: 'rgba(30, 41, 59, 0.5)',
-                border: '1px solid var(--border-subtle)',
+                backgroundColor: 'rgba(15, 23, 42, 0.4)',
                 borderRadius: '8px',
+                border: '1px solid var(--border-subtle)',
                 padding: '1rem',
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
                 gap: '1rem',
               }}>
                 <div>
@@ -1320,6 +1358,24 @@ export const StudentsPage: React.FC = () => {
                           Section {sec.name}
                         </option>
                       ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="form-label" style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+                    Study Year (Optional)
+                  </label>
+                  <select
+                    className="form-input"
+                    value={importCurrentYear}
+                    onChange={(e) => setImportCurrentYear(e.target.value)}
+                    style={{ fontSize: '0.85rem' }}
+                  >
+                    <option value="">Auto-Detect / Optional</option>
+                    <option value="1st Year">1st Year</option>
+                    <option value="2nd Year">2nd Year</option>
+                    <option value="3rd Year">3rd Year</option>
+                    <option value="4th Year">4th Year</option>
                   </select>
                 </div>
 
@@ -1599,7 +1655,36 @@ export const StudentsPage: React.FC = () => {
                               {row.cleanRegisterNumber || <span style={{ color: '#f87171' }}>Missing</span>}
                             </td>
                             <td style={{ padding: '0.55rem 0.75rem', color: 'var(--text-primary)' }}>
-                              {row.name}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                                <span style={{ fontWeight: 600 }}>{row.name}</span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', flexWrap: 'wrap' }}>
+                                  <span style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '0.2rem',
+                                    padding: '0.05rem 0.35rem',
+                                    borderRadius: '3px',
+                                    backgroundColor: 'rgba(99, 102, 241, 0.12)',
+                                    color: '#818cf8',
+                                    fontSize: '0.68rem',
+                                    fontWeight: 600,
+                                  }}>
+                                    📅 {row.academicYear || batches.find((b) => b.id === importBatchId)?.batch_name || 'Year N/A'}
+                                  </span>
+                                  {(row.currentYear || importCurrentYear) && (
+                                    <span style={{
+                                      padding: '0.05rem 0.35rem',
+                                      borderRadius: '3px',
+                                      backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                                      color: 'var(--text-muted)',
+                                      fontSize: '0.68rem',
+                                      fontWeight: 500,
+                                    }}>
+                                      {row.currentYear || importCurrentYear}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
                             </td>
                             <td style={{ padding: '0.55rem 0.75rem', color: 'var(--text-secondary)' }}>
                               <span style={{ padding: '0.15rem 0.4rem', borderRadius: '4px', backgroundColor: 'rgba(255, 255, 255, 0.06)', fontSize: '0.72rem' }}>
