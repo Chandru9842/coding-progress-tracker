@@ -29,6 +29,42 @@ import {
   ParseResult,
 } from '../utils/studentImportUtils.js';
 
+function formatStudyYear(currentYear?: string | null, batchName?: string | null, startYear?: number | null): string {
+  if (currentYear) {
+    const trimmed = currentYear.trim();
+    if (/^[1-4]$/.test(trimmed)) {
+      return `Year ${trimmed}`;
+    }
+    if (/^(1st|2nd|3rd|4th)\s*year$/i.test(trimmed)) {
+      const numMatch = trimmed.match(/^(1|2|3|4)/);
+      if (numMatch) return `Year ${numMatch[1]}`;
+      return trimmed;
+    }
+    if (/^(I|II|III|IV)$/i.test(trimmed)) {
+      const map: Record<string, string> = { I: 'Year 1', II: 'Year 2', III: 'Year 3', IV: 'Year 4' };
+      return map[trimmed.toUpperCase()] || `Year ${trimmed}`;
+    }
+    return trimmed;
+  }
+
+  let effectiveStartYear = startYear;
+  if (!effectiveStartYear && batchName) {
+    const match = batchName.match(/^(20\d\d)/);
+    if (match) {
+      effectiveStartYear = parseInt(match[1], 10);
+    }
+  }
+
+  if (effectiveStartYear) {
+    const currentCalYear = new Date().getFullYear();
+    const diff = currentCalYear - effectiveStartYear + 1;
+    if (diff >= 1 && diff <= 4) {
+      return `Year ${diff}`;
+    }
+  }
+  return '-';
+}
+
 export const StudentsPage: React.FC = () => {
   const { user } = useAuth();
   const isAdmin = user?.role === 'ADMIN';
@@ -791,6 +827,7 @@ export const StudentsPage: React.FC = () => {
                   <th style={{ padding: '1rem', width: '60px', textAlign: 'center', whiteSpace: 'nowrap' }}>Rank</th>
                   <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Register Number</th>
                   <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Student Name</th>
+                  <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Year</th>
                   <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Department</th>
                   <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Batch</th>
                   <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Section</th>
@@ -803,7 +840,7 @@ export const StudentsPage: React.FC = () => {
               <tbody>
                 {students.length === 0 ? (
                   <tr>
-                    <td colSpan={canManage ? 11 : 9} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    <td colSpan={canManage ? 12 : 10} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
                       {search || filterBatchId ? 'No students match your filter criteria.' : 'No students yet.'}
                     </td>
                   </tr>
@@ -848,39 +885,22 @@ export const StudentsPage: React.FC = () => {
                         <td style={{ padding: '1rem', fontWeight: 700, color: 'var(--primary)', whiteSpace: 'nowrap' }}>
                           {student.register_number}
                         </td>
+                        <td style={{ padding: '1rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
+                          {student.name}
+                        </td>
                         <td style={{ padding: '1rem', whiteSpace: 'nowrap' }}>
-                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.9rem' }}>
-                              {student.name}
-                            </span>
-                            <span style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '0.25rem',
-                              padding: '0.12rem 0.45rem',
-                              borderRadius: '4px',
-                              backgroundColor: 'rgba(99, 102, 241, 0.12)',
-                              color: '#818cf8',
-                              fontSize: '0.72rem',
-                              fontWeight: 600,
-                            }}>
-                              📅 {student.batch?.batch_name || (student as any).academic_year || 'Year N/A'}
-                            </span>
-                            {student.current_year && (
-                              <span style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                padding: '0.12rem 0.4rem',
-                                borderRadius: '4px',
-                                backgroundColor: 'rgba(255, 255, 255, 0.06)',
-                                color: 'var(--text-secondary)',
-                                fontSize: '0.7rem',
-                                fontWeight: 500,
-                              }}>
-                                {student.current_year}
-                              </span>
-                            )}
-                          </div>
+                          <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            padding: '0.2rem 0.55rem',
+                            borderRadius: '4px',
+                            backgroundColor: 'rgba(99, 102, 241, 0.12)',
+                            color: '#818cf8',
+                            fontSize: '0.78rem',
+                            fontWeight: 600,
+                          }}>
+                            {formatStudyYear(student.current_year, student.batch?.batch_name, student.batch?.start_year)}
+                          </span>
                         </td>
                         <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                           {student.department}
@@ -1624,6 +1644,7 @@ export const StudentsPage: React.FC = () => {
                           </th>
                           <th style={{ padding: '0.6rem 0.75rem' }}>Register No</th>
                           <th style={{ padding: '0.6rem 0.75rem' }}>Student Name</th>
+                          <th style={{ padding: '0.6rem 0.75rem' }}>Year</th>
                           <th style={{ padding: '0.6rem 0.75rem' }}>Dept</th>
                           <th style={{ padding: '0.6rem 0.75rem' }}>LeetCode Handle</th>
                           <th style={{ padding: '0.6rem 0.75rem' }}>Detected Mentor</th>
@@ -1652,35 +1673,24 @@ export const StudentsPage: React.FC = () => {
                             <td style={{ padding: '0.55rem 0.75rem', fontFamily: 'monospace', fontWeight: 600, color: 'var(--text-primary)' }}>
                               {row.cleanRegisterNumber || <span style={{ color: '#f87171' }}>Missing</span>}
                             </td>
-                            <td style={{ padding: '0.55rem 0.75rem', color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
-                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}>
-                                <span style={{ fontWeight: 600 }}>{row.name}</span>
-                                <span style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '0.2rem',
-                                  padding: '0.08rem 0.35rem',
-                                  borderRadius: '3px',
-                                  backgroundColor: 'rgba(99, 102, 241, 0.12)',
-                                  color: '#818cf8',
-                                  fontSize: '0.68rem',
-                                  fontWeight: 600,
-                                }}>
-                                  📅 {row.academicYear || batches.find((b) => b.id === importBatchId)?.batch_name || 'Year N/A'}
-                                </span>
-                                {(row.currentYear || importCurrentYear) && (
-                                  <span style={{
-                                    padding: '0.08rem 0.35rem',
-                                    borderRadius: '3px',
-                                    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-                                    color: 'var(--text-muted)',
-                                    fontSize: '0.68rem',
-                                    fontWeight: 500,
-                                  }}>
-                                    {row.currentYear || importCurrentYear}
-                                  </span>
-                                )}
-                              </div>
+                            <td style={{ padding: '0.55rem 0.75rem', color: 'var(--text-primary)', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                              {row.name}
+                            </td>
+                            <td style={{ padding: '0.55rem 0.75rem', whiteSpace: 'nowrap' }}>
+                              <span style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                padding: '0.15rem 0.45rem',
+                                borderRadius: '4px',
+                                backgroundColor: 'rgba(99, 102, 241, 0.12)',
+                                color: '#818cf8',
+                                fontSize: '0.72rem',
+                                fontWeight: 600,
+                              }}>
+                                {formatStudyYear(row.currentYear || importCurrentYear, null) !== '-'
+                                  ? formatStudyYear(row.currentYear || importCurrentYear, null)
+                                  : (row.academicYear || batches.find((b) => b.id === importBatchId)?.batch_name || 'Year 1')}
+                              </span>
                             </td>
                             <td style={{ padding: '0.55rem 0.75rem', color: 'var(--text-secondary)' }}>
                               <span style={{ padding: '0.15rem 0.4rem', borderRadius: '4px', backgroundColor: 'rgba(255, 255, 255, 0.06)', fontSize: '0.72rem' }}>

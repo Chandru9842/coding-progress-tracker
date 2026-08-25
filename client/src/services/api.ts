@@ -134,7 +134,7 @@ export interface Student {
   mentor?: { id: string; name: string; email: string } | null;
   allocation_batch?: { id: string; name: string } | null;
   created_at: string;
-  batch?: { batch_name: string };
+  batch?: { id?: string; batch_name: string; start_year?: number; end_year?: number };
   section?: { name: string };
   snapshots?: DailySnapshot[];
 }
