@@ -99,99 +99,64 @@ export async function getStudentsForUser(
     });
   }
 
-  const where: any = {};
+  const andClauses: any[] = [];
 
   if (filters?.batchId) {
-    where.batch_id = filters.batchId;
+    andClauses.push({ batch_id: filters.batchId });
   }
 
   if (filters?.sectionId) {
-    where.section_id = filters.sectionId;
+    andClauses.push({ section_id: filters.sectionId });
   }
 
   if (filters?.department) {
-    where.department = { contains: filters.department.trim(), mode: 'insensitive' };
+    andClauses.push({ department: { contains: filters.department.trim(), mode: 'insensitive' } });
+  }
+
+  if (filters?.mentorId) {
+    andClauses.push({
+      staff_student_assignments: {
+        some: { staff_id: filters.mentorId },
+      },
+    });
   }
 
   if (filters?.allocationBatchId) {
     const val = filters.allocationBatchId.trim();
-    if (!process.env.DATABASE_URL) {
-      const matchingAbs = inMemoryStore.allocationBatches.filter(
-        (ab) => ab.id === val || ab.name.toLowerCase() === val.toLowerCase()
-      );
-      const abIds = matchingAbs.map((ab) => ab.id);
-      const abNames = matchingAbs.map((ab) => ab.name);
-      where.OR = [
-        { allocation_batch_id: { in: abIds.length > 0 ? abIds : [val] } },
-        { sub_batch: { in: abNames.length > 0 ? abNames : [val] } },
+    andClauses.push({
+      OR: [
         { allocation_batch_id: val },
-        { sub_batch: val },
-      ];
-    } else {
-      const matchingAbs = await prisma.allocationBatch.findMany({
-        where: {
-          OR: [
-            { id: val },
-            { name: { equals: val, mode: 'insensitive' } },
-          ],
-        },
-        select: { id: true, name: true },
-      });
-      const abIds = matchingAbs.map((ab) => ab.id);
-      const abNames = matchingAbs.map((ab) => ab.name);
-
-      const allocConditions: any[] = [
-        { allocation_batch_id: val },
+        { allocation_batch: { name: { equals: val, mode: 'insensitive' } } },
         { sub_batch: { equals: val, mode: 'insensitive' } },
-      ];
-      if (abIds.length > 0) {
-        allocConditions.push({ allocation_batch_id: { in: abIds } });
-      }
-      if (abNames.length > 0) {
-        allocConditions.push({ sub_batch: { in: abNames } });
-      }
-
-      if (where.OR) {
-        where.AND = [
-          { OR: where.OR },
-          { OR: allocConditions },
-        ];
-        delete where.OR;
-      } else {
-        where.OR = allocConditions;
-      }
-    }
-  }
-
-  if (filters?.mentorId) {
-    where.staff_student_assignments = {
-      some: { staff_id: filters.mentorId },
-    };
+      ],
+    });
   }
 
   if (filters?.search) {
     const search = filters.search.trim();
-    const searchCondition = [
-      { name: { contains: search, mode: 'insensitive' } },
-      { register_number: { contains: search, mode: 'insensitive' } },
-      { leetcode_username: { contains: search, mode: 'insensitive' } },
-    ];
-    if (where.OR) {
-      where.AND = [
-        { OR: where.OR },
-        { OR: searchCondition }
-      ];
-      delete where.OR;
-    } else {
-      where.OR = searchCondition;
-    }
+    andClauses.push({
+      OR: [
+        { name: { contains: search, mode: 'insensitive' } },
+        { register_number: { contains: search, mode: 'insensitive' } },
+        { leetcode_username: { contains: search, mode: 'insensitive' } },
+      ],
+    });
   }
 
-  // Security Scoping for STAFF users
+  // High-Performance Security Scoping for STAFF users:
+  // Evaluated in a single PostgreSQL query via native foreign key relation indexes
   if (user.role === 'STAFF') {
-    const authorizedIds = await getAuthorizedStudentIdsForStaff(user.userId);
-    where.id = { in: authorizedIds };
+    andClauses.push({
+      OR: [
+        { staff_student_assignments: { some: { staff_id: user.userId } } },
+        { section: { staff_section_assignments: { some: { staff_id: user.userId, assignment_mode: 'ALL' } } } },
+        { allocation_batch: { staff_section_assignments: { some: { staff_id: user.userId } } } },
+        { batch: { staff_batch_assignments: { some: { staff_id: user.userId } } } },
+      ],
+    });
   }
+
+  const where: any = andClauses.length > 0 ? { AND: andClauses } : {};
 
   const students = await prisma.student.findMany({
     where,

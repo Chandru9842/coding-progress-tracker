@@ -82,29 +82,14 @@ export async function getBatchesForStaff(staffId: string) {
       });
   }
 
-  // 1. Fetch batch, section, and student assignments sequentially to avoid pool contention
-  const directAssigns = await prisma.staffBatchAssignment.findMany({
-    where: { staff_id: staffId },
-    select: { batch_id: true },
-  });
-  const secAssigns = await prisma.staffSectionAssignment.findMany({
-    where: { staff_id: staffId },
-    select: { section: { select: { batch_id: true } } },
-  });
-  const stAssigns = await prisma.staffStudentAssignment.findMany({
-    where: { staff_id: staffId },
-    select: { student: { select: { batch_id: true } } },
-  });
-
-  const batchIds = new Set<string>();
-  directAssigns.forEach((a) => batchIds.add(a.batch_id));
-  secAssigns.forEach((a) => batchIds.add(a.section.batch_id));
-  stAssigns.forEach((a) => batchIds.add(a.student.batch_id));
-
-  if (batchIds.size === 0) return [];
-
   const batches = await prisma.batch.findMany({
-    where: { id: { in: Array.from(batchIds) } },
+    where: {
+      OR: [
+        { staff_batch_assignments: { some: { staff_id: staffId } } },
+        { sections: { some: { staff_section_assignments: { some: { staff_id: staffId } } } } },
+        { students: { some: { staff_student_assignments: { some: { staff_id: staffId } } } } },
+      ],
+    },
     include: {
       sections: {
         select: {

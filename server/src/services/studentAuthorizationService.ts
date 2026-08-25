@@ -26,57 +26,20 @@ export async function isStaffAuthorizedForStudent(
     return !!batchAssign;
   }
 
-  // 1. Direct Student Assignment check
-  const directAssignment = await prisma.staffStudentAssignment.findUnique({
+  const authorized = await prisma.student.findFirst({
     where: {
-      staff_id_student_id: {
-        staff_id: staffId,
-        student_id: studentId,
-      },
+      id: studentId,
+      OR: [
+        { staff_student_assignments: { some: { staff_id: staffId } } },
+        { section: { staff_section_assignments: { some: { staff_id: staffId, assignment_mode: 'ALL' } } } },
+        { allocation_batch: { staff_section_assignments: { some: { staff_id: staffId } } } },
+        { batch: { staff_batch_assignments: { some: { staff_id: staffId } } } },
+      ],
     },
+    select: { id: true },
   });
 
-  if (directAssignment) {
-    return true;
-  }
-
-  // 2. Fetch student's section_id, batch_id & allocation_batch_id
-  const student = await prisma.student.findUnique({
-    where: { id: studentId },
-    select: { section_id: true, batch_id: true, allocation_batch_id: true, sub_batch: true },
-  });
-
-  if (!student) {
-    return false;
-  }
-
-  // 3. Section Assignment check (Mode: ALL or matching allocation_batch_id)
-  const sectionAssignments = await prisma.staffSectionAssignment.findMany({
-    where: {
-      staff_id: staffId,
-      section_id: student.section_id,
-    },
-  });
-
-  const matchingSec = sectionAssignments.find((sa) => {
-    if (sa.assignment_mode === 'ALL') return true;
-    if (sa.allocation_batch_id && student.allocation_batch_id && sa.allocation_batch_id === student.allocation_batch_id) return true;
-    return false;
-  });
-
-  if (matchingSec) {
-    return true;
-  }
-
-  // 4. Batch Assignment check (Staff assigned to whole Batch)
-  const batchAssignment = await prisma.staffBatchAssignment.findFirst({
-    where: {
-      staff_id: staffId,
-      batch_id: student.batch_id,
-    },
-  });
-
-  return !!batchAssignment;
+  return !!authorized;
 }
 
 export async function isStaffAuthorizedForBatch(
@@ -194,53 +157,19 @@ export async function getAuthorizedStudentIdsForStaff(
     return Array.from(studentIds);
   }
 
-  // 1. Fetch staff assignments sequentially to avoid connection contention in constrained pools
-  const directAssignments = await prisma.staffStudentAssignment.findMany({
-    where: { staff_id: staffId },
-    select: { student_id: true },
-  });
-  const sectionAssignments = await prisma.staffSectionAssignment.findMany({
-    where: { staff_id: staffId },
-    select: { section_id: true, assignment_mode: true, allocation_batch_id: true },
-  });
-  const batchAssignments = await prisma.staffBatchAssignment.findMany({
-    where: { staff_id: staffId },
-    select: { batch_id: true },
+  const students = await prisma.student.findMany({
+    where: {
+      OR: [
+        { staff_student_assignments: { some: { staff_id: staffId } } },
+        { section: { staff_section_assignments: { some: { staff_id: staffId, assignment_mode: 'ALL' } } } },
+        { allocation_batch: { staff_section_assignments: { some: { staff_id: staffId } } } },
+        { batch: { staff_batch_assignments: { some: { staff_id: staffId } } } },
+      ],
+    },
+    select: { id: true },
   });
 
-  const studentIds = new Set<string>(directAssignments.map((a) => a.student_id));
-
-  // Build a single OR query for section/batch-based student authorization
-  const conditions: any[] = [];
-
-  const allSectionIds = sectionAssignments
-    .filter((sa) => sa.assignment_mode === 'ALL')
-    .map((sa) => sa.section_id);
-  if (allSectionIds.length > 0) {
-    conditions.push({ section_id: { in: allSectionIds } });
-  }
-
-  const allocConditions = sectionAssignments
-    .filter((sa) => sa.assignment_mode !== 'ALL' && sa.allocation_batch_id)
-    .map((sa) => ({ section_id: sa.section_id, allocation_batch_id: sa.allocation_batch_id! }));
-  if (allocConditions.length > 0) {
-    conditions.push(...allocConditions);
-  }
-
-  if (batchAssignments.length > 0) {
-    const batchIds = batchAssignments.map((b) => b.batch_id);
-    conditions.push({ batch_id: { in: batchIds } });
-  }
-
-  if (conditions.length > 0) {
-    const sectionBatchStudents = await prisma.student.findMany({
-      where: { OR: conditions },
-      select: { id: true },
-    });
-    sectionBatchStudents.forEach((s) => studentIds.add(s.id));
-  }
-
-  return Array.from(studentIds);
+  return students.map((s) => s.id);
 }
 
 export async function isStaffAuthorizedForAllocationBatch(
