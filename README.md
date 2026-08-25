@@ -173,16 +173,16 @@ Every student record now features a dedicated **Study Year** attribute:
 
 ```mermaid
 graph TD
-    User["👨‍🏫 Faculty Member / Admin"] -->|HTTPS / JWT Auth| Client["⚛️ React 18 + Vite SPA (Vercel CDN)"]
-    Client -->|REST API Requests| Serverless["⚡ Express + Node.js (Vercel Serverless API)"]
-    Serverless -->|Prisma ORM (Single-Query Index Joins)| Database["🐘 PostgreSQL Database (Supabase)"]
+    User["👨‍🏫 Faculty Member / Admin"] -->|"HTTPS / JWT Auth"| Client["⚛️ React 18 + Vite SPA (Vercel CDN)"]
+    Client -->|"REST API Requests"| Serverless["⚡ Express + Node.js (Vercel Serverless API)"]
+    Serverless -->|"Prisma ORM Single-Query Joins"| Database["🐘 PostgreSQL Database (Supabase)"]
     
-    Cron["⏰ Vercel Scheduled Cron (12:30 AM IST / 19:00 UTC)"] -->|POST /api/v1/cron/daily-sync| Serverless
-    Serverless -->|GraphQL Query| LeetCode["🧩 LeetCode Public GraphQL API"]
-    LeetCode -->|Real-Time Stats| Serverless
-    Serverless -->|Store Daily Snapshots| Database
+    Cron["⏰ Vercel Scheduled Cron (12:30 AM IST / 19:00 UTC)"] -->|"POST /api/v1/cron/daily-sync"| Serverless
+    Serverless -->|"GraphQL Query"| LeetCode["🧩 LeetCode Public GraphQL API"]
+    LeetCode -->|"Real-Time Stats"| Serverless
+    Serverless -->|"Store Daily Snapshots"| Database
     Serverless -->|"POST JSON (text/plain)"| Webhook["📜 Google Apps Script Webhook"]
-    Webhook -->|Auto Format & Append| Sheet["📊 Linked Google Sheet"]
+    Webhook -->|"Auto Format & Append"| Sheet["📊 Linked Google Sheet"]
 ```
 
 ---
