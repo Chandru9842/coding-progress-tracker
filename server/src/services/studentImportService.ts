@@ -324,12 +324,20 @@ export async function bulkImportStudents(
     }
   }
 
-  // 4. Trigger initial background LeetCode fetch for imported students (asynchronous non-blocking)
+  // 4. Trigger initial background LeetCode fetch for imported students (non-blocking with gentle throttling)
   if (newlyCreatedOrUpdatedIds.length > 0) {
     const authContext = { userId: user.userId, role: user.role };
-    Promise.allSettled(
-      newlyCreatedOrUpdatedIds.slice(0, 30).map((stId) => syncStudentLeetCode(stId, authContext))
-    ).catch(() => {});
+    const idsToSync = newlyCreatedOrUpdatedIds.slice(0, 25);
+    (async () => {
+      for (const stId of idsToSync) {
+        try {
+          await syncStudentLeetCode(stId, authContext);
+        } catch {
+          // Ignore background sync errors
+        }
+        await new Promise((r) => setTimeout(r, 800));
+      }
+    })().catch(() => {});
   }
 
   return {

@@ -281,9 +281,9 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
     const cleanRegNo = regNo.trim().toUpperCase();
     const cleanName = name.trim();
     const cleanUsername = extractCleanLeetCodeUsername(leetcodeUrl);
-    const cleanMentor = normalizeMentorName(rawMentor);
+    const cleanMentor = normalizeMentorName(rawMentor) || 'Unassigned';
 
-    if (cleanMentor) {
+    if (cleanMentor && cleanMentor !== 'Unassigned') {
       mentorSet.add(cleanMentor);
     }
 
@@ -324,7 +324,11 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
 
   const validCount = parsedRows.filter((r) => r.isValid).length;
   const invalidCount = parsedRows.length - validCount;
+  const hasUnassigned = parsedRows.some((r) => r.cleanMentor === 'Unassigned');
   const detectedMentors = Array.from(mentorSet).sort();
+  if (hasUnassigned) {
+    detectedMentors.push('Unassigned');
+  }
 
   return {
     rows: parsedRows,

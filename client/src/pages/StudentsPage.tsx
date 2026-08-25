@@ -415,13 +415,18 @@ export const StudentsPage: React.FC = () => {
 
       // Smart Auto-Filter for logged in user (e.g. Dr. A. Muthuraj)
       if (user?.name) {
-        const userNorm = user.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const userNorm = user.name.toLowerCase().replace(/^(dr|mr|mrs|ms|prof)\.?\s*/i, '').replace(/[^a-z0-9]/g, '');
         const matched = result.detectedMentors.find((m) => {
-          const mNorm = m.toLowerCase().replace(/[^a-z0-9]/g, '');
-          return mNorm.includes(userNorm) || userNorm.includes(mNorm);
+          const mNorm = m.toLowerCase().replace(/^(dr|mr|mrs|ms|prof)\.?\s*/i, '').replace(/[^a-z0-9]/g, '');
+          return mNorm === userNorm || mNorm.includes(userNorm) || userNorm.includes(mNorm);
         });
         if (matched) {
           setSelectedMentorFilters(new Set([matched]));
+          // Pre-select only rows for this matched mentor
+          setImportRows(result.rows.map((r) => ({
+            ...r,
+            selected: r.isValid && r.cleanMentor === matched,
+          })));
         } else {
           setSelectedMentorFilters(new Set(['ALL']));
         }
@@ -432,26 +437,39 @@ export const StudentsPage: React.FC = () => {
     reader.readAsText(file);
   };
 
-  const handleToggleMentorFilter = (mentor: string) => {
+  const handleToggleMentorFilter = (mentor: string, e?: React.MouseEvent) => {
+    const isMulti = e?.shiftKey || e?.ctrlKey || e?.metaKey;
+    let nextSet: Set<string>;
+
     if (mentor === 'ALL') {
-      setSelectedMentorFilters(new Set(['ALL']));
-      return;
+      nextSet = new Set(['ALL']);
+    } else if (isMulti) {
+      nextSet = new Set(selectedMentorFilters);
+      nextSet.delete('ALL');
+      if (nextSet.has(mentor)) {
+        nextSet.delete(mentor);
+        if (nextSet.size === 0) nextSet.add('ALL');
+      } else {
+        nextSet.add(mentor);
+      }
+    } else {
+      // Single click switches to this mentor cleanly
+      nextSet = new Set([mentor]);
     }
 
-    setSelectedMentorFilters((prev) => {
-      const next = new Set(prev);
-      next.delete('ALL');
+    setSelectedMentorFilters(nextSet);
 
-      if (next.has(mentor)) {
-        next.delete(mentor);
-        if (next.size === 0) {
-          next.add('ALL');
-        }
-      } else {
-        next.add(mentor);
-      }
-      return next;
-    });
+    // CRITICAL: Automatically select all valid rows matching the active filter
+    setImportRows((prev) =>
+      prev.map((r) => {
+        if (!r.isValid) return r;
+        const matches = nextSet.has('ALL') || nextSet.has(r.cleanMentor);
+        return {
+          ...r,
+          selected: matches,
+        };
+      })
+    );
   };
 
   const handleToggleImportRow = (rowId: string) => {
@@ -1556,24 +1574,25 @@ export const StudentsPage: React.FC = () => {
                       {detectedMentors.map((mentor) => {
                         const count = importRows.filter((r) => r.cleanMentor === mentor).length;
                         const isSelected = selectedMentorFilters.has(mentor) && !selectedMentorFilters.has('ALL');
+                        const isUnassigned = mentor === 'Unassigned';
                         return (
                           <button
                             key={mentor}
                             type="button"
-                            onClick={() => handleToggleMentorFilter(mentor)}
+                            onClick={(e) => handleToggleMentorFilter(mentor, e)}
                             style={{
                               padding: '0.25rem 0.6rem',
                               borderRadius: '16px',
                               fontSize: '0.75rem',
                               fontWeight: 600,
                               backgroundColor: isSelected ? 'var(--primary)' : 'rgba(255, 255, 255, 0.06)',
-                              color: isSelected ? '#ffffff' : 'var(--text-secondary)',
-                              border: isSelected ? '1px solid var(--primary)' : '1px solid var(--border-subtle)',
+                              color: isSelected ? '#ffffff' : isUnassigned ? '#f87171' : 'var(--text-secondary)',
+                              border: isSelected ? '1px solid var(--primary)' : isUnassigned ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid var(--border-subtle)',
                               cursor: 'pointer',
                             }}
-                            title={`Click to toggle ${mentor}`}
+                            title={isUnassigned ? 'Students without a mentor in the file' : `Click to filter ${mentor} (Shift+Click to multi-select)`}
                           >
-                            {isSelected ? '✓ ' : ''}👤 {mentor} ({count})
+                            {isSelected ? '✓ ' : ''}{isUnassigned ? '⚠️ Unassigned' : `👤 ${mentor}`} ({count})
                           </button>
                         );
                       })}
