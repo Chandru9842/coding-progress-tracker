@@ -111,6 +111,10 @@ export async function getBatchesForStaff(staffId: string) {
           id: true,
           name: true,
           created_at: true,
+          allocation_batches: {
+            include: { _count: { select: { students: true } } },
+            orderBy: { name: 'asc' },
+          },
           _count: { select: { students: true } },
         },
       },

@@ -378,17 +378,75 @@ export const StudentsPage: React.FC = () => {
     setSelectedMentorFilters(new Set(['ALL']));
     setImportSearch('');
     setImportCurrentYear('');
+    setImportDuplicateCount(0);
     setImportResult(null);
 
-    // Prepopulate default batch and section if available
-    if (batches.length > 0) {
-      const defaultB = batches[0];
-      setImportBatchId(defaultB.id);
-      if (defaultB.sections && defaultB.sections.length > 0) {
-        setImportSectionId(defaultB.sections[0].id);
+    // Intelligently preselect active/first batch and section
+    const activeBatch = batches.find((b) => b.id === filterBatchId) || (batches.length > 0 ? batches[0] : null);
+    if (activeBatch) {
+      setImportBatchId(activeBatch.id);
+      const activeSec = activeBatch.sections?.find((s) => s.id === filterSectionId) || (activeBatch.sections && activeBatch.sections.length > 0 ? activeBatch.sections[0] : null);
+      if (activeSec) {
+        setImportSectionId(activeSec.id);
+        if (activeSec.allocation_batches && activeSec.allocation_batches.length > 0) {
+          setImportAllocBatches(activeSec.allocation_batches);
+        } else {
+          batchApi.getAllocationBatches(activeSec.id)
+            .then((abs) => setImportAllocBatches(abs || []))
+            .catch(() => setImportAllocBatches([]));
+        }
+      } else {
+        setImportSectionId('');
+        setImportAllocBatches([]);
       }
+    } else {
+      setImportBatchId('');
+      setImportSectionId('');
+      setImportAllocBatches([]);
     }
+    setImportAllocBatchId('');
+    setImportSubBatchCustom('');
     setShowImportModal(true);
+  };
+
+  const handleImportBatchChange = (newBatchId: string) => {
+    setImportBatchId(newBatchId);
+    const b = batches.find((item) => item.id === newBatchId);
+    if (b && b.sections && b.sections.length > 0) {
+      const firstSec = b.sections[0];
+      setImportSectionId(firstSec.id);
+      if (firstSec.allocation_batches && firstSec.allocation_batches.length > 0) {
+        setImportAllocBatches(firstSec.allocation_batches);
+      } else {
+        batchApi.getAllocationBatches(firstSec.id)
+          .then((abs) => setImportAllocBatches(abs || []))
+          .catch(() => setImportAllocBatches([]));
+      }
+    } else {
+      setImportSectionId('');
+      setImportAllocBatches([]);
+    }
+    setImportAllocBatchId('');
+    setImportSubBatchCustom('');
+  };
+
+  const handleImportSectionChange = (newSecId: string) => {
+    setImportSectionId(newSecId);
+    setImportAllocBatchId('');
+    setImportSubBatchCustom('');
+    if (newSecId) {
+      const b = batches.find((item) => item.id === importBatchId);
+      const sec = b?.sections?.find((s) => s.id === newSecId);
+      if (sec && sec.allocation_batches && sec.allocation_batches.length > 0) {
+        setImportAllocBatches(sec.allocation_batches);
+      } else {
+        batchApi.getAllocationBatches(newSecId)
+          .then((abs) => setImportAllocBatches(abs || []))
+          .catch(() => setImportAllocBatches([]));
+      }
+    } else {
+      setImportAllocBatches([]);
+    }
   };
 
   const handleCloseImportModal = () => {
@@ -415,6 +473,22 @@ export const StudentsPage: React.FC = () => {
       setImportRows(result.rows);
       setDetectedMentors(result.detectedMentors);
       setImportDuplicateCount(result.duplicateCount);
+
+      // Auto-detect matching batch if not explicitly picked yet
+      const sampleYear = result.rows.find((r) => r.academicYear)?.academicYear;
+      if (sampleYear && batches.length > 0) {
+        const matchedB = batches.find((b) => `${b.start_year}-${b.end_year}`.includes(sampleYear) || b.batch_name.includes(sampleYear));
+        if (matchedB) {
+          setImportBatchId(matchedB.id);
+          if (matchedB.sections && matchedB.sections.length > 0) {
+            const firstS = matchedB.sections[0];
+            setImportSectionId(firstS.id);
+            if (firstS.allocation_batches && firstS.allocation_batches.length > 0) {
+              setImportAllocBatches(firstS.allocation_batches);
+            }
+          }
+        }
+      }
 
       // Smart Auto-Filter for logged in user (e.g. Dr. A. Muthuraj)
       if (user?.name) {
@@ -1358,16 +1432,7 @@ export const StudentsPage: React.FC = () => {
                   <select
                     className="form-input"
                     value={importBatchId}
-                    onChange={(e) => {
-                      const newBatchId = e.target.value;
-                      setImportBatchId(newBatchId);
-                      const b = batches.find((item) => item.id === newBatchId);
-                      if (b && b.sections && b.sections.length > 0) {
-                        setImportSectionId(b.sections[0].id);
-                      } else {
-                        setImportSectionId('');
-                      }
-                    }}
+                    onChange={(e) => handleImportBatchChange(e.target.value)}
                     style={{ fontSize: '0.85rem' }}
                   >
                     <option value="">Select Target Batch</option>
@@ -1386,7 +1451,7 @@ export const StudentsPage: React.FC = () => {
                   <select
                     className="form-input"
                     value={importSectionId}
-                    onChange={(e) => setImportSectionId(e.target.value)}
+                    onChange={(e) => handleImportSectionChange(e.target.value)}
                     style={{ fontSize: '0.85rem' }}
                   >
                     <option value="">Select Section</option>
