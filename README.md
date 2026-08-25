@@ -25,6 +25,8 @@
 - [🌟 Executive Summary](#-executive-summary)
 - [✨ Key Architectural Features](#-key-architectural-features)
 - [🤖 Universal AI CSV / Excel Bulk Import Engine](#-universal-ai-csv--excel-bulk-import-engine)
+- [👥 Allocation Batches & Sub-Batch Mentor Tracking](#-allocation-batches--sub-batch-mentor-tracking)
+- [🎓 Dedicated Study Year Tracking](#-dedicated-study-year-tracking)
 - [🏗️ System Architecture & Data Pipelines](#️-system-architecture--data-pipelines)
 - [📊 Google Apps Script Integration Guide](#-google-apps-script-integration-guide)
 - [🚀 Quickstart & Local Development](#-quickstart--local-development)
@@ -148,13 +150,32 @@ S.No,Roll No,Name of the Student,LeetCode Username,Allocation Batch
 
 ---
 
+## 👥 Allocation Batches & Sub-Batch Mentor Tracking
+
+Higher-education institutions often divide large sections (e.g. 60+ students in Section `CSE-A`) into smaller **Allocation Batches** (e.g., `Batch-1`, `Batch-2`, `Batch-3`, `Batch-4`) assigned to individual faculty mentors:
+
+- **🏷️ Visual Mentor Badges on Batch Cards**: Every sub-batch pill prominently shows the assigned mentor name (`Batch-1 (23 Students) • 👤 Mrs. K. Devi`, `Batch-3 (14 Students) • 👤 Dr. A. Muthuraj`).
+- **🔍 Allocation Batch Detail Modal**: Clicking any allocation batch pill reveals a complete breakdown with Intake, Department, Section, Assigned Mentor card, and full student roster.
+- **⚡ Cascade Inheritance**: Importing or moving students into an allocation batch automatically assigns their mentor and sets their scope without manual configuration.
+
+---
+
+## 🎓 Dedicated Study Year Tracking
+
+Every student record now features a dedicated **Study Year** attribute:
+- **Available Values**: `1st Year`, `2nd Year`, `3rd Year`, `4th Year`.
+- **Display**: Shown as a sleek modern badge next to the student's name across all table views, modals, and export spreadsheets.
+- **Filters**: Quickly filter the entire student directory by academic intake, department, section, allocation batch, or study year.
+
+---
+
 ## 🏗️ System Architecture & Data Pipelines
 
 ```mermaid
 graph TD
     User["👨‍🏫 Faculty Member / Admin"] -->|HTTPS / JWT Auth| Client["⚛️ React 18 + Vite SPA (Vercel CDN)"]
     Client -->|REST API Requests| Serverless["⚡ Express + Node.js (Vercel Serverless API)"]
-    Serverless -->|Prisma ORM| Database["🐘 PostgreSQL Database (Supabase)"]
+    Serverless -->|Prisma ORM (Single-Query Index Joins)| Database["🐘 PostgreSQL Database (Supabase)"]
     
     Cron["⏰ Vercel Scheduled Cron (12:30 AM IST / 19:00 UTC)"] -->|POST /api/v1/cron/daily-sync| Serverless
     Serverless -->|GraphQL Query| LeetCode["🧩 LeetCode Public GraphQL API"]
@@ -333,8 +354,9 @@ coding-progress-tracker/
 │   ├── src/
 │   │   ├── components/           # Navbar, Sidebar, Layout, ProtectedRoute, Modal Dialogs
 │   │   ├── context/              # AuthContext session provider
-│   │   ├── pages/                # AdminDashboard, StaffDashboard, StudentDirectory, SettingsPage
+│   │   ├── pages/                # AdminDashboard, StaffDashboard, StudentDirectory, SettingsPage, BatchDetailPage
 │   │   ├── services/             # Axios API Service client with memory caching
+│   │   ├── utils/                # Universal AI CSV & Excel Parser, Math & Date helpers
 │   │   ├── types/                # TypeScript Interfaces & Data Models
 │   │   ├── App.tsx               # Client Routes & RBAC Route Guards
 │   │   └── index.css             # Glassmorphism Design System & Modal Controls
@@ -346,11 +368,12 @@ coding-progress-tracker/
 │   │   └── schema.prisma         # Prisma Data Model (PostgreSQL / Supabase)
 │   ├── src/
 │   │   ├── config/               # Environment variable validation
-│   │   ├── controllers/          # Auth, Student, Staff, Batch, Sync, GoogleSheet controllers
+│   │   ├── controllers/          # Auth, Student, Staff, Batch, Sync, GoogleSheet, Report controllers
 │   │   ├── db/                   # Prisma Client Singleton & Fallback Memory Store
 │   │   ├── middleware/           # Auth verification, RBAC role guards, Error handler
 │   │   ├── routes/               # Express REST Routes (/api/v1/*)
-│   │   ├── services/             # LeetCode GraphQL Engine, Google Sheets Service, Cron Service
+│   │   ├── services/             # LeetCode GraphQL Engine, Google Sheets Service, Report Service, Cron Service
+│   │   ├── utils/                # Universal AI Student Import Engine & Sanitization
 │   │   ├── app.ts                # Express application setup & middleware
 │   │   └── index.ts              # Local server runner & background polling adapter
 │   ├── package.json
@@ -366,14 +389,55 @@ coding-progress-tracker/
 
 All API routes are prefixed with `/api/v1`:
 
-### Authentication & Profiles
+### 🔑 Authentication & Profiles
 | Method | Endpoint | Access | Description |
 |---|---|---|---|
-| `POST` | `/api/v1/auth/login` | Public | Authenticate user & return JWT token |
-| `GET` | `/api/v1/auth/me` | Authenticated | Get current logged-in user profile |
+| `POST` | `/api/v1/auth/login` | Public | Authenticate user & return JWT session token |
+| `GET` | `/api/v1/auth/me` | Authenticated | Get current logged-in user profile & role |
 | `PUT` | `/api/v1/auth/profile` | Authenticated | Update faculty name, email, or password |
 
-### Google Sheets Integration
+### 🎓 Students Management
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| `GET` | `/api/v1/students` | Staff / Admin | Get students scoped to user permissions |
+| `GET` | `/api/v1/students/:studentId` | Staff / Admin | Get detailed student profile with history snapshots |
+| `POST` | `/api/v1/students` | Staff / Admin | Create single student record and trigger initial sync |
+| `PUT` | `/api/v1/students/:studentId` | Staff / Admin | Update student details, mentor, or section |
+| `DELETE` | `/api/v1/students/:studentId` | Staff / Admin | Delete student record |
+| `POST` | `/api/v1/students/bulk-delete` | Staff / Admin | Bulk delete selected student records |
+| `POST` | `/api/v1/students/bulk-import` | Staff / Admin | Import parsed CSV/Excel student roster with AI auto-mapping |
+
+### 🏫 Batches, Sections & Allocation Batches
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| `GET` | `/api/v1/batches` | Staff / Admin | List all academic batches scoped to user |
+| `GET` | `/api/v1/batches/:batchId` | Staff / Admin | Get batch details with sections, sub-batches & mentors |
+| `POST` | `/api/v1/batches` | Admin Only | Create new academic intake batch |
+| `POST` | `/api/v1/batches/:batchId/sections` | Admin Only | Create new section within batch |
+| `GET` | `/api/v1/sections/:sectionId/allocation-batches` | Staff / Admin | Get allocation batches for a section |
+| `POST` | `/api/v1/sections/:sectionId/allocation-batches` | Admin Only | Create sub-allocation batch |
+| `PUT` | `/api/v1/allocation-batches/:id` | Admin Only | Update allocation batch name |
+| `DELETE` | `/api/v1/allocation-batches/:id` | Admin Only | Delete allocation batch |
+
+### 👥 Staff & Faculty Management
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| `GET` | `/api/v1/staff` | Admin Only | List all staff members with assigned batch stats |
+| `POST` | `/api/v1/staff` | Admin Only | Create new faculty staff account |
+| `PUT` | `/api/v1/staff/:id` | Admin Only | Update faculty account information |
+| `DELETE` | `/api/v1/staff/:id` | Admin Only | Remove faculty account |
+| `PUT` | `/api/v1/staff/:id/status` | Admin Only | Activate or deactivate faculty account |
+| `POST` | `/api/v1/staff/:id/assign-scope` | Admin Only | Assign faculty to batches, sections, or sub-batches |
+| `POST` | `/api/v1/staff/unassign-scope` | Admin Only | Remove assigned faculty scope |
+
+### 📊 Reports & Excel Exports
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| `GET` | `/api/v1/reports/history` | Staff / Admin | Fetch synchronization audit history & logs |
+| `POST` | `/api/v1/reports/sync-and-export` | Staff / Admin | Trigger real-time sync & generate export |
+| `GET` | `/api/v1/reports/export-excel` | Staff / Admin | Download formatted Excel (.xlsx) report matrix |
+
+### 📑 Google Sheets Integration
 | Method | Endpoint | Access | Description |
 |---|---|---|---|
 | `GET` | `/api/v1/google-sheets/links` | Staff / Admin | List all authorized linked Google Sheets |
@@ -385,7 +449,7 @@ All API routes are prefixed with `/api/v1`:
 | `DELETE` | `/api/v1/google-sheets/links/:id?permanent=true` | Staff / Admin | Permanently delete sheet and audit logs |
 | `GET` | `/api/v1/google-sheets/links/:id/logs` | Staff / Admin | Fetch synchronization audit logs |
 
-### Automated Synchronization & Crons
+### ⏰ Automated Synchronization & Crons
 | Method | Endpoint | Access | Description |
 |---|---|---|---|
 | `GET/POST` | `/api/v1/cron/daily-sync` | Cron Secret / Admin | Daily 12:30 AM IST automated reconciliation & sheet push |
@@ -398,15 +462,16 @@ All API routes are prefixed with `/api/v1`:
 The system implements strict Role-Based Access Control:
 
 1. **`ADMIN` Role**:
-   - Full institution-wide access.
-   - Manage staff accounts and assign sections/batches to faculty.
+   - Full institution-wide access across all departments.
+   - Manage staff accounts, reset credentials, and assign sections/batches to faculty.
    - Create, edit, and sync institution-wide master Google Sheets.
-   - Configure global LeetCode sync schedules.
+   - Configure global LeetCode sync schedules and export full audit reports.
 
 2. **`STAFF` Role**:
-   - Access restricted strictly to assigned academic years, departments, and allocation batches.
-   - View assigned student coding progress and historical snapshots.
-   - Create and manage scoped Google Sheets for assigned sections.
+   - Access restricted strictly to assigned academic years, departments, sections, and allocation batches.
+   - View and manage assigned student coding progress and historical snapshots.
+   - Create and manage scoped Google Sheets for assigned sections and sub-batches.
+   - Perform smart CSV/Excel imports for their assigned student cohorts.
 
 ---
 
