@@ -103,6 +103,8 @@ export interface AllocationBatch {
   section_id: string;
   name: string;
   created_at: string;
+  mentors?: Array<{ id: string; name: string; email: string }>;
+  mentor_names?: string;
   _count?: {
     students: number;
   };

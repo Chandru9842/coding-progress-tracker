@@ -302,13 +302,13 @@ export const BatchDetailPage: React.FC = () => {
                         </div>
 
                         {sec.allocation_batches && sec.allocation_batches.length > 0 ? (
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem' }}>
                             {sec.allocation_batches.map((ab: any) => (
                               <div
                                 key={ab.id}
                                 onClick={() => handleOpenAllocDetailModal(sec, ab)}
                                 style={{
-                                  padding: '0.4rem 0.75rem', borderRadius: 'var(--radius-sm)',
+                                  padding: '0.45rem 0.85rem', borderRadius: 'var(--radius-sm)',
                                   backgroundColor: 'rgba(99, 102, 241, 0.14)', border: '1px solid rgba(99, 102, 241, 0.3)',
                                   fontSize: '0.8rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.6rem',
                                   cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
@@ -318,6 +318,33 @@ export const BatchDetailPage: React.FC = () => {
                                 <span style={{ fontSize: '0.7rem', padding: '0.1rem 0.45rem', borderRadius: '10px', backgroundColor: 'rgba(255, 255, 255, 0.12)', color: 'var(--text-primary)', fontWeight: 600 }}>
                                   {ab._count?.students !== undefined ? ab._count.students : (ab.students?.length || 0)} Students
                                 </span>
+                                {ab.mentor_names ? (
+                                  <span style={{
+                                    fontSize: '0.72rem',
+                                    padding: '0.12rem 0.5rem',
+                                    borderRadius: '10px',
+                                    backgroundColor: 'rgba(168, 85, 247, 0.2)',
+                                    border: '1px solid rgba(168, 85, 247, 0.4)',
+                                    color: '#c084fc',
+                                    fontWeight: 600,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '0.25rem'
+                                  }} title={`Mentor: ${ab.mentor_names}`}>
+                                    👤 {ab.mentor_names}
+                                  </span>
+                                ) : (
+                                  <span style={{
+                                    fontSize: '0.7rem',
+                                    padding: '0.1rem 0.4rem',
+                                    borderRadius: '10px',
+                                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                                    color: 'var(--text-muted)',
+                                    fontWeight: 500
+                                  }}>
+                                    Unassigned
+                                  </span>
+                                )}
                                 {isAdmin && (
                                   <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', marginLeft: '0.2rem' }}>
                                     <button
@@ -552,6 +579,13 @@ export const BatchDetailPage: React.FC = () => {
               <div style={{ backgroundColor: 'rgba(30, 41, 59, 0.6)', padding: '0.75rem', borderRadius: 'var(--radius-sm)' }}>
                 <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block' }}>Section</span>
                 <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>Section {selectedAllocSection?.name}</span>
+              </div>
+              <div style={{ backgroundColor: 'rgba(168, 85, 247, 0.15)', border: '1px solid rgba(168, 85, 247, 0.3)', padding: '0.75rem', borderRadius: 'var(--radius-sm)' }}>
+                <span style={{ fontSize: '0.7rem', color: '#c084fc', display: 'block' }}>Assigned Mentor</span>
+                <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#e9d5ff', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <UserCheck size={14} style={{ color: '#c084fc' }} />
+                  {selectedAllocBatch?.mentor_names || (allocDetailStudents.length > 0 && allocDetailStudents.some((s) => s.mentor?.name) ? Array.from(new Set(allocDetailStudents.map((s) => s.mentor?.name).filter(Boolean))).join(', ') : 'Unassigned')}
+                </span>
               </div>
               <div style={{ backgroundColor: 'rgba(99, 102, 241, 0.15)', border: '1px solid rgba(99, 102, 241, 0.3)', padding: '0.75rem', borderRadius: 'var(--radius-sm)' }}>
                 <span style={{ fontSize: '0.7rem', color: 'var(--primary)', display: 'block' }}>Enrolled Students</span>

@@ -214,10 +214,18 @@ export async function getBatchById(batchId: string) {
         ...sec,
         allocation_batches: inMemoryStore.allocationBatches
           .filter((ab) => ab.section_id === sec.id)
-          .map((ab) => ({
-            ...ab,
-            _count: { students: inMemoryStore.students.filter((st) => st.allocation_batch_id === ab.id || st.sub_batch === ab.name).length },
-          })),
+          .map((ab) => {
+            const abStus = inMemoryStore.students.filter((st) => st.allocation_batch_id === ab.id || st.sub_batch === ab.name);
+            const mentors = inMemoryStore.users.filter((u) =>
+              inMemoryStore.staffStudentAssignments?.some((sa) => sa.staff_id === u.id && abStus.some((s) => s.id === sa.student_id))
+            );
+            return {
+              ...ab,
+              _count: { students: abStus.length },
+              mentors: mentors.map((m) => ({ id: m.id, name: m.name, email: m.email })),
+              mentor_names: mentors.map((m) => m.name).join(', '),
+            };
+          }),
         _count: { students: inMemoryStore.students.filter((st) => st.section_id === sec.id).length },
       })),
       staff_batch_assignments: [],
@@ -231,8 +239,32 @@ export async function getBatchById(batchId: string) {
       sections: {
         include: {
           allocation_batches: {
-            include: { _count: { select: { students: true } } },
+            include: {
+              _count: { select: { students: true } },
+              staff_section_assignments: {
+                include: {
+                  staff: { select: { id: true, name: true, email: true } },
+                },
+              },
+              students: {
+                select: {
+                  id: true,
+                  name: true,
+                  register_number: true,
+                  staff_student_assignments: {
+                    include: {
+                      staff: { select: { id: true, name: true, email: true } },
+                    },
+                  },
+                },
+              },
+            },
             orderBy: { name: 'asc' },
+          },
+          staff_section_assignments: {
+            include: {
+              staff: { select: { id: true, name: true, email: true } },
+            },
           },
           _count: { select: { students: true } },
         },
@@ -246,7 +278,40 @@ export async function getBatchById(batchId: string) {
       _count: { select: { students: true, sections: true } },
     },
   });
-  return batch;
+
+  if (!batch) return null;
+
+  const enhancedSections = batch.sections.map((sec) => ({
+    ...sec,
+    allocation_batches: sec.allocation_batches.map((ab) => {
+      const mentorsFromSection = ab.staff_section_assignments?.map((a) => a.staff) || [];
+      const mentorsFromStudents = ab.students?.flatMap((s) => s.staff_student_assignments?.map((sa) => sa.staff)) || [];
+
+      const uniqueMentorsMap = new Map<string, { id: string; name: string; email: string }>();
+      [...mentorsFromSection, ...mentorsFromStudents].forEach((m) => {
+        if (m && !uniqueMentorsMap.has(m.id)) {
+          uniqueMentorsMap.set(m.id, m);
+        }
+      });
+      const mentors = Array.from(uniqueMentorsMap.values());
+
+      return {
+        id: ab.id,
+        section_id: ab.section_id,
+        name: ab.name,
+        created_at: ab.created_at,
+        updated_at: ab.updated_at,
+        _count: ab._count,
+        mentors,
+        mentor_names: mentors.map((m) => m.name).join(', '),
+      };
+    }),
+  }));
+
+  return {
+    ...batch,
+    sections: enhancedSections,
+  };
 }
 
 export async function createSection(batchId: string, name: string) {
