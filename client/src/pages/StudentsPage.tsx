@@ -849,39 +849,37 @@ export const StudentsPage: React.FC = () => {
                           {student.register_number}
                         </td>
                         <td style={{ padding: '1rem', whiteSpace: 'nowrap' }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
                             <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.9rem' }}>
                               {student.name}
                             </span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                            <span style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.25rem',
+                              padding: '0.12rem 0.45rem',
+                              borderRadius: '4px',
+                              backgroundColor: 'rgba(99, 102, 241, 0.12)',
+                              color: '#818cf8',
+                              fontSize: '0.72rem',
+                              fontWeight: 600,
+                            }}>
+                              📅 {student.batch?.batch_name || (student as any).academic_year || 'Year N/A'}
+                            </span>
+                            {student.current_year && (
                               <span style={{
                                 display: 'inline-flex',
                                 alignItems: 'center',
-                                gap: '0.25rem',
-                                padding: '0.1rem 0.45rem',
+                                padding: '0.12rem 0.4rem',
                                 borderRadius: '4px',
-                                backgroundColor: 'rgba(99, 102, 241, 0.12)',
-                                color: '#818cf8',
-                                fontSize: '0.72rem',
-                                fontWeight: 600,
+                                backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                                color: 'var(--text-secondary)',
+                                fontSize: '0.7rem',
+                                fontWeight: 500,
                               }}>
-                                📅 {student.batch?.batch_name || (student as any).academic_year || 'Year N/A'}
+                                {student.current_year}
                               </span>
-                              {student.current_year && (
-                                <span style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  padding: '0.1rem 0.4rem',
-                                  borderRadius: '4px',
-                                  backgroundColor: 'rgba(255, 255, 255, 0.06)',
-                                  color: 'var(--text-secondary)',
-                                  fontSize: '0.7rem',
-                                  fontWeight: 500,
-                                }}>
-                                  {student.current_year}
-                                </span>
-                              )}
-                            </div>
+                            )}
                           </div>
                         </td>
                         <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
@@ -1654,36 +1652,34 @@ export const StudentsPage: React.FC = () => {
                             <td style={{ padding: '0.55rem 0.75rem', fontFamily: 'monospace', fontWeight: 600, color: 'var(--text-primary)' }}>
                               {row.cleanRegisterNumber || <span style={{ color: '#f87171' }}>Missing</span>}
                             </td>
-                            <td style={{ padding: '0.55rem 0.75rem', color: 'var(--text-primary)' }}>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                            <td style={{ padding: '0.55rem 0.75rem', color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
+                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}>
                                 <span style={{ fontWeight: 600 }}>{row.name}</span>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', flexWrap: 'wrap' }}>
+                                <span style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '0.2rem',
+                                  padding: '0.08rem 0.35rem',
+                                  borderRadius: '3px',
+                                  backgroundColor: 'rgba(99, 102, 241, 0.12)',
+                                  color: '#818cf8',
+                                  fontSize: '0.68rem',
+                                  fontWeight: 600,
+                                }}>
+                                  📅 {row.academicYear || batches.find((b) => b.id === importBatchId)?.batch_name || 'Year N/A'}
+                                </span>
+                                {(row.currentYear || importCurrentYear) && (
                                   <span style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '0.2rem',
-                                    padding: '0.05rem 0.35rem',
+                                    padding: '0.08rem 0.35rem',
                                     borderRadius: '3px',
-                                    backgroundColor: 'rgba(99, 102, 241, 0.12)',
-                                    color: '#818cf8',
+                                    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                                    color: 'var(--text-muted)',
                                     fontSize: '0.68rem',
-                                    fontWeight: 600,
+                                    fontWeight: 500,
                                   }}>
-                                    📅 {row.academicYear || batches.find((b) => b.id === importBatchId)?.batch_name || 'Year N/A'}
+                                    {row.currentYear || importCurrentYear}
                                   </span>
-                                  {(row.currentYear || importCurrentYear) && (
-                                    <span style={{
-                                      padding: '0.05rem 0.35rem',
-                                      borderRadius: '3px',
-                                      backgroundColor: 'rgba(255, 255, 255, 0.06)',
-                                      color: 'var(--text-muted)',
-                                      fontSize: '0.68rem',
-                                      fontWeight: 500,
-                                    }}>
-                                      {row.currentYear || importCurrentYear}
-                                    </span>
-                                  )}
-                                </div>
+                                )}
                               </div>
                             </td>
                             <td style={{ padding: '0.55rem 0.75rem', color: 'var(--text-secondary)' }}>
