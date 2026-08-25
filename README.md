@@ -447,7 +447,7 @@ Contributions, issues, and feature requests are welcome!
 ## 👨‍💻 Author & Engineering
 
 **Chandru M**  
-*Senior Full-Stack Software Engineer & Platform Architect*
+*Full-Stack Software Engineer & Platform Architect*
 - **GitHub**: [@Chandru9842](https://github.com/Chandru9842)
 - **Repository**: [https://github.com/Chandru9842/coding-progress-tracker](https://github.com/Chandru9842/coding-progress-tracker)
 - **Live Platform**: [https://coding-progress-tracker-navy.vercel.app](https://coding-progress-tracker-navy.vercel.app)
