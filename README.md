@@ -24,6 +24,7 @@
 ## 📑 Table of Contents
 - [🌟 Executive Summary](#-executive-summary)
 - [✨ Key Architectural Features](#-key-architectural-features)
+- [🤖 Universal AI CSV / Excel Bulk Import Engine](#-universal-ai-csv--excel-bulk-import-engine)
 - [🏗️ System Architecture & Data Pipelines](#️-system-architecture--data-pipelines)
 - [📊 Google Apps Script Integration Guide](#-google-apps-script-integration-guide)
 - [🚀 Quickstart & Local Development](#-quickstart--local-development)
@@ -57,6 +58,7 @@
 
 | Feature | Description |
 |---|---|
+| **🤖 Universal AI Bulk Importer** | Dynamic header detection, mentor pattern parsing, auto-deduplication, parenthetical DOB stripping, and batch/section auto-mapping for any CSV/Excel sheet. |
 | **🤖 Zero-Click Google Sheets Engine** | Automated daily webhook push that clears and repopulates formatted tables with freezing headers, alternating rows, borders, and column auto-resizing. |
 | **🗓️ Configurable Starting Date Scopes** | Choose historical starting point (`Full History`, `From Today`, `From Yesterday`, `Custom Date Picker`). Columns expand automatically into the future indefinitely. |
 | **🔄 Link, Unlink & Permanent Delete** | Active sheets can be unlinked to Historical archive; archived sheets can be reactivated with one click or permanently purged from system. |
@@ -64,6 +66,85 @@
 | **🛡️ Multi-Tier RBAC** | Strict separation between **`ADMIN`** (system configuration, staff management, batch rosters) and **`STAFF`** (assigned sections, student rosters, scoped linked sheets). |
 | **⚡ 0ms Client Cache & Lazy Invalidation** | High-performance in-memory TTL caching layer ensures instantaneous tab navigation without loading spinners. |
 | **📦 Excel & CSV Export Suite** | Download student matrices and historical snapshots as formatted CSV or copy data directly into Cell `A1` with 1 click. |
+
+---
+
+## 🤖 Universal AI CSV / Excel Bulk Import Engine
+
+The platform features an intelligent, zero-friction **Universal AI Bulk Import Engine** designed to parse any institutional roster, class spreadsheet, or multi-mentor CSV file regardless of column order, extra headers, or formatting quirks.
+
+### 🧠 Core Automation Capabilities:
+
+1. **Dynamic Mentor Name Recognition (With or Without Salutations / Titles)**:
+   - Works seamlessly with formal academic titles: `Dr. A. Muthuraj`, `Mrs. K. Devi`, `Mr. Shyam Sundar`, `Prof. S. Kumar`, `Er. R. Rajesh`, `Ms. Priyadharshini`.
+   - Works equally well with informal / title-less names & initials: `Chandru M`, `chandru.m`, `chandru_m`, `saravanan.v`, `Saravanan V`, `shyam sundar`, `devi.k`.
+   - Supports dedicated mentor block headers: `NAME OF THE MENTOR : Mrs. K. Devi`, `MENTOR NAME: Dr. A. Muthuraj`.
+   - Performs fuzzy, case-insensitive, and punctuation-resilient matching to automatically assign students to their registered faculty mentors.
+
+2. **Automatic Student Name & DOB Cleaning**:
+   - Institutional rosters often append student birth dates or roll numbers in parentheses. The AI parser automatically sanitizes these into clean official names:
+     - `JANANI S (7.12.2005)` &rarr; `JANANI S`
+     - `KAVIN P (DOB: 12/04/2004)` &rarr; `KAVIN P`
+     - `SURYA KUMAR R (2023CSE045)` &rarr; `SURYA KUMAR R`
+
+3. **LeetCode Profile URL Auto-Extraction**:
+   - Automatically parses full URLs, username handles, and mobile links to extract clean LeetCode profile handles:
+     - `https://leetcode.com/u/chandru9842/` &rarr; `chandru9842`
+     - `https://leetcode.com/muthuraj_a/` &rarr; `muthuraj_a`
+     - `@devi_k` &rarr; `devi_k`
+     - `saravanan_v` &rarr; `saravanan_v`
+
+4. **🛡️ Intelligent Auto-Deduplication Engine**:
+   - Automatically detects duplicate register numbers within the spreadsheet.
+   - Flags duplicate entries with a `Duplicate` badge, auto-deselects them to avoid database unique constraint collisions, and displays a clean resolution summary banner (`✨ X Duplicate(s) Auto-Resolved`).
+
+5. **🎯 Target Batch, Section & Sub-Batch Cascading**:
+   - Auto-detects the Academic Intake (`2023-2027`) and Department (`CSE`) from spreadsheet text.
+   - Automatically selects the Target Batch and Section dropdowns and populates all Allocation Batches (`Batch-1`, `Batch-2`, `Batch-3`, `Batch-4`).
+
+---
+
+### 📋 Spreadsheet Fields: Required vs. Optional
+
+| Field Name | Status | Accepted Header Names | Examples / Formats |
+|---|---|---|---|
+| **Student Name** | **Required** | `Name`, `Student Name`, `Candidate Name`, `Student_Name` | `JANANI S`, `SARAVANAN V`, `CHANDRU M` |
+| **Register Number** | **Required** | `Register Number`, `Reg No`, `Roll No`, `Reg_No`, `Registration_No` | `953623104015`, `23CSE001`, `953623104099` |
+| **LeetCode Profile** | **Required** | `LeetCode URL`, `Leetcode Profile`, `Username`, `Leetcode`, `Leetcode_Username` | `https://leetcode.com/u/chandru9842/`, `chandru9842` |
+| **Mentor Name** | *Optional (Auto-Detected)* | `Mentor`, `Staff`, `Faculty`, `Advisor`, `Mentor Name`, `NAME OF THE MENTOR : [Name]` | `Dr. A. Muthuraj`, `Mrs. K. Devi`, `Chandru M`, `chandru.m`, `saravanan.v` |
+| **Academic Year / Batch** | *Optional (Auto-Detected)* | `Academic Year`, `Batch`, `Intake`, `Period` | `2023-2027`, `2024-2028` |
+| **Section** | *Optional (Auto-Detected)* | `Section`, `Sec`, `Class` | `CSE-A`, `Section A`, `A` |
+| **Study Year** | *Optional (Auto-Detected)* | `Year`, `Current Year`, `Study Year`, `Year of Study` | `1st Year`, `2nd Year`, `3rd Year`, `4th Year` |
+| **Department** | *Optional (Auto-Detected)* | `Department`, `Dept`, `Branch` | `CSE`, `IT`, `AIDS`, `ECE` |
+| **Allocation Batch** | *Optional (Auto-Detected)* | `Allocation Batch`, `Sub Batch`, `Allocation_Batch`, `Group` | `Batch-1`, `Batch-2`, `Batch-3`, `Batch-4` |
+
+---
+
+### 📊 Sample CSV Formats
+
+#### Example 1: Multi-Mentor Institutional Roster (Supports Plain Names & Titles)
+```csv
+S.No,Register Number,Student Name,LeetCode Profile,Year,Section,Mentor Name
+1,953623104001,AADHITHIYAN A,https://leetcode.com/u/aadhithiyan/,2nd Year,CSE-A,Dr. A. Muthuraj
+2,953623104002,AARTHI M (14.05.2005),https://leetcode.com/u/aarthi_m/,2nd Year,CSE-A,Mrs. K. Devi
+3,953623104003,CHANDRU M,https://leetcode.com/u/chandru9842/,2nd Year,CSE-A,Chandru M
+4,953623104004,DEEPAK RAJ S,https://leetcode.com/u/deepak_raj/,2nd Year,CSE-A,chandru.m
+5,953623104005,DINESH KUMAR K,https://leetcode.com/u/dinesh_k/,2nd Year,CSE-A,saravanan.v
+6,953623104006,JANANI S (7.12.2005),https://leetcode.com/u/janani_s/,2nd Year,CSE-A,Mr. Shyam Sundar
+```
+
+#### Example 2: Dedicated Mentor Batch Sheet (Single Faculty Block)
+```csv
+DEPARTMENT OF COMPUTER SCIENCE AND ENGINEERING
+ACADEMIC YEAR: 2023-2027 | SECTION: CSE-A
+NAME OF THE MENTOR : Mrs. K. Devi
+
+S.No,Roll No,Name of the Student,LeetCode Username,Allocation Batch
+1,953623104020,GOKUL S,gokul_s,Batch-1
+2,953623104021,HARINI V (DOB: 02/11/2005),harini_v,Batch-1
+3,953623104022,HEMAPRIYA R,hemapriya_r,Batch-1
+4,953623104023,JEEVANANTHAM K,jeeva_k,Batch-1
+```
 
 ---
 
