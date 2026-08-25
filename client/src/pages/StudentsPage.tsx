@@ -124,6 +124,7 @@ export const StudentsPage: React.FC = () => {
   const [importSubBatchCustom, setImportSubBatchCustom] = useState<string>('');
   const [importCurrentYear, setImportCurrentYear] = useState<string>('');
   const [importAllocBatches, setImportAllocBatches] = useState<any[]>([]);
+  const [importDuplicateCount, setImportDuplicateCount] = useState<number>(0);
   const [importSearch, setImportSearch] = useState<string>('');
   const [isImporting, setIsImporting] = useState<boolean>(false);
   const [importResult, setImportResult] = useState<{
@@ -396,6 +397,7 @@ export const StudentsPage: React.FC = () => {
     setImportRows([]);
     setSelectedMentorFilters(new Set(['ALL']));
     setImportCurrentYear('');
+    setImportDuplicateCount(0);
     setImportResult(null);
   };
 
@@ -412,6 +414,7 @@ export const StudentsPage: React.FC = () => {
       const result = analyzeAndParseStudents(text);
       setImportRows(result.rows);
       setDetectedMentors(result.detectedMentors);
+      setImportDuplicateCount(result.duplicateCount);
 
       // Smart Auto-Filter for logged in user (e.g. Dr. A. Muthuraj)
       if (user?.name) {
@@ -422,7 +425,7 @@ export const StudentsPage: React.FC = () => {
         });
         if (matched) {
           setSelectedMentorFilters(new Set([matched]));
-          // Pre-select only rows for this matched mentor
+          // Pre-select only valid rows for this matched mentor
           setImportRows(result.rows.map((r) => ({
             ...r,
             selected: r.isValid && r.cleanMentor === matched,
@@ -1538,6 +1541,43 @@ export const StudentsPage: React.FC = () => {
               {/* Preview Table & Filtering Controls */}
               {importRows.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  {/* AI Intelligent Analysis Banner */}
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '0.65rem 0.9rem',
+                    borderRadius: '8px',
+                    backgroundColor: 'rgba(99, 102, 241, 0.08)',
+                    border: '1px solid rgba(99, 102, 241, 0.25)',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-primary)',
+                    flexWrap: 'wrap',
+                    gap: '0.5rem',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <Sparkles size={16} style={{ color: '#818cf8' }} />
+                      <span>
+                        <strong>AI Analysis:</strong> {importRows.length} Student(s) Parsed &bull; {detectedMentors.filter((m) => m !== 'Unassigned').length} Mentor(s) Detected &bull; {importRows.filter((r) => r.isValid).length} Valid
+                      </span>
+                    </div>
+                    {importDuplicateCount > 0 && (
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.25rem',
+                        padding: '0.15rem 0.5rem',
+                        borderRadius: '4px',
+                        backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                        color: '#fbbf24',
+                        fontWeight: 600,
+                        fontSize: '0.75rem',
+                      }}>
+                        ✨ {importDuplicateCount} Duplicate(s) Auto-Resolved
+                      </span>
+                    )}
+                  </div>
+
                   {/* Filter Toolbar */}
                   <div style={{
                     display: 'flex',
@@ -1723,7 +1763,18 @@ export const StudentsPage: React.FC = () => {
                               {row.cleanMentor}
                             </td>
                             <td style={{ padding: '0.55rem 0.75rem', textAlign: 'right' }}>
-                              {row.isValid ? (
+                              {row.isDuplicate ? (
+                                <span style={{
+                                  padding: '0.15rem 0.45rem',
+                                  borderRadius: '4px',
+                                  fontSize: '0.7rem',
+                                  fontWeight: 600,
+                                  backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                                  color: '#fbbf24',
+                                }} title="Duplicate student in sheet (auto-deselected)">
+                                  Duplicate
+                                </span>
+                              ) : row.isValid ? (
                                 <span style={{
                                   padding: '0.15rem 0.45rem',
                                   borderRadius: '4px',

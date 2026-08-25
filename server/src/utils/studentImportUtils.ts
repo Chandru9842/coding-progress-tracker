@@ -18,6 +18,7 @@ export interface ParsedImportRow {
   cleanLeetCode: string;
   totalSolved?: number;
   isValid: boolean;
+  isDuplicate?: boolean;
   validationError?: string;
   selected: boolean;
 }
@@ -28,6 +29,7 @@ export interface ParseResult {
   totalParsed: number;
   validCount: number;
   invalidCount: number;
+  duplicateCount: number;
   hasHeaders: boolean;
 }
 
@@ -65,10 +67,10 @@ export function normalizeMentorName(name: string | null | undefined): string {
 
   // Extract title prefix if present (mrs before mr)
   let prefix = '';
-  const titleMatch = str.match(/^(dr|mrs|mr|ms|prof)\.?\s*/i);
+  const titleMatch = str.match(/^(dr|mrs|mr|ms|prof|er)\.?\s*/i);
   if (titleMatch) {
     const title = titleMatch[1].toLowerCase();
-    prefix = (title === 'dr' ? 'Dr.' : title === 'mrs' ? 'Mrs.' : title === 'mr' ? 'Mr.' : title === 'ms' ? 'Ms.' : 'Prof.') + ' ';
+    prefix = (title === 'dr' ? 'Dr.' : title === 'mrs' ? 'Mrs.' : title === 'mr' ? 'Mr.' : title === 'ms' ? 'Ms.' : title === 'prof' ? 'Prof.' : 'Er.') + ' ';
     str = str.substring(titleMatch[0].length);
   }
 
@@ -127,16 +129,27 @@ export function parseCSVLines(csvText: string): string[][] {
 }
 
 const KNOWN_DEPTS = new Set([
-  'CSE', 'IT', 'ECE', 'EEE', 'MECH', 'CIVIL', 'AIDS', 'AIML', 'CSBS', 'CYBER', 'AUTO', 'BIOTECH', 'CHEM',
+  'CSE', 'IT', 'ECE', 'EEE', 'MECH', 'CIVIL', 'AIDS', 'AIML', 'CSBS', 'CYBER', 'AUTO', 'BIOTECH', 'CHEM', 'MCA', 'BCA',
 ]);
 
 export function analyzeAndParseStudents(csvText: string): ParseResult {
-  const lines = parseCSVLines(csvText);
+  const cleanedCSV = csvText.replace(/^\uFEFF/, '');
+  const lines = parseCSVLines(cleanedCSV);
   if (lines.length === 0) {
-    return { rows: [], detectedMentors: [], totalParsed: 0, validCount: 0, invalidCount: 0, hasHeaders: false };
+    return { rows: [], detectedMentors: [], totalParsed: 0, validCount: 0, invalidCount: 0, duplicateCount: 0, hasHeaders: false };
   }
 
-  const firstLine = lines[0];
+  // Filter out pure comment lines (e.g. starting with # or //)
+  const nonCommentLines = lines.filter((l) => {
+    const firstNonEmpty = l.find((c) => c.trim().length > 0);
+    return firstNonEmpty && !firstNonEmpty.startsWith('#') && !firstNonEmpty.startsWith('//');
+  });
+
+  if (nonCommentLines.length === 0) {
+    return { rows: [], detectedMentors: [], totalParsed: 0, validCount: 0, invalidCount: 0, duplicateCount: 0, hasHeaders: false };
+  }
+
+  const firstLine = nonCommentLines[0];
   const firstLineStr = firstLine.join(' ').toLowerCase();
   const containsUrl = firstLineStr.includes('http://') || firstLineStr.includes('https://') || firstLineStr.includes('leetcode.com') || firstLineStr.includes('leetcode.cn');
   const containsRegNo = firstLine.some((c) => /^\d{8,16}$/.test(c.replace(/\s+/g, '')));
@@ -145,20 +158,25 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
     firstLineStr.includes('register number') ||
     firstLineStr.includes('reg no') ||
     firstLineStr.includes('reg_no') ||
+    firstLineStr.includes('roll no') ||
     firstLineStr.includes('student name') ||
     firstLineStr.includes('student_name') ||
+    firstLineStr.includes('candidate name') ||
     firstLineStr.includes('leetcode id') ||
     firstLineStr.includes('leetcode profile') ||
     firstLineStr.includes('leetcode username') ||
     firstLineStr.includes('leetcode handle') ||
     firstLineStr.includes('mentor name') ||
-    firstLineStr.includes('faculty name');
+    firstLineStr.includes('faculty name') ||
+    firstLineStr.includes('staff name');
 
   const hasHeaders = !containsUrl && !containsRegNo && hasHeaderKeywords;
 
-  const dataLines = hasHeaders ? lines.slice(1) : lines;
+  const dataLines = hasHeaders ? nonCommentLines.slice(1) : nonCommentLines;
   const parsedRows: ParsedImportRow[] = [];
   const mentorSet = new Set<string>();
+  const seenRegNumbers = new Map<string, number>();
+  let duplicateCount = 0;
 
   dataLines.forEach((cells, index) => {
     let regNo = '';
@@ -191,7 +209,7 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
       }
 
       const digitsOnly = cell.replace(/\s+/g, '');
-      if (!regNo && digitsOnly.length >= 8 && digitsOnly.length <= 16 && /^[0-9A-Za-z]+$/.test(digitsOnly) && /\d/.test(digitsOnly)) {
+      if (!regNo && digitsOnly.length >= 8 && digitsOnly.length <= 18 && /^[0-9A-Za-z]+$/.test(digitsOnly) && /\d/.test(digitsOnly) && !cell.includes('/')) {
         regNo = digitsOnly.toUpperCase();
         continue;
       }
@@ -202,9 +220,17 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
         continue;
       }
 
-      if (!rawMentor && (/^(dr\.|mr\.|mrs\.|prof\.)/i.test(cell) || (c === 4 && !KNOWN_DEPTS.has(upperCell) && !/^\d+$/.test(cell.replace(/\s+/g, '')) && !cell.includes('leetcode')))) {
-        rawMentor = cell;
-        continue;
+      if (!rawMentor) {
+        if (/^(dr|mr|mrs|ms|prof|er)\.?\s*/i.test(cell)) {
+          rawMentor = cell;
+          continue;
+        } else if (/^[a-zA-Z]{2,15}\.[a-zA-Z]{1,5}$/.test(cell)) {
+          rawMentor = cell;
+          continue;
+        } else if (c === 4 && !KNOWN_DEPTS.has(upperCell) && !/^\d+$/.test(cell.replace(/\s+/g, '')) && !cell.includes('leetcode') && !cell.includes('/')) {
+          rawMentor = cell;
+          continue;
+        }
       }
 
       if (!phone && /^[0-9\s-]{10,14}$/.test(cell) && cell.replace(/\D/g, '').length === 10) {
@@ -212,18 +238,18 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
         continue;
       }
 
-      if (solvedCount === undefined && /^\d+$/.test(cell) && parseInt(cell) < 4000 && parseInt(cell) > 0) {
-        solvedCount = parseInt(cell);
+      if (solvedCount === undefined && /^\d+$/.test(cell) && parseInt(cell, 10) < 4000 && parseInt(cell, 10) > 0) {
+        solvedCount = parseInt(cell, 10);
         continue;
       }
 
-      if (!name && /^[A-Za-z\s.'()_-]{3,60}$/.test(cell) && !/^(dr\.|mr\.|mrs\.|prof\.)/i.test(cell)) {
+      if (!name && /^[A-Za-z\s.'()_-]{3,60}$/.test(cell) && !/^(dr\.|mr\.|mrs\.|prof\.|er\.)/i.test(cell) && !cell.includes('http') && !cell.includes('leetcode')) {
         name = cell;
         continue;
       }
     }
 
-    if (!regNo && cells[1] && cells[1].length >= 8) {
+    if (!regNo && cells[1] && cells[1].length >= 8 && !cells[1].includes('/')) {
       regNo = cells[1].replace(/\s+/g, '').toUpperCase();
     }
     if (!name && cells[2]) {
@@ -235,7 +261,7 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
       const isUrl = c4.includes('leetcode');
       const isDept = KNOWN_DEPTS.has(c4.toUpperCase());
       const isNum = /^\d+$/.test(c4);
-      if (!isPhone && !isUrl && !isDept && !isNum) {
+      if (!isPhone && !isUrl && !isDept && !isNum && !c4.includes('/')) {
         rawMentor = c4;
       }
     }
@@ -244,7 +270,7 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
     }
 
     const cleanRegNo = regNo.trim().toUpperCase();
-    const cleanName = name.trim();
+    let cleanName = name.replace(/\s*\(\s*\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\s*\)/g, '').trim();
     const cleanUsername = extractCleanLeetCodeUsername(leetcodeUrl);
     const cleanMentor = normalizeMentorName(rawMentor) || 'Unassigned';
 
@@ -252,8 +278,8 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
       mentorSet.add(cleanMentor);
     }
 
-    // Validation
     let isValid = true;
+    let isDuplicate = false;
     let validationError = '';
 
     if (!cleanRegNo) {
@@ -265,6 +291,16 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
     } else if (!cleanUsername) {
       isValid = false;
       validationError = 'Missing LeetCode Username / Profile URL';
+    }
+
+    if (cleanRegNo && isValid) {
+      if (seenRegNumbers.has(cleanRegNo)) {
+        isDuplicate = true;
+        duplicateCount++;
+        validationError = 'Duplicate in sheet (Auto-resolved)';
+      } else {
+        seenRegNumbers.set(cleanRegNo, index);
+      }
     }
 
     parsedRows.push({
@@ -281,9 +317,10 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
       rawLeetCode: leetcodeUrl,
       cleanLeetCode: cleanUsername,
       totalSolved: solvedCount,
-      isValid,
+      isValid: isValid && !isDuplicate,
+      isDuplicate,
       validationError: validationError || undefined,
-      selected: isValid,
+      selected: isValid && !isDuplicate,
     });
   });
 
@@ -301,6 +338,7 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
     totalParsed: parsedRows.length,
     validCount,
     invalidCount,
+    duplicateCount,
     hasHeaders,
   };
 }
