@@ -1,0 +1,6 @@
+{
+  "name": "Coding Progress Tracker",
+  "description": "Faculty coding progress tracking web application for college tracking of student activity.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

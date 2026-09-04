@@ -24,18 +24,57 @@ function getDatasourceUrl(): string | undefined {
   }
 }
 
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
-    datasources: process.env.DATABASE_URL
-      ? {
+let prismaClient: PrismaClient;
+
+try {
+  if (process.env.DATABASE_URL) {
+    prismaClient =
+      globalForPrisma.prisma ??
+      new PrismaClient({
+        datasources: {
           db: {
             url: getDatasourceUrl(),
           },
-        }
-      : undefined,
-    log: env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
+        },
+        log: env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
+      });
+  } else {
+    // In-memory mode active - construct dummy proxy
+    console.warn('[AI Studio] Database not connected — using mock proxy');
+    const noOp: any = {
+      findMany: async () => [],
+      findFirst: async () => null,
+      findUnique: async () => null,
+      count: async () => 0,
+      create: async (d: any) => d?.data ?? {},
+      update: async (d: any) => d?.data ?? {},
+      delete: async () => ({}),
+      deleteMany: async () => ({ count: 0 }),
+      updateMany: async () => ({ count: 0 }),
+    };
+    prismaClient = new Proxy({} as any, {
+      get: () => noOp,
+    });
+  }
+} catch (err) {
+  console.warn('[AI Studio] PrismaClient initialization error — using mock proxy:', err);
+  const noOp: any = {
+    findMany: async () => [],
+    findFirst: async () => null,
+    findUnique: async () => null,
+    count: async () => 0,
+    create: async (d: any) => d?.data ?? {},
+    update: async (d: any) => d?.data ?? {},
+    delete: async () => ({}),
+    deleteMany: async () => ({ count: 0 }),
+    updateMany: async () => ({ count: 0 }),
+  };
+  prismaClient = new Proxy({} as any, {
+    get: () => noOp,
   });
+}
+
+export const prisma = prismaClient;
 
 globalForPrisma.prisma = prisma;
 
