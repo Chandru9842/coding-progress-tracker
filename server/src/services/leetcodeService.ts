@@ -206,11 +206,19 @@ export async function syncStudentLeetCode(
   if (!options?.skipGoogleSheetSync) {
     try {
       const activeLinks = !process.env.DATABASE_URL
-        ? inMemoryStore.googleSheetLinks.filter((l) => l.is_active && l.batch_ids.includes(student.batch_id))
+        ? inMemoryStore.googleSheetLinks.filter(
+            (l) =>
+              l.is_active &&
+              (!l.batch_ids || l.batch_ids.length === 0 || l.batch_ids.includes(student.batch_id) || Boolean(l.academic_year))
+          )
         : await prisma.googleSheetLink.findMany({
             where: {
               is_active: true,
-              batch_ids: { has: student.batch_id },
+              OR: [
+                { batch_ids: { has: student.batch_id } },
+                { batch_ids: { isEmpty: true } },
+                { academic_year: { not: null } },
+              ],
             },
           });
 
@@ -272,12 +280,18 @@ async function syncGoogleSheetsForBatchIds(batchIds: string[], user: { userId: s
   try {
     const activeLinks = !process.env.DATABASE_URL
       ? inMemoryStore.googleSheetLinks.filter(
-          (l) => l.is_active && l.batch_ids.some((bId) => uniqueBatchIds.includes(bId))
+          (l) =>
+            l.is_active &&
+            (!l.batch_ids || l.batch_ids.length === 0 || l.batch_ids.some((bId) => uniqueBatchIds.includes(bId)) || Boolean(l.academic_year))
         )
       : await prisma.googleSheetLink.findMany({
           where: {
             is_active: true,
-            batch_ids: { hasSome: uniqueBatchIds },
+            OR: [
+              { batch_ids: { hasSome: uniqueBatchIds } },
+              { batch_ids: { isEmpty: true } },
+              { academic_year: { not: null } },
+            ],
           },
         });
 
@@ -394,8 +408,8 @@ export async function syncFilteredStudentsLeetCode(
     studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
   }
 
-  // Run student syncing concurrently with a pool of 5 workers
-  const results = await runConcurrentTasks(studentList, 5, async (st) => {
+  // Run student syncing concurrently with a pool of 10 workers for fast processing
+  const results = await runConcurrentTasks(studentList, 10, async (st) => {
     try {
       const res = await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
       return { studentId: st.id, success: true, stats: res.stats };
@@ -464,8 +478,8 @@ export async function runPeriodicAutoSync(): Promise<{
     studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
   }
 
-  // Concurrent execution with pool of 5 workers
-  const results = await runConcurrentTasks(studentList, 5, async (st) => {
+  // Concurrent execution with pool of 10 workers for rapid execution
+  const results = await runConcurrentTasks(studentList, 10, async (st) => {
     try {
       await syncStudentLeetCode(st.id, adminContext, { skipGoogleSheetSync: true });
       return { studentId: st.id, success: true };
@@ -500,13 +514,34 @@ export async function runDailyMidnightReconciliation(): Promise<{
   istDate: string;
   timestamp: string;
 }> {
-  const result = await runPeriodicAutoSync();
-  const istDate = getISTDate().toISOString().split('T')[0];
+  let result: {
+    totalAttempted: number;
+    successful: number;
+    failed: number;
+    durationSeconds?: number;
+    timestamp: string;
+  } = {
+    totalAttempted: 0,
+    successful: 0,
+    failed: 0,
+    durationSeconds: 0,
+    timestamp: new Date().toISOString(),
+  };
 
   try {
+    result = await runPeriodicAutoSync();
+  } catch (syncErr: any) {
+    console.error('[CRON] Warning: Student LeetCode sync encountered an error, proceeding with sheet sync:', syncErr?.message || syncErr);
+  }
+
+  const istDate = getISTDate().toISOString().split('T')[0];
+
+  // Guaranteed execution: always sync linked Google Sheets even if individual student fetches failed
+  try {
     await runMidnightAutoSync();
+    console.log('[CRON] Guaranteed Google Sheets auto-sync completed successfully.');
   } catch (sheetErr: any) {
-    console.error('[CRON] Failed to auto-sync linked Google Sheets during 12:00 AM IST reconciliation:', sheetErr?.message || sheetErr);
+    console.error('[CRON] Failed to auto-sync linked Google Sheets during reconciliation:', sheetErr?.message || sheetErr);
   }
 
   return {

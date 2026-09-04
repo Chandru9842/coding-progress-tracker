@@ -2,6 +2,7 @@ import { prisma } from '../db/client.js';
 import { inMemoryStore } from '../db/inMemoryStore.js';
 import { UserRole } from '../types/index.js';
 import { syncStudentLeetCode } from './leetcodeService.js';
+import { serverCache } from '../utils/serverCache.js';
 
 export interface BulkImportStudentRow {
   register_number: string;
@@ -26,6 +27,7 @@ export interface BulkImportInput {
     sub_batch?: string;
     current_year?: string;
     department?: string;
+    mentor_id?: string;
   };
 }
 
@@ -45,8 +47,87 @@ export interface BulkImportResult {
 function normalizeForMatching(str: string): string {
   return str
     .toLowerCase()
-    .replace(/^(dr|mr|mrs|ms|prof)\.?\s*/i, '')
+    .replace(/^(dr|mr|mrs|ms|prof|er)\.?\s*/i, '')
     .replace(/[^a-z0-9]/g, '');
+}
+
+function cleanTokens(str: string): string[] {
+  return str
+    .toLowerCase()
+    .replace(/^(dr|mr|mrs|ms|prof|er)\.?\s*/i, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length > 0 && !['dr', 'mr', 'mrs', 'ms', 'prof', 'er'].includes(t));
+}
+
+export function findBestStaffMatch(
+  rawInput: string,
+  staffList: Array<{ id: string; name: string; email: string }>
+): string | null {
+  if (!rawInput || staffList.length === 0) return null;
+  const inputTrimmed = rawInput.trim();
+  const inputLower = inputTrimmed.toLowerCase();
+  const inputNorm = normalizeForMatching(inputTrimmed);
+  const inputTokens = cleanTokens(inputTrimmed);
+
+  // 1. Direct case-insensitive match
+  const direct = staffList.find((s) => s.name.trim().toLowerCase() === inputLower);
+  if (direct) return direct.id;
+
+  // 2. Normalized match (stripped titles, dots, spaces)
+  const normMatch = staffList.find((s) => {
+    const sNorm = normalizeForMatching(s.name);
+    return sNorm === inputNorm;
+  });
+  if (normMatch) return normMatch.id;
+
+  // 3. Substring match if long enough (>= 4 chars)
+  if (inputNorm.length >= 4) {
+    const subMatch = staffList.find((s) => {
+      const sNorm = normalizeForMatching(s.name);
+      return sNorm.length >= 4 && (sNorm.includes(inputNorm) || inputNorm.includes(sNorm));
+    });
+    if (subMatch) return subMatch.id;
+  }
+
+  // 4. Token-based matching (handles "Dr. A. Muthuraj" matching "Muthuraj", "A. Muthuraj", "Muthuraj A")
+  if (inputTokens.length > 0) {
+    let bestScore = 0;
+    let bestStaffId: string | null = null;
+
+    for (const stf of staffList) {
+      const staffTokens = cleanTokens(stf.name);
+      if (staffTokens.length === 0) continue;
+
+      let matchCount = 0;
+      for (const it of inputTokens) {
+        if (it.length >= 3 && staffTokens.some((st) => st.includes(it) || it.includes(st))) {
+          matchCount += 2;
+        } else if (it.length < 3 && staffTokens.includes(it)) {
+          matchCount += 1;
+        }
+      }
+
+      // Check email prefix
+      const emailPrefix = stf.email.split('@')[0].toLowerCase();
+      for (const it of inputTokens) {
+        if (it.length >= 3 && emailPrefix.includes(it)) {
+          matchCount += 2;
+        }
+      }
+
+      if (matchCount > bestScore) {
+        bestScore = matchCount;
+        bestStaffId = stf.id;
+      }
+    }
+
+    if (bestScore >= 2 && bestStaffId) {
+      return bestStaffId;
+    }
+  }
+
+  return null;
 }
 
 export async function bulkImportStudents(
@@ -68,15 +149,15 @@ export async function bulkImportStudents(
   const processedStudents: any[] = [];
   const newlyCreatedOrUpdatedIds: string[] = [];
 
-  // 1. Fetch available staff list for mentor matching
+  // 1. Fetch available staff list (all active staff and admin users created by admin)
   let staffList: Array<{ id: string; name: string; email: string }> = [];
   if (!process.env.DATABASE_URL) {
     staffList = inMemoryStore.users
-      .filter((u) => u.role === 'STAFF' && u.is_active)
+      .filter((u) => u.is_active)
       .map((u) => ({ id: u.id, name: u.name, email: u.email }));
   } else {
     staffList = await prisma.user.findMany({
-      where: { role: 'STAFF', is_active: true },
+      where: { is_active: true },
       select: { id: true, name: true, email: true },
     });
   }
@@ -152,7 +233,40 @@ export async function bulkImportStudents(
     }
 
     const effectiveBatchId = row.batch_id || defaultBatchId;
-    const effectiveSectionId = row.section_id || defaultSectionId;
+    let effectiveSectionId = (row.section_id && row.section_id !== 'ALL') ? row.section_id : defaultSectionId;
+
+    // Smart resolution if effectiveSectionId is 'ALL' or missing
+    if (!effectiveSectionId || effectiveSectionId === 'ALL') {
+      const rowSecName = (row as any).section_name || (row as any).section;
+      if (rowSecName && effectiveBatchId) {
+        if (!process.env.DATABASE_URL) {
+          const matched = inMemoryStore.sections.find(
+            (s) => s.batch_id === effectiveBatchId && s.name.toUpperCase() === rowSecName.trim().toUpperCase()
+          );
+          if (matched) effectiveSectionId = matched.id;
+        } else {
+          const matched = await prisma.section.findFirst({
+            where: {
+              batch_id: effectiveBatchId,
+              name: { equals: rowSecName.trim(), mode: 'insensitive' },
+            },
+          });
+          if (matched) effectiveSectionId = matched.id;
+        }
+      }
+
+      // If still ALL or missing, fall back to first section of batch
+      if ((!effectiveSectionId || effectiveSectionId === 'ALL') && effectiveBatchId) {
+        if (!process.env.DATABASE_URL) {
+          const firstSec = inMemoryStore.sections.find((s) => s.batch_id === effectiveBatchId);
+          if (firstSec) effectiveSectionId = firstSec.id;
+        } else {
+          const firstSec = await prisma.section.findFirst({ where: { batch_id: effectiveBatchId } });
+          if (firstSec) effectiveSectionId = firstSec.id;
+        }
+      }
+    }
+
     const effectiveDept = row.department || defaultDept;
     const effectiveAllocBatchId = row.allocation_batch_id || defaultAllocBatchId || null;
     const effectiveSubBatch = row.sub_batch || defaultSubBatch || null;
@@ -167,28 +281,25 @@ export async function bulkImportStudents(
       continue;
     }
 
-    // Resolve Mentor
-    let resolvedMentorId: string | null = row.mentor_id || null;
-    if (!resolvedMentorId && row.mentor_name) {
-      const rawMName = row.mentor_name.trim();
-      const normInput = normalizeForMatching(rawMName);
+    // Resolve Mentor:
+    // 1. Explicit unassignment ('NONE')
+    // 2. Direct row.mentor_id (from mapped staff selector or explicit selection)
+    // 3. targetScope.mentor_id (if admin explicitly picked a mentor in the top dropdown)
+    // 4. Matched from row.mentor_name using smart fuzzy matching
+    // 5. Default to logged-in user if role === 'STAFF' and no mentor resolved
+    const isExplicitlyUnassigned = row.mentor_id === 'NONE' || (!row.mentor_id && targetScope?.mentor_id === 'NONE');
+    let resolvedMentorId: string | null = null;
 
-      // Exact match
-      const matched = staffList.find(
-        (stf) =>
-          normalizeForMatching(stf.name) === normInput ||
-          normalizeForMatching(stf.name).includes(normInput) ||
-          normInput.includes(normalizeForMatching(stf.name))
-      );
-
-      if (matched) {
-        resolvedMentorId = matched.id;
+    if (!isExplicitlyUnassigned) {
+      if (row.mentor_id && row.mentor_id !== 'AUTO') {
+        resolvedMentorId = row.mentor_id;
+      } else if (targetScope?.mentor_id && targetScope.mentor_id !== 'AUTO') {
+        resolvedMentorId = targetScope.mentor_id;
+      } else if (row.mentor_name) {
+        resolvedMentorId = findBestStaffMatch(row.mentor_name, staffList);
+      } else if (user.role === 'STAFF') {
+        resolvedMentorId = user.userId;
       }
-    }
-
-    // Default to current logged-in staff if they are STAFF role and no mentor was specified
-    if (!resolvedMentorId && user.role === 'STAFF') {
-      resolvedMentorId = user.userId;
     }
 
     try {
@@ -212,6 +323,7 @@ export async function bulkImportStudents(
             sub_batch: effectiveSubBatch || existing.sub_batch,
             current_year: effectiveCurrentYear || existing.current_year || '1',
             leetcode_username: rawLeetCode,
+            mentor_id: resolvedMentorId || (existing as any)?.mentor_id || null,
           };
           updatedCount++;
         } else {
@@ -227,26 +339,27 @@ export async function bulkImportStudents(
             sub_batch: effectiveSubBatch || null,
             current_year: effectiveCurrentYear || '1',
             leetcode_username: rawLeetCode,
+            mentor_id: resolvedMentorId || null,
             created_at: new Date(),
           });
           createdCount++;
         }
 
-        // Mentor Assignment
+        // Mentor Assignment (clean replacement)
         if (resolvedMentorId) {
-          const assignIdx = inMemoryStore.staffStudentAssignments.findIndex(
-            (a) => a.student_id === studentId
+          inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter(
+            (a) => a.student_id !== studentId
           );
-          if (assignIdx >= 0) {
-            inMemoryStore.staffStudentAssignments[assignIdx].staff_id = resolvedMentorId;
-          } else {
-            inMemoryStore.staffStudentAssignments.push({
-              id: `ssa_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-              staff_id: resolvedMentorId,
-              student_id: studentId,
-              created_at: new Date(),
-            });
-          }
+          inMemoryStore.staffStudentAssignments.push({
+            id: `ssa_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            staff_id: resolvedMentorId,
+            student_id: studentId,
+            created_at: new Date(),
+          });
+        } else if (isExplicitlyUnassigned) {
+          inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter(
+            (a) => a.student_id !== studentId
+          );
         }
 
         newlyCreatedOrUpdatedIds.push(studentId);
@@ -292,25 +405,22 @@ export async function bulkImportStudents(
           createdCount++;
         }
 
-        // Mentor Assignment
+        // Mentor Assignment (clean replacement)
         if (resolvedMentorId && studentRecord) {
-          const existingAssign = await prisma.staffStudentAssignment.findFirst({
+          await prisma.staffStudentAssignment.deleteMany({
             where: { student_id: studentRecord.id },
           });
 
-          if (existingAssign) {
-            await prisma.staffStudentAssignment.update({
-              where: { id: existingAssign.id },
-              data: { staff_id: resolvedMentorId },
-            });
-          } else {
-            await prisma.staffStudentAssignment.create({
-              data: {
-                student_id: studentRecord.id,
-                staff_id: resolvedMentorId,
-              },
-            });
-          }
+          await prisma.staffStudentAssignment.create({
+            data: {
+              student_id: studentRecord.id,
+              staff_id: resolvedMentorId,
+            },
+          });
+        } else if (isExplicitlyUnassigned && studentRecord) {
+          await prisma.staffStudentAssignment.deleteMany({
+            where: { student_id: studentRecord.id },
+          });
         }
 
         if (studentRecord) {
@@ -339,6 +449,9 @@ export async function bulkImportStudents(
       }
     })().catch(() => {});
   }
+
+  // Invalidate caches so lists and dashboard metrics update immediately
+  serverCache.invalidate();
 
   return {
     message: `Successfully processed ${students.length} record(s): ${createdCount} created, ${updatedCount} updated, ${failedCount} failed.`,

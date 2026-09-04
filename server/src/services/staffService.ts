@@ -1,148 +1,155 @@
 import bcrypt from 'bcryptjs';
 import { prisma } from '../db/client.js';
 import { inMemoryStore } from '../db/inMemoryStore.js';
+import { serverCache } from '../utils/serverCache.js';
 
 export async function getAllStaff(activeOnly: boolean = false) {
-  if (!process.env.DATABASE_URL) {
-    return inMemoryStore.users
-      .filter((u) => u.role === 'STAFF' && (!activeOnly || u.is_active))
-      .map((s) => {
-        const bAssigns = inMemoryStore.staffBatchAssignments.filter((sba) => sba.staff_id === s.id);
-        const stAssigns = inMemoryStore.staffStudentAssignments.filter((ssa) => ssa.staff_id === s.id);
-        return {
-          id: s.id,
-          name: s.name,
-          email: s.email,
-          isActive: s.is_active,
-          createdAt: s.created_at.toISOString(),
-          assignedBatchesCount: bAssigns.length,
-          assignedStudentsCount: stAssigns.length,
-          assignedBatches: bAssigns.map((ba) => {
-            const b = inMemoryStore.batches.find((batch) => batch.id === ba.batch_id);
-            return { id: ba.batch_id, batch_name: b?.batch_name || 'Batch' };
-          }),
-        };
-      });
-  }
+  return serverCache.wrap(`staff_list_${activeOnly}`, 15000, async () => {
+    if (!process.env.DATABASE_URL) {
+      return inMemoryStore.users
+        .filter((u) => u.role === 'STAFF' && (!activeOnly || u.is_active))
+        .map((s) => {
+          const bAssigns = inMemoryStore.staffBatchAssignments.filter((sba) => sba.staff_id === s.id);
+          const stAssigns = inMemoryStore.staffStudentAssignments.filter((ssa) => ssa.staff_id === s.id);
+          return {
+            id: s.id,
+            name: s.name,
+            email: s.email,
+            role: s.role || 'STAFF',
+            isActive: s.is_active,
+            createdAt: s.created_at.toISOString(),
+            assignedBatchesCount: bAssigns.length,
+            assignedStudentsCount: stAssigns.length,
+            assignedBatches: bAssigns.map((ba) => {
+              const b = inMemoryStore.batches.find((batch) => batch.id === ba.batch_id);
+              return { id: ba.batch_id, batch_name: b?.batch_name || 'Batch' };
+            }),
+          };
+        });
+    }
 
-  const where: any = { role: 'STAFF' };
-  if (activeOnly) {
-    where.is_active = true;
-  }
+    const where: any = { role: 'STAFF' };
+    if (activeOnly) {
+      where.is_active = true;
+    }
 
-  const staffList = await prisma.user.findMany({
-    where,
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      is_active: true,
-      created_at: true,
-      staff_batch_assignments: {
-        include: {
-          batch: { select: { id: true, batch_name: true } },
+    const staffList = await prisma.user.findMany({
+      where,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        is_active: true,
+        created_at: true,
+        staff_batch_assignments: {
+          include: {
+            batch: { select: { id: true, batch_name: true } },
+          },
         },
+        staff_student_assignments: { select: { id: true } },
+        staff_section_assignments: { select: { id: true } },
       },
-      staff_student_assignments: { select: { id: true } },
-      staff_section_assignments: { select: { id: true } },
-    },
-    orderBy: { created_at: 'desc' },
-  });
+      orderBy: { created_at: 'desc' },
+    });
 
-  return staffList.map((s) => ({
-    id: s.id,
-    name: s.name,
-    email: s.email,
-    isActive: s.is_active,
-    createdAt: s.created_at.toISOString(),
-    assignedBatchesCount: s.staff_batch_assignments.length,
-    assignedStudentsCount: s.staff_student_assignments.length,
-    assignedBatches: s.staff_batch_assignments.map((b) => b.batch),
-  }));
-}
-
-export async function getStaffById(staffId: string) {
-  if (!process.env.DATABASE_URL) {
-    const s = inMemoryStore.users.find((u) => u.id === staffId && u.role === 'STAFF');
-    if (!s) return null;
-
-    const bAssigns = inMemoryStore.staffBatchAssignments.filter((sba) => sba.staff_id === s.id);
-    const secAssigns = inMemoryStore.staffSectionAssignments.filter((ssa) => ssa.staff_id === s.id);
-    const stAssigns = inMemoryStore.staffStudentAssignments.filter((ssa) => ssa.staff_id === s.id);
-
-    return {
+    return staffList.map((s) => ({
       id: s.id,
       name: s.name,
       email: s.email,
       isActive: s.is_active,
       createdAt: s.created_at.toISOString(),
-      assignedBatchesCount: bAssigns.length,
-      assignedStudentsCount: stAssigns.length,
-      assignedBatches: bAssigns.map((ba) => {
-        const b = inMemoryStore.batches.find((batch) => batch.id === ba.batch_id);
-        return { id: ba.batch_id, batch_name: b?.batch_name || 'Batch' };
-      }),
-      assignedSections: secAssigns.map((sa) => {
-        const sec = inMemoryStore.sections.find((section) => section.id === sa.section_id);
-        return {
-          id: sa.id,
-          section_id: sa.section_id,
-          assignment_mode: sa.assignment_mode,
-          section: { id: sa.section_id, name: sec?.name || 'A', batch_id: sec?.batch_id || '' },
-        };
-      }),
-      directStudentAssignments: stAssigns.map((sa) => {
-        const st = inMemoryStore.students.find((student) => student.id === sa.student_id);
-        return {
-          id: sa.student_id,
-          register_number: st?.register_number || '',
-          name: st?.name || '',
-          section_id: st?.section_id || '',
-        };
-      }),
-    };
-  }
-
-  const staff = await prisma.user.findUnique({
-    where: { id: staffId, role: 'STAFF' },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      is_active: true,
-      created_at: true,
-      staff_batch_assignments: {
-        include: {
-          batch: { select: { id: true, batch_name: true } },
-        },
-      },
-      staff_section_assignments: {
-        include: {
-          section: { select: { id: true, name: true, batch_id: true } },
-        },
-      },
-      staff_student_assignments: {
-        include: {
-          student: { select: { id: true, register_number: true, name: true, section_id: true } },
-        },
-      },
-    },
+      assignedBatchesCount: s.staff_batch_assignments.length,
+      assignedStudentsCount: s.staff_student_assignments.length,
+      assignedBatches: s.staff_batch_assignments.map((b) => b.batch),
+    }));
   });
+}
 
-  if (!staff) return null;
+export async function getStaffById(staffId: string) {
+  return serverCache.wrap(`staff_detail_${staffId}`, 15000, async () => {
+    if (!process.env.DATABASE_URL) {
+      const s = inMemoryStore.users.find((u) => u.id === staffId && u.role === 'STAFF');
+      if (!s) return null;
 
-  return {
-    id: staff.id,
-    name: staff.name,
-    email: staff.email,
-    isActive: staff.is_active,
-    createdAt: staff.created_at.toISOString(),
-    assignedBatchesCount: staff.staff_batch_assignments.length,
-    assignedStudentsCount: staff.staff_student_assignments.length,
-    assignedBatches: staff.staff_batch_assignments.map((b) => b.batch),
-    assignedSections: staff.staff_section_assignments,
-    directStudentAssignments: staff.staff_student_assignments.map((sa) => sa.student),
-  };
+      const bAssigns = inMemoryStore.staffBatchAssignments.filter((sba) => sba.staff_id === s.id);
+      const secAssigns = inMemoryStore.staffSectionAssignments.filter((ssa) => ssa.staff_id === s.id);
+      const stAssigns = inMemoryStore.staffStudentAssignments.filter((ssa) => ssa.staff_id === s.id);
+
+      return {
+        id: s.id,
+        name: s.name,
+        email: s.email,
+        isActive: s.is_active,
+        createdAt: s.created_at.toISOString(),
+        assignedBatchesCount: bAssigns.length,
+        assignedStudentsCount: stAssigns.length,
+        assignedBatches: bAssigns.map((ba) => {
+          const b = inMemoryStore.batches.find((batch) => batch.id === ba.batch_id);
+          return { id: ba.batch_id, batch_name: b?.batch_name || 'Batch' };
+        }),
+        assignedSections: secAssigns.map((sa) => {
+          const sec = inMemoryStore.sections.find((section) => section.id === sa.section_id);
+          return {
+            id: sa.id,
+            section_id: sa.section_id,
+            assignment_mode: sa.assignment_mode,
+            section: { id: sa.section_id, name: sec?.name || 'A', batch_id: sec?.batch_id || '' },
+          };
+        }),
+        directStudentAssignments: stAssigns.map((sa) => {
+          const st = inMemoryStore.students.find((student) => student.id === sa.student_id);
+          return {
+            id: sa.student_id,
+            register_number: st?.register_number || '',
+            name: st?.name || '',
+            section_id: st?.section_id || '',
+          };
+        }),
+      };
+    }
+
+    const staff = await prisma.user.findUnique({
+      where: { id: staffId, role: 'STAFF' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        is_active: true,
+        created_at: true,
+        staff_batch_assignments: {
+          include: {
+            batch: { select: { id: true, batch_name: true } },
+          },
+        },
+        staff_section_assignments: {
+          include: {
+            section: { select: { id: true, name: true, batch_id: true } },
+          },
+        },
+        staff_student_assignments: {
+          include: {
+            student: { select: { id: true, register_number: true, name: true, section_id: true } },
+          },
+        },
+      },
+    });
+
+    if (!staff) return null;
+
+    return {
+      id: staff.id,
+      name: staff.name,
+      email: staff.email,
+      isActive: staff.is_active,
+      createdAt: staff.created_at.toISOString(),
+      assignedBatchesCount: staff.staff_batch_assignments.length,
+      assignedStudentsCount: staff.staff_student_assignments.length,
+      assignedBatches: staff.staff_batch_assignments.map((b) => b.batch),
+      assignedSections: staff.staff_section_assignments,
+      directStudentAssignments: staff.staff_student_assignments.map((sa) => sa.student),
+    };
+  });
 }
 
 export async function createStaff(data: {
@@ -151,6 +158,8 @@ export async function createStaff(data: {
   password?: string;
   isActive?: boolean;
 }) {
+  serverCache.invalidate('staff_');
+  serverCache.invalidate('stats_');
   const emailNorm = data.email.trim().toLowerCase();
   const passwordToUse = data.password || 'StaffPass123!';
   const hashedPassword = await bcrypt.hash(passwordToUse, 10);
@@ -214,6 +223,9 @@ export async function createStaff(data: {
 }
 
 export async function updateStaffStatus(staffId: string, isActive: boolean) {
+  serverCache.invalidate('staff_');
+  serverCache.invalidate('stats_');
+
   if (!process.env.DATABASE_URL) {
     const s = inMemoryStore.users.find((u) => u.id === staffId && u.role === 'STAFF');
     if (!s) throw new Error('Staff not found');
@@ -247,6 +259,10 @@ export async function updateStaffDetails(
   staffId: string,
   data: { name?: string; email?: string; password?: string; assignedBatchIds?: string[] }
 ) {
+  serverCache.invalidate('staff_');
+  serverCache.invalidate('stats_');
+  serverCache.invalidate('batch');
+
   const updateData: any = {};
   if (data.name) updateData.name = data.name.trim();
   if (data.email) updateData.email = data.email.trim().toLowerCase();
@@ -292,6 +308,10 @@ export async function updateStaffDetails(
 
 
 export async function deleteStaff(staffId: string) {
+  serverCache.invalidate('staff_');
+  serverCache.invalidate('stats_');
+  serverCache.invalidate('batch');
+
   if (!process.env.DATABASE_URL) {
     const idx = inMemoryStore.users.findIndex((u) => u.id === staffId && u.role === 'STAFF');
     if (idx === -1) throw new Error('Staff member not found');
@@ -318,6 +338,10 @@ export async function deleteStaff(staffId: string) {
 }
 
 export async function bulkDeleteStaff(staffIds: string[]) {
+  serverCache.invalidate('staff_');
+  serverCache.invalidate('stats_');
+  serverCache.invalidate('batch');
+
   if (!process.env.DATABASE_URL) {
     inMemoryStore.users = inMemoryStore.users.filter((u) => !staffIds.includes(u.id));
     inMemoryStore.staffBatchAssignments = inMemoryStore.staffBatchAssignments.filter((a) => !staffIds.includes(a.staff_id));
@@ -338,6 +362,11 @@ export async function bulkDeleteStaff(staffIds: string[]) {
 
 
 export async function assignBatchesToStaff(staffId: string, batchIds: string[]) {
+  serverCache.invalidate('students_');
+  serverCache.invalidate('staff_');
+  serverCache.invalidate('stats_');
+  serverCache.invalidate('batch');
+
   if (!process.env.DATABASE_URL) {
     inMemoryStore.staffBatchAssignments = inMemoryStore.staffBatchAssignments.filter((sba) => sba.staff_id !== staffId);
     batchIds.forEach((bId) => {
@@ -373,6 +402,11 @@ export async function setSectionAssignmentForStaff(
   sectionId: string,
   assignmentMode: 'ALL' | 'SELECTED'
 ) {
+  serverCache.invalidate('students_');
+  serverCache.invalidate('staff_');
+  serverCache.invalidate('stats_');
+  serverCache.invalidate('batch');
+
   if (!process.env.DATABASE_URL) {
     const existing = inMemoryStore.staffSectionAssignments.find((ssa) => ssa.staff_id === staffId && ssa.section_id === sectionId);
     if (existing) {
@@ -415,6 +449,11 @@ export async function setSectionAssignmentForStaff(
 }
 
 export async function removeSectionAssignmentFromStaff(staffId: string, sectionId: string) {
+  serverCache.invalidate('students_');
+  serverCache.invalidate('staff_');
+  serverCache.invalidate('stats_');
+  serverCache.invalidate('batch');
+
   if (!process.env.DATABASE_URL) {
     inMemoryStore.staffSectionAssignments = inMemoryStore.staffSectionAssignments.filter(
       (ssa) => !(ssa.staff_id === staffId && ssa.section_id === sectionId)
@@ -433,6 +472,11 @@ export async function removeSectionAssignmentFromStaff(staffId: string, sectionI
 }
 
 export async function assignStudentsToStaff(staffId: string, sectionId: string, studentIds: string[]) {
+  serverCache.invalidate('students_');
+  serverCache.invalidate('staff_');
+  serverCache.invalidate('stats_');
+  serverCache.invalidate('batch');
+
   if (!process.env.DATABASE_URL) {
     // Clear any existing section assignment mode for this staff & section
     inMemoryStore.staffSectionAssignments = inMemoryStore.staffSectionAssignments.filter(
@@ -510,6 +554,11 @@ export async function assignStudentsToStaff(staffId: string, sectionId: string, 
 }
 
 export async function removeStudentAssignmentFromStaff(staffId: string, studentId: string) {
+  serverCache.invalidate('students_');
+  serverCache.invalidate('staff_');
+  serverCache.invalidate('stats_');
+  serverCache.invalidate('batch');
+
   if (!process.env.DATABASE_URL) {
     inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter(
       (ssa) => !(ssa.staff_id === staffId && ssa.student_id === studentId)

@@ -157,7 +157,6 @@ export function buildGoogleSheetMatrix(
   };
 
   const headers = [
-    'Rank',
     'Academic Year',
     'Department',
     'Section',
@@ -201,8 +200,7 @@ export function buildGoogleSheetMatrix(
     return (a.register_number || '').localeCompare(b.register_number || '');
   });
 
-  const rows: string[][] = sortedStudents.map((st, idx) => {
-    const rank = (idx + 1).toString();
+  const rows: string[][] = sortedStudents.map((st) => {
     const ay = st.batch ? `${st.batch.start_year}–${st.batch.end_year}` : (st.academic_year || '-');
     const dept = st.batch ? st.batch.department : (st.department || '-');
     const rawSec = st.section ? st.section.name : (st.section_name || '-');
@@ -217,7 +215,6 @@ export function buildGoogleSheetMatrix(
     const leetcodeId = st.leetcode_username || '-';
 
     const baseRow: string[] = [
-      rank,
       ay,
       dept,
       sec,
@@ -378,6 +375,21 @@ export async function createGoogleSheetLink(
   }
 
   if (!process.env.DATABASE_URL) {
+    // Mark prior active sheet with matching scope as inactive (preserved for history/audit)
+    inMemoryStore.googleSheetLinks.forEach((l) => {
+      if (
+        l.owner_user_id === user.userId &&
+        l.is_active &&
+        (l.section_id || null) === (section_id || null) &&
+        (l.allocation_batch_id || null) === (allocation_batch_id || null) &&
+        l.batch_ids.length === batch_ids.length &&
+        l.batch_ids.every((b) => batch_ids.includes(b))
+      ) {
+        l.is_active = false;
+        l.updated_at = new Date();
+      }
+    });
+
     const newLink: InMemoryGoogleSheetLink = {
       id: `lnk_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       owner_user_id: user.userId,
@@ -415,7 +427,28 @@ export async function createGoogleSheetLink(
     return sanitizeGoogleSheetLink(newLink);
   }
 
-  // DB Mode
+  // DB Mode: Inactivate prior active sheet with matching scope
+  const existingActive = await prisma.googleSheetLink.findMany({
+    where: {
+      owner_user_id: user.userId,
+      is_active: true,
+      section_id: section_id || null,
+      allocation_batch_id: allocation_batch_id || null,
+    },
+  });
+
+  for (const prevLink of existingActive) {
+    if (
+      prevLink.batch_ids.length === batch_ids.length &&
+      prevLink.batch_ids.every((b) => batch_ids.includes(b))
+    ) {
+      await prisma.googleSheetLink.update({
+        where: { id: prevLink.id },
+        data: { is_active: false },
+      });
+    }
+  }
+
   const created = await prisma.googleSheetLink.create({
     data: {
       owner_user_id: user.userId,
@@ -738,7 +771,9 @@ export async function syncGoogleSheetLink(
   }
 
   if (!process.env.DATABASE_URL) {
-    studentRows = inMemoryStore.students.filter((s) => activeBatchIds.includes(s.batch_id));
+    studentRows = activeBatchIds.length > 0
+      ? inMemoryStore.students.filter((s) => activeBatchIds.includes(s.batch_id))
+      : inMemoryStore.students;
 
     if (link.section_id) {
       studentRows = studentRows.filter((s) => s.section_id === link.section_id);
@@ -750,28 +785,33 @@ export async function syncGoogleSheetLink(
       studentRows = studentRows.filter((s) => s.allocation_batch_id === link.allocation_batch_id || s.sub_batch === targetName);
     }
 
-    if (user.role === 'STAFF' && (!link.batch_ids || link.batch_ids.length === 0)) {
+    if (user.role === 'STAFF') {
       const authorizedList = await getAuthorizedStudentIdsForStaff(user.userId);
-      if (authorizedList.length > 0) {
-        const authorizedStudentIds = new Set(authorizedList);
-        studentRows = studentRows.filter((s) => authorizedStudentIds.has(s.id));
-      }
+      const authorizedStudentIds = new Set(authorizedList);
+      studentRows = studentRows.filter((s) => authorizedStudentIds.has(s.id));
     }
 
-    studentRows = studentRows.map((st) => ({
-      ...st,
-      batch: inMemoryStore.batches.find((b) => b.id === st.batch_id),
-      section: inMemoryStore.sections.find((sec) => sec.id === st.section_id),
-      allocation_batch: inMemoryStore.allocationBatches.find((ab) => ab.id === st.allocation_batch_id),
-      mentor: inMemoryStore.users.find((u) => u.id === st.mentor_id),
-    }));
+    studentRows = studentRows.map((st) => {
+      const ssa = inMemoryStore.staffStudentAssignments.find((a) => a.student_id === st.id);
+      const mentorUser = ssa
+        ? inMemoryStore.users.find((u) => u.id === ssa.staff_id)
+        : inMemoryStore.users.find((u) => u.id === (st as any).mentor_id) || null;
+      return {
+        ...st,
+        batch: inMemoryStore.batches.find((b) => b.id === st.batch_id),
+        section: inMemoryStore.sections.find((sec) => sec.id === st.section_id),
+        allocation_batch: inMemoryStore.allocationBatches.find((ab) => ab.id === st.allocation_batch_id),
+        mentor: mentorUser,
+      };
+    });
 
     const studentIds = new Set(studentRows.map((s) => s.id));
     snapshotRows = inMemoryStore.snapshots.filter((snap) => studentIds.has(snap.student_id));
   } else {
-    let whereClause: any = {
-      batch_id: { in: activeBatchIds },
-    };
+    let whereClause: any = {};
+    if (activeBatchIds.length > 0) {
+      whereClause.batch_id = { in: activeBatchIds };
+    }
 
     if (link.section_id) {
       whereClause.section_id = link.section_id;
@@ -790,11 +830,9 @@ export async function syncGoogleSheetLink(
       ];
     }
 
-    if (user.role === 'STAFF' && (!activeBatchIds || activeBatchIds.length === 0)) {
+    if (user.role === 'STAFF') {
       const authorizedIds = await getAuthorizedStudentIdsForStaff(user.userId);
-      if (authorizedIds.length > 0) {
-        whereClause.id = { in: authorizedIds };
-      }
+      whereClause.id = { in: authorizedIds };
     }
 
 
@@ -833,7 +871,7 @@ export async function syncGoogleSheetLink(
 
   const matrix = buildGoogleSheetMatrix(studentRows, snapshotRows, startDate);
   const now = new Date();
-  const details = `Idempotently synchronized ${matrix.studentCount} student rows (one row per student) and ${matrix.dateColumnsCount} date columns (from ${startDate || 'all history'}) for linked batches [${link.batch_ids.join(', ')}] into Google Sheet ID [${link.spreadsheet_id}].`;
+  let details = `Idempotently synchronized ${matrix.studentCount} student rows (one row per student) and ${matrix.dateColumnsCount} date columns (from ${startDate || 'all history'}) for linked batches [${link.batch_ids.join(', ')}] into Google Sheet ID [${link.spreadsheet_id}].`;
 
   // Dispatch Webhook POST if Google Apps Script URL or webhook_url is linked
   let webhookUrl: string | null = (link as any).webhook_url || null;
@@ -845,6 +883,10 @@ export async function syncGoogleSheetLink(
   } else if (!webhookUrl && link.spreadsheet_id && (link.spreadsheet_id.startsWith('https://script.google.com') || link.spreadsheet_id.includes('/macros/s/'))) {
     webhookUrl = link.spreadsheet_id;
   }
+
+  let webhookSuccess = true;
+  let webhookResponseText = '';
+
   if (webhookUrl) {
     try {
       const payloadString = JSON.stringify({
@@ -858,32 +900,42 @@ export async function syncGoogleSheetLink(
           'Content-Type': 'text/plain;charset=utf-8',
         },
         maxRedirects: 5,
+        timeout: 30000,
       });
-      console.log(`[GOOGLE_SHEETS] Successfully posted matrix data to Apps Script Webhook [${webhookUrl}], Response: ${whRes.data}`);
+      webhookResponseText = String(whRes.data || '');
+      if (webhookResponseText.startsWith('ERROR:')) {
+        webhookSuccess = false;
+        details += ` [Apps Script Error: ${webhookResponseText}]`;
+        console.warn(`[GOOGLE_SHEETS] Apps Script Webhook returned error: ${webhookResponseText}`);
+      } else {
+        details += ` [Google Sheet updated via Apps Script: ${webhookResponseText || 'SUCCESS'}]`;
+        console.log(`[GOOGLE_SHEETS] Successfully posted matrix data to Apps Script Webhook [${webhookUrl}], Response: ${webhookResponseText}`);
+      }
     } catch (whErr: any) {
+      webhookSuccess = false;
+      details += ` [Webhook Warning: ${whErr?.message || whErr}]`;
       console.error('[GOOGLE_SHEETS] Apps Script Webhook POST warning:', whErr?.message || whErr);
     }
   }
 
-
-
+  const syncStatus = webhookSuccess ? 'SUCCESS' : 'PARTIAL_WARNING';
 
   if (!process.env.DATABASE_URL) {
     const memLink = inMemoryStore.googleSheetLinks.find((l) => l.id === linkId);
     if (memLink) {
       memLink.last_sync_at = now;
-      memLink.last_sync_status = 'SUCCESS';
-      memLink.last_sync_error = null;
+      memLink.last_sync_status = syncStatus;
+      memLink.last_sync_error = webhookSuccess ? null : 'Apps Script webhook did not confirm SUCCESS';
       memLink.updated_at = now;
     }
 
     inMemoryStore.googleSheetLinkLogs.unshift({
       id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       sheet_link_id: linkId,
-      status: 'SUCCESS',
+      status: syncStatus,
       rows_synced: matrix.studentCount,
       details,
-      error_message: null,
+      error_message: webhookSuccess ? null : (webhookResponseText || 'Webhook dispatch warning'),
       synced_at: now,
     });
   } else {
@@ -891,17 +943,18 @@ export async function syncGoogleSheetLink(
       where: { id: linkId },
       data: {
         last_sync_at: now,
-        last_sync_status: 'SUCCESS',
-        last_sync_error: null,
+        last_sync_status: syncStatus,
+        last_sync_error: webhookSuccess ? null : (webhookResponseText || 'Apps Script webhook did not confirm SUCCESS'),
       },
     });
 
     await prisma.googleSheetLinkSyncLog.create({
       data: {
         sheet_link_id: linkId,
-        status: 'SUCCESS',
+        status: syncStatus,
         rows_synced: matrix.studentCount,
         details,
+        error_message: webhookSuccess ? null : (webhookResponseText || null),
         synced_at: now,
       },
     });

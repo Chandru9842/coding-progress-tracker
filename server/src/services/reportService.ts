@@ -853,7 +853,7 @@ export async function exportExcelReport(
 
   // Auto-fit dynamic column widths based on longest string + generous padding
   const minWidthMap: Record<string, number> = {
-    rank: 10,
+    rank: 14,
     academic_year: 18,
     department: 18,
     section: 16,
@@ -890,8 +890,8 @@ export async function exportExcelReport(
       }
     });
 
-    // Add +6 padding and enforce generous minimum column width
-    column.width = Math.max(maxLength + 6, minWidth);
+    // Add +6 padding and enforce generous minimum column width (at least 14)
+    column.width = Math.max(maxLength + 6, minWidth, 14);
   });
 
   // Format Data Rows

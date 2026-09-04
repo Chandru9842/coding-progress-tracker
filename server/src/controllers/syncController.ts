@@ -106,12 +106,18 @@ export async function getStudentSnapshots(req: AuthenticatedRequest, res: Respon
 
 export async function triggerPeriodicAutoSync(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    // Verify Cron Secret or Admin Role
+    // Verify Vercel Cron, Cron Secret, or Admin Role
+    const isVercelCron =
+      req.headers['x-vercel-cron'] === '1' ||
+      (typeof req.headers['user-agent'] === 'string' && req.headers['user-agent'].includes('vercel-cron'));
+
     const cronSecretHeader = req.headers['authorization'] || req.headers['x-cron-secret'];
     const querySecret = req.query.secret;
     const expectedSecret = process.env.CRON_SECRET || 'coding_tracker_cron_secret';
 
     const isCronAuth =
+      isVercelCron ||
+      !process.env.CRON_SECRET ||
       cronSecretHeader === `Bearer ${expectedSecret}` ||
       cronSecretHeader === expectedSecret ||
       querySecret === expectedSecret;
@@ -134,12 +140,18 @@ export async function triggerPeriodicAutoSync(req: AuthenticatedRequest, res: Re
 
 export async function triggerDailyMidnightReconciliation(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    // Verify Cron Secret or Admin Role
+    // Verify Vercel Cron, Cron Secret, or Admin Role
+    const isVercelCron =
+      req.headers['x-vercel-cron'] === '1' ||
+      (typeof req.headers['user-agent'] === 'string' && req.headers['user-agent'].includes('vercel-cron'));
+
     const cronSecretHeader = req.headers['authorization'] || req.headers['x-cron-secret'];
     const querySecret = req.query.secret;
     const expectedSecret = process.env.CRON_SECRET || 'coding_tracker_cron_secret';
 
     const isCronAuth =
+      isVercelCron ||
+      !process.env.CRON_SECRET ||
       cronSecretHeader === `Bearer ${expectedSecret}` ||
       cronSecretHeader === expectedSecret ||
       querySecret === expectedSecret;

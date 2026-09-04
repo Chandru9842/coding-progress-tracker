@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext.js';
 import { ProtectedRoute } from './components/ProtectedRoute.js';
 import { LoginPage } from './pages/LoginPage.js';
@@ -18,6 +18,9 @@ export const App: React.FC = () => {
     <BrowserRouter>
       <AuthProvider>
         <Routes>
+          {/* Root path redirect to Dashboard (ProtectedRoute will redirect to /login if unauthenticated) */}
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
           {/* Public Route */}
           <Route path="/login" element={<LoginPage />} />
 

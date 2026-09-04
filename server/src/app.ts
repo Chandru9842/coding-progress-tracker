@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import compression from 'compression';
 import healthRoutes from './routes/healthRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import statsRoutes from './routes/statsRoutes.js';
@@ -15,6 +16,7 @@ import { errorHandler } from './middleware/errorHandler.js';
 const app = express();
 
 // Middlewares
+app.use(compression());
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -30,16 +32,18 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// Versioned API routes (/api/v1)
-app.use('/api/v1', healthRoutes);
-app.use('/api/v1', authRoutes);
-app.use('/api/v1', statsRoutes);
-app.use('/api/v1', staffRoutes);
-app.use('/api/v1', batchRoutes);
-app.use('/api/v1', studentRoutes);
-app.use('/api/v1', syncRoutes);
-app.use('/api/v1/reports', reportRoutes);
-app.use('/api/v1', googleSheetsRoutes);
+// Versioned API routes (mounted on both /api/v1 and /v1 for Vercel serverless compatibility)
+['/api/v1', '/v1'].forEach((prefix) => {
+  app.use(prefix, healthRoutes);
+  app.use(prefix, authRoutes);
+  app.use(prefix, statsRoutes);
+  app.use(prefix, staffRoutes);
+  app.use(prefix, batchRoutes);
+  app.use(prefix, studentRoutes);
+  app.use(prefix, syncRoutes);
+  app.use(`${prefix}/reports`, reportRoutes);
+  app.use(prefix, googleSheetsRoutes);
+});
 
 // Global Error Handler
 app.use(errorHandler);

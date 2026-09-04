@@ -42,6 +42,7 @@ export interface InMemoryStudent {
   sub_batch?: string | null;
   current_year?: string | null;
   leetcode_username?: string | null;
+  mentor_id?: string | null;
   created_at: Date;
 }
 

@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
 import { studentApi, syncApi, Student, DailySnapshot } from '../services/api.js';
-import { ArrowLeft, User, ShieldAlert, Code2, GraduationCap, Layers, Loader2, Activity, RefreshCw, CheckCircle2, Trash2 } from 'lucide-react';
+import { ArrowLeft, User, ShieldAlert, Code2, GraduationCap, Layers, Loader2, Activity, RefreshCw, CheckCircle2, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 
 export const StudentDetailPage: React.FC = () => {
   const { studentId } = useParams<{ studentId: string }>();
@@ -20,15 +20,18 @@ export const StudentDetailPage: React.FC = () => {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const PAGE_SIZE = 10;
 
   const fetchDetailAndSnapshots = async () => {
     if (!studentId) return;
     try {
       setLoading(true);
-      const data = await studentApi.getStudentById(studentId);
+      const [data, snapData] = await Promise.all([
+        studentApi.getStudentById(studentId),
+        syncApi.getSnapshots(studentId),
+      ]);
       setStudent(data);
-
-      const snapData = await syncApi.getSnapshots(studentId);
       setSnapshots(snapData);
     } catch (err: any) {
       if (err.response?.status === 403) {
@@ -270,77 +273,210 @@ export const StudentDetailPage: React.FC = () => {
             )}
 
             {/* Daily Snapshots History Table */}
-            {snapshots.length > 0 && (
-              <div className="glass-panel" style={{ padding: '1.5rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <Activity size={20} style={{ color: 'var(--primary)' }} />
-                    <h4 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Daily Snapshot History</h4>
-                  </div>
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                    Track daily problem-solving progress & cumulative totals
-                  </span>
-                </div>
-                <div className="table-responsive-container">
-                  <table style={{ width: '100%', minWidth: '780px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
-                        <th style={{ padding: '0.75rem' }}>Date</th>
-                        <th style={{ padding: '0.75rem' }}>Today's Solved</th>
-                        <th style={{ padding: '0.75rem' }}>Today's Breakdown</th>
-                        <th style={{ padding: '0.75rem' }}>Cumulative Easy</th>
-                        <th style={{ padding: '0.75rem' }}>Cumulative Medium</th>
-                        <th style={{ padding: '0.75rem' }}>Cumulative Hard</th>
-                        <th style={{ padding: '0.75rem' }}>Total Solved</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {snapshots.map((snap, idx) => {
-                        const prevSnap = snapshots[idx + 1];
-                        const dailyEasy = prevSnap ? Math.max(0, snap.easy_solved - prevSnap.easy_solved) : 0;
-                        const dailyMedium = prevSnap ? Math.max(0, snap.medium_solved - prevSnap.medium_solved) : 0;
-                        const dailyHard = prevSnap ? Math.max(0, snap.hard_solved - prevSnap.hard_solved) : 0;
-                        const dailyTotal = prevSnap ? Math.max(0, snap.total_solved - prevSnap.total_solved) : 0;
+            {snapshots.length > 0 && (() => {
+              const totalPages = Math.max(1, Math.ceil(snapshots.length / PAGE_SIZE));
+              const validPage = Math.min(Math.max(1, currentPage), totalPages);
+              const startIndex = (validPage - 1) * PAGE_SIZE;
+              const endIndex = Math.min(startIndex + PAGE_SIZE, snapshots.length);
+              const currentSnapshots = snapshots.slice(startIndex, endIndex);
 
-                        return (
-                          <tr key={snap.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                            <td style={{ padding: '0.75rem', fontWeight: 600 }}>
-                              {(() => {
-                                const dStr = typeof snap.snapshot_date === 'string' ? snap.snapshot_date : new Date(snap.snapshot_date).toISOString();
-                                const parts = dStr.split('T')[0].split('-');
-                                return parts.length === 3 ? `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}/${parts[0]}` : new Date(snap.snapshot_date).toLocaleDateString();
-                              })()}
-                            </td>
-                            <td style={{ padding: '0.75rem' }}>
-                              <span style={{
-                                padding: '0.2rem 0.55rem',
-                                borderRadius: '6px',
-                                fontSize: '0.8rem',
-                                fontWeight: 700,
-                                backgroundColor: dailyTotal > 0 ? 'rgba(52, 211, 153, 0.15)' : 'rgba(148, 163, 184, 0.1)',
-                                color: dailyTotal > 0 ? '#34d399' : '#94a3b8',
-                                border: dailyTotal > 0 ? '1px solid rgba(52, 211, 153, 0.3)' : '1px solid rgba(148, 163, 184, 0.2)',
-                              }}>
-                                {dailyTotal > 0 ? `+${dailyTotal}` : '0'}
+              const getPageNumbers = () => {
+                const pages: number[] = [];
+                if (totalPages <= 7) {
+                  for (let i = 1; i <= totalPages; i++) pages.push(i);
+                } else {
+                  pages.push(1);
+                  let start = Math.max(2, validPage - 1);
+                  let end = Math.min(totalPages - 1, validPage + 1);
+                  if (start > 2) pages.push(-1);
+                  for (let i = start; i <= end; i++) pages.push(i);
+                  if (end < totalPages - 1) pages.push(-2);
+                  pages.push(totalPages);
+                }
+                return pages;
+              };
+
+              return (
+                <div className="glass-panel" style={{ padding: '1.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      <Activity size={20} style={{ color: 'var(--primary)' }} />
+                      <h4 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Daily Snapshot History</h4>
+                    </div>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                      Showing {startIndex + 1}–{endIndex} of {snapshots.length} daily snapshots
+                    </span>
+                  </div>
+                  <div className="table-responsive-container">
+                    <table style={{ width: '100%', minWidth: '780px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+                          <th style={{ padding: '0.75rem' }}>Date</th>
+                          <th style={{ padding: '0.75rem' }}>Today's Solved</th>
+                          <th style={{ padding: '0.75rem' }}>Today's Breakdown</th>
+                          <th style={{ padding: '0.75rem' }}>Cumulative Easy</th>
+                          <th style={{ padding: '0.75rem' }}>Cumulative Medium</th>
+                          <th style={{ padding: '0.75rem' }}>Cumulative Hard</th>
+                          <th style={{ padding: '0.75rem' }}>Total Solved</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {currentSnapshots.map((snap, pageIdx) => {
+                          const globalIdx = startIndex + pageIdx;
+                          const prevSnap = snapshots[globalIdx + 1];
+                          const dailyEasy = prevSnap ? Math.max(0, snap.easy_solved - prevSnap.easy_solved) : 0;
+                          const dailyMedium = prevSnap ? Math.max(0, snap.medium_solved - prevSnap.medium_solved) : 0;
+                          const dailyHard = prevSnap ? Math.max(0, snap.hard_solved - prevSnap.hard_solved) : 0;
+                          const dailyTotal = prevSnap ? Math.max(0, snap.total_solved - prevSnap.total_solved) : 0;
+
+                          return (
+                            <tr key={snap.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                              <td style={{ padding: '0.75rem', fontWeight: 600 }}>
+                                {(() => {
+                                  const dStr = typeof snap.snapshot_date === 'string' ? snap.snapshot_date : new Date(snap.snapshot_date).toISOString();
+                                  const parts = dStr.split('T')[0].split('-');
+                                  return parts.length === 3 ? `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}/${parts[0]}` : new Date(snap.snapshot_date).toLocaleDateString();
+                                })()}
+                              </td>
+                              <td style={{ padding: '0.75rem' }}>
+                                <span style={{
+                                  padding: '0.2rem 0.55rem',
+                                  borderRadius: '6px',
+                                  fontSize: '0.8rem',
+                                  fontWeight: 700,
+                                  backgroundColor: dailyTotal > 0 ? 'rgba(52, 211, 153, 0.15)' : 'rgba(148, 163, 184, 0.1)',
+                                  color: dailyTotal > 0 ? '#34d399' : '#94a3b8',
+                                  border: dailyTotal > 0 ? '1px solid rgba(52, 211, 153, 0.3)' : '1px solid rgba(148, 163, 184, 0.2)',
+                                }}>
+                                  {dailyTotal > 0 ? `+${dailyTotal}` : '0'}
+                                </span>
+                              </td>
+                              <td style={{ padding: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                                <span style={{ color: '#4ade80', fontWeight: dailyEasy > 0 ? 700 : 400 }}>+{dailyEasy} E</span> &bull;{' '}
+                                <span style={{ color: '#facc15', fontWeight: dailyMedium > 0 ? 700 : 400 }}>+{dailyMedium} M</span> &bull;{' '}
+                                <span style={{ color: '#f87171', fontWeight: dailyHard > 0 ? 700 : 400 }}>+{dailyHard} H</span>
+                              </td>
+                              <td style={{ padding: '0.75rem', color: '#4ade80' }}>{snap.easy_solved}</td>
+                              <td style={{ padding: '0.75rem', color: '#facc15' }}>{snap.medium_solved}</td>
+                              <td style={{ padding: '0.75rem', color: '#f87171' }}>{snap.hard_solved}</td>
+                              <td style={{ padding: '0.75rem', fontWeight: 700, color: 'var(--primary)' }}>{snap.total_solved}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Google-like Pagination Bar (10 items per page with arrow navigation) */}
+                  {totalPages > 1 && (
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      marginTop: '1.25rem',
+                      paddingTop: '1rem',
+                      borderTop: '1px solid var(--border-subtle)',
+                      flexWrap: 'wrap',
+                      gap: '0.75rem',
+                    }}>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                        Page <strong style={{ color: 'var(--text-primary)' }}>{validPage}</strong> of <strong style={{ color: 'var(--text-primary)' }}>{totalPages}</strong> ({snapshots.length} total entries)
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        {/* Previous Arrow Button */}
+                        <button
+                          type="button"
+                          id="btn-prev-snapshots"
+                          onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                          disabled={validPage <= 1}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.25rem',
+                            padding: '0.4rem 0.75rem',
+                            fontSize: '0.825rem',
+                            fontWeight: 600,
+                            borderRadius: 'var(--radius-sm, 6px)',
+                            border: '1px solid var(--border-subtle, #334155)',
+                            backgroundColor: validPage <= 1 ? 'rgba(30, 41, 59, 0.4)' : 'rgba(30, 41, 59, 0.9)',
+                            color: validPage <= 1 ? '#64748b' : '#f8fafc',
+                            cursor: validPage <= 1 ? 'not-allowed' : 'pointer',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
+                          <ChevronLeft size={16} />
+                          <span>Previous 10</span>
+                        </button>
+
+                        {/* Numbered Page Buttons (Google Pages style) */}
+                        {getPageNumbers().map((pageNum, idx) => {
+                          if (pageNum < 0) {
+                            return (
+                              <span key={`ellipsis-${idx}`} style={{ padding: '0.4rem 0.5rem', color: 'var(--text-muted)' }}>
+                                ...
                               </span>
-                            </td>
-                            <td style={{ padding: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                              <span style={{ color: '#4ade80', fontWeight: dailyEasy > 0 ? 700 : 400 }}>+{dailyEasy} E</span> &bull;{' '}
-                              <span style={{ color: '#facc15', fontWeight: dailyMedium > 0 ? 700 : 400 }}>+{dailyMedium} M</span> &bull;{' '}
-                              <span style={{ color: '#f87171', fontWeight: dailyHard > 0 ? 700 : 400 }}>+{dailyHard} H</span>
-                            </td>
-                            <td style={{ padding: '0.75rem', color: '#4ade80' }}>{snap.easy_solved}</td>
-                            <td style={{ padding: '0.75rem', color: '#facc15' }}>{snap.medium_solved}</td>
-                            <td style={{ padding: '0.75rem', color: '#f87171' }}>{snap.hard_solved}</td>
-                            <td style={{ padding: '0.75rem', fontWeight: 700, color: 'var(--primary)' }}>{snap.total_solved}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                            );
+                          }
+                          const isActive = pageNum === validPage;
+                          return (
+                            <button
+                              key={`page-${pageNum}`}
+                              type="button"
+                              id={`btn-page-${pageNum}`}
+                              onClick={() => setCurrentPage(pageNum)}
+                              style={{
+                                minWidth: '34px',
+                                height: '34px',
+                                padding: '0 0.5rem',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '0.825rem',
+                                fontWeight: isActive ? 700 : 500,
+                                borderRadius: 'var(--radius-sm, 6px)',
+                                border: isActive ? '1px solid #6366f1' : '1px solid var(--border-subtle, #334155)',
+                                backgroundColor: isActive ? '#6366f1' : 'rgba(30, 41, 59, 0.7)',
+                                color: isActive ? '#ffffff' : '#cbd5e1',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s ease',
+                              }}
+                            >
+                              {pageNum}
+                            </button>
+                          );
+                        })}
+
+                        {/* Next Arrow Button */}
+                        <button
+                          type="button"
+                          id="btn-next-snapshots"
+                          onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                          disabled={validPage >= totalPages}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.25rem',
+                            padding: '0.4rem 0.75rem',
+                            fontSize: '0.825rem',
+                            fontWeight: 600,
+                            borderRadius: 'var(--radius-sm, 6px)',
+                            border: '1px solid var(--border-subtle, #334155)',
+                            backgroundColor: validPage >= totalPages ? 'rgba(30, 41, 59, 0.4)' : 'rgba(30, 41, 59, 0.9)',
+                            color: validPage >= totalPages ? '#64748b' : '#f8fafc',
+                            cursor: validPage >= totalPages ? 'not-allowed' : 'pointer',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
+                          <span>Next 10</span>
+                          <ChevronRight size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* SINGLE DELETE STUDENT CONFIRMATION MODAL */}
             {showDeleteModal && student && (

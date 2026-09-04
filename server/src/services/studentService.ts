@@ -1,5 +1,6 @@
 import { prisma } from '../db/client.js';
 import { inMemoryStore } from '../db/inMemoryStore.js';
+import { serverCache } from '../utils/serverCache.js';
 import {
   isStaffAuthorizedForStudent,
   getAuthorizedStudentIdsForStaff,
@@ -27,6 +28,9 @@ function attachMentorInfo(st: any) {
     department: st.department,
     batch_id: st.batch_id,
     section_id: st.section_id,
+    allocation_batch_id: st.allocation_batch_id,
+    sub_batch: st.sub_batch,
+    current_year: st.current_year,
     leetcode_username: st.leetcode_username,
     created_at: st.created_at,
     updated_at: st.updated_at,
@@ -48,132 +52,147 @@ export async function getStudentsForUser(
     search?: string;
     allocationBatchId?: string;
     mentorId?: string;
+    currentYear?: string;
   }
 ) {
-  if (!process.env.DATABASE_URL) {
-    let list = [...inMemoryStore.students];
+  const cacheKey = `students_${user.userId}_${JSON.stringify(filters || {})}`;
+  return serverCache.wrap(cacheKey, 15000, async () => {
+    if (!process.env.DATABASE_URL) {
+      let list = [...inMemoryStore.students];
 
-    if (user.role === 'STAFF') {
-      const authIds = await getAuthorizedStudentIdsForStaff(user.userId);
-      list = list.filter((st) => authIds.includes(st.id));
+      if (user.role === 'STAFF') {
+        const authIds = await getAuthorizedStudentIdsForStaff(user.userId);
+        list = list.filter((st) => authIds.includes(st.id));
+      }
+
+      if (filters?.batchId) {
+        list = list.filter((st) => st.batch_id === filters.batchId);
+      }
+      if (filters?.sectionId) {
+        list = list.filter((st) => st.section_id === filters.sectionId);
+      }
+      if (filters?.department) {
+        list = list.filter((st) => st.department.toLowerCase().includes(filters.department!.toLowerCase()));
+      }
+      if (filters?.allocationBatchId) {
+        const val = filters.allocationBatchId;
+        list = list.filter((st) => st.allocation_batch_id === val || st.sub_batch === val);
+      }
+      if (filters?.currentYear) {
+        const yr = filters.currentYear.trim().toLowerCase();
+        list = list.filter((st) => (st.current_year || '').toLowerCase().includes(yr));
+      }
+      if (filters?.mentorId) {
+        const mentorAssignments = inMemoryStore.staffStudentAssignments
+          .filter((ssa) => ssa.staff_id === filters.mentorId)
+          .map((ssa) => ssa.student_id);
+        list = list.filter((st) => mentorAssignments.includes(st.id));
+      }
+      if (filters?.search) {
+        const s = filters.search.toLowerCase();
+        list = list.filter(
+          (st) =>
+            st.name.toLowerCase().includes(s) ||
+            st.register_number.toLowerCase().includes(s) ||
+            (st.leetcode_username && st.leetcode_username.toLowerCase().includes(s))
+        );
+      }
+
+      return list.map((st) => {
+        const b = inMemoryStore.batches.find((batch) => batch.id === st.batch_id);
+        const sec = inMemoryStore.sections.find((section) => section.id === st.section_id);
+        const base = {
+          ...st,
+          batch: { id: st.batch_id, batch_name: b?.batch_name || 'Batch', department: st.department },
+          section: { id: st.section_id, name: sec?.name || 'A' },
+        };
+        return attachMentorInfo(base);
+      });
     }
+
+    const andClauses: any[] = [];
 
     if (filters?.batchId) {
-      list = list.filter((st) => st.batch_id === filters.batchId);
+      andClauses.push({ batch_id: filters.batchId });
     }
+
     if (filters?.sectionId) {
-      list = list.filter((st) => st.section_id === filters.sectionId);
+      andClauses.push({ section_id: filters.sectionId });
     }
+
     if (filters?.department) {
-      list = list.filter((st) => st.department.toLowerCase().includes(filters.department!.toLowerCase()));
+      andClauses.push({ department: { contains: filters.department.trim(), mode: 'insensitive' } });
     }
-    if (filters?.allocationBatchId) {
-      const val = filters.allocationBatchId;
-      list = list.filter((st) => st.allocation_batch_id === val || st.sub_batch === val);
-    }
+
     if (filters?.mentorId) {
-      const mentorAssignments = inMemoryStore.staffStudentAssignments
-        .filter((ssa) => ssa.staff_id === filters.mentorId)
-        .map((ssa) => ssa.student_id);
-      list = list.filter((st) => mentorAssignments.includes(st.id));
+      andClauses.push({
+        staff_student_assignments: {
+          some: { staff_id: filters.mentorId },
+        },
+      });
     }
+
+    if (filters?.allocationBatchId) {
+      const val = filters.allocationBatchId.trim();
+      andClauses.push({
+        OR: [
+          { allocation_batch_id: val },
+          { allocation_batch: { name: { equals: val, mode: 'insensitive' } } },
+          { sub_batch: { equals: val, mode: 'insensitive' } },
+        ],
+      });
+    }
+
+    if (filters?.currentYear) {
+      andClauses.push({
+        current_year: { contains: filters.currentYear.trim(), mode: 'insensitive' },
+      });
+    }
+
     if (filters?.search) {
-      const s = filters.search.toLowerCase();
-      list = list.filter(
-        (st) =>
-          st.name.toLowerCase().includes(s) ||
-          st.register_number.toLowerCase().includes(s) ||
-          (st.leetcode_username && st.leetcode_username.toLowerCase().includes(s))
-      );
+      const search = filters.search.trim();
+      andClauses.push({
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { register_number: { contains: search, mode: 'insensitive' } },
+          { leetcode_username: { contains: search, mode: 'insensitive' } },
+        ],
+      });
     }
 
-    return list.map((st) => {
-      const b = inMemoryStore.batches.find((batch) => batch.id === st.batch_id);
-      const sec = inMemoryStore.sections.find((section) => section.id === st.section_id);
-      const base = {
-        ...st,
-        batch: { id: st.batch_id, batch_name: b?.batch_name || 'Batch', department: st.department },
-        section: { id: st.section_id, name: sec?.name || 'A' },
-      };
-      return attachMentorInfo(base);
-    });
-  }
+    // High-Performance Security Scoping for STAFF users:
+    // Evaluated in a single PostgreSQL query via native foreign key relation indexes
+    if (user.role === 'STAFF') {
+      andClauses.push({
+        OR: [
+          { staff_student_assignments: { some: { staff_id: user.userId } } },
+          { section: { staff_section_assignments: { some: { staff_id: user.userId, assignment_mode: 'ALL' } } } },
+          { allocation_batch: { staff_section_assignments: { some: { staff_id: user.userId } } } },
+          { batch: { staff_batch_assignments: { some: { staff_id: user.userId } } } },
+        ],
+      });
+    }
 
-  const andClauses: any[] = [];
+    const where: any = andClauses.length > 0 ? { AND: andClauses } : {};
 
-  if (filters?.batchId) {
-    andClauses.push({ batch_id: filters.batchId });
-  }
-
-  if (filters?.sectionId) {
-    andClauses.push({ section_id: filters.sectionId });
-  }
-
-  if (filters?.department) {
-    andClauses.push({ department: { contains: filters.department.trim(), mode: 'insensitive' } });
-  }
-
-  if (filters?.mentorId) {
-    andClauses.push({
-      staff_student_assignments: {
-        some: { staff_id: filters.mentorId },
-      },
-    });
-  }
-
-  if (filters?.allocationBatchId) {
-    const val = filters.allocationBatchId.trim();
-    andClauses.push({
-      OR: [
-        { allocation_batch_id: val },
-        { allocation_batch: { name: { equals: val, mode: 'insensitive' } } },
-        { sub_batch: { equals: val, mode: 'insensitive' } },
-      ],
-    });
-  }
-
-  if (filters?.search) {
-    const search = filters.search.trim();
-    andClauses.push({
-      OR: [
-        { name: { contains: search, mode: 'insensitive' } },
-        { register_number: { contains: search, mode: 'insensitive' } },
-        { leetcode_username: { contains: search, mode: 'insensitive' } },
-      ],
-    });
-  }
-
-  // High-Performance Security Scoping for STAFF users:
-  // Evaluated in a single PostgreSQL query via native foreign key relation indexes
-  if (user.role === 'STAFF') {
-    andClauses.push({
-      OR: [
-        { staff_student_assignments: { some: { staff_id: user.userId } } },
-        { section: { staff_section_assignments: { some: { staff_id: user.userId, assignment_mode: 'ALL' } } } },
-        { allocation_batch: { staff_section_assignments: { some: { staff_id: user.userId } } } },
-        { batch: { staff_batch_assignments: { some: { staff_id: user.userId } } } },
-      ],
-    });
-  }
-
-  const where: any = andClauses.length > 0 ? { AND: andClauses } : {};
-
-  const students = await prisma.student.findMany({
-    where,
-    include: {
-      batch: { select: { id: true, batch_name: true, department: true } },
-      section: { select: { id: true, name: true } },
-      allocation_batch: { select: { id: true, name: true } },
-      staff_student_assignments: {
-        include: {
-          staff: { select: { id: true, name: true, email: true } },
+    const students = await prisma.student.findMany({
+      where,
+      include: {
+        batch: { select: { id: true, batch_name: true, department: true } },
+        section: { select: { id: true, name: true } },
+        allocation_batch: { select: { id: true, name: true } },
+        staff_student_assignments: {
+          take: 1,
+          select: {
+            staff: { select: { id: true, name: true, email: true } },
+          },
         },
       },
-    },
-    orderBy: { register_number: 'asc' },
-  });
+      orderBy: { register_number: 'asc' },
+    });
 
-  return students.map(attachMentorInfo);
+    return students.map(attachMentorInfo);
+  });
 }
 
 export async function getStudentByIdForUser(
@@ -273,6 +292,10 @@ export async function createStudent(data: {
   mentor_id?: string;
 }) {
   const register_number = data.register_number.trim().toUpperCase();
+
+  serverCache.invalidate('students_');
+  serverCache.invalidate('stats_');
+  serverCache.invalidate('batch');
 
   if (!data.leetcode_username || !data.leetcode_username.trim()) {
     const err: any = new Error('LeetCode username is required');
@@ -401,6 +424,10 @@ export async function updateStudent(
     mentor_id?: string;
   }
 ) {
+  serverCache.invalidate('students_');
+  serverCache.invalidate('stats_');
+  serverCache.invalidate('batch');
+
   const updateData: any = {};
   if (data.register_number) {
     const cleanReg = data.register_number.trim().toUpperCase();
@@ -553,6 +580,10 @@ export async function updateStudent(
 }
 
 export async function deleteStudent(studentId: string) {
+  serverCache.invalidate('students_');
+  serverCache.invalidate('stats_');
+  serverCache.invalidate('batch');
+
   if (!process.env.DATABASE_URL) {
     inMemoryStore.students = inMemoryStore.students.filter((s) => s.id !== studentId);
     inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter((sa) => sa.student_id !== studentId);
@@ -566,6 +597,10 @@ export async function deleteStudent(studentId: string) {
 }
 
 export async function bulkDeleteStudents(studentIds: string[]) {
+  serverCache.invalidate('students_');
+  serverCache.invalidate('stats_');
+  serverCache.invalidate('batch');
+
   if (!process.env.DATABASE_URL) {
     inMemoryStore.students = inMemoryStore.students.filter((s) => !studentIds.includes(s.id));
     inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter((sa) => !studentIds.includes(sa.student_id));

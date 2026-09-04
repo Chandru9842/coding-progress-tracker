@@ -19,12 +19,13 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Client-side Memory Cache with TTL for 0ms Instant Page Loads
+// Client-side Memory Cache with TTL and In-Flight Request Deduplication
 interface CacheEntry<T> {
   data: T;
   timestamp: number;
 }
 const cacheStore: Record<string, CacheEntry<any>> = {};
+const inFlightRequests = new Map<string, Promise<any>>();
 const CACHE_TTL = 30000; // 30 seconds
 
 export function getCachedData<T>(key: string): T | null {
@@ -47,6 +48,28 @@ export function clearClientCache(prefix?: string): void {
       if (k.startsWith(prefix)) delete cacheStore[k];
     });
   }
+}
+
+export async function fetchWithDedupe<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
+  const cached = getCachedData<T>(key);
+  if (cached !== null) return cached;
+
+  const existing = inFlightRequests.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const promise = fetcher()
+    .then((data) => {
+      setCachedData(key, data);
+      return data;
+    })
+    .finally(() => {
+      inFlightRequests.delete(key);
+    });
+
+  inFlightRequests.set(key, promise);
+  return promise;
 }
 
 
@@ -166,6 +189,7 @@ function normalizeStaffUser(s: any): StaffUser {
 
   return {
     ...s,
+    role: s.role || 'STAFF',
     isActive: s.isActive !== undefined ? s.isActive : s.is_active,
     is_active: s.is_active !== undefined ? s.is_active : s.isActive,
     createdAt: s.createdAt || s.created_at,
@@ -247,8 +271,10 @@ export const authApi = {
 
 export const statsApi = {
   getStats: async (): Promise<any> => {
-    const res = await api.get('/stats/dashboard');
-    return res.data;
+    return fetchWithDedupe('stats_dashboard', async () => {
+      const res = await api.get('/stats/dashboard');
+      return res.data;
+    });
   },
 };
 
@@ -358,78 +384,109 @@ export const staffApi = {
 
 export const batchApi = {
   getBatches: async (): Promise<Batch[]> => {
-    const res = await api.get<{ batches: Batch[] }>('/batches');
-    return res.data.batches;
+    return fetchWithDedupe('batches_all', async () => {
+      const res = await api.get<{ batches: Batch[] }>('/batches');
+      return res.data.batches;
+    });
   },
 
   getAllBatches: async (): Promise<Batch[]> => {
-    const res = await api.get<{ batches: Batch[] }>('/batches');
-    return res.data.batches;
+    return fetchWithDedupe('batches_all', async () => {
+      const res = await api.get<{ batches: Batch[] }>('/batches');
+      return res.data.batches;
+    });
   },
 
   getBatchDetail: async (batchId: string): Promise<Batch> => {
-    const res = await api.get<{ batch: Batch }>(`/batches/${batchId}`);
-    return res.data.batch;
+    return fetchWithDedupe(`batch_${batchId}`, async () => {
+      const res = await api.get<{ batch: Batch }>(`/batches/${batchId}`);
+      return res.data.batch;
+    });
   },
 
   getBatchById: async (batchId: string): Promise<Batch> => {
-    const res = await api.get<{ batch: Batch }>(`/batches/${batchId}`);
-    return res.data.batch;
+    return fetchWithDedupe(`batch_${batchId}`, async () => {
+      const res = await api.get<{ batch: Batch }>(`/batches/${batchId}`);
+      return res.data.batch;
+    });
   },
 
   createBatch: async (data: { batch_name: string; start_year: number; end_year: number; department: string }): Promise<Batch> => {
+    clearClientCache('batch');
+    clearClientCache('stats_');
     const res = await api.post<{ batch: Batch }>('/batches', data);
     return res.data.batch;
   },
 
   updateBatch: async (batchId: string, data: Partial<Batch>): Promise<Batch> => {
+    clearClientCache('batch');
     const res = await api.patch<{ batch: Batch }>(`/batches/${batchId}`, data);
     return res.data.batch;
   },
 
   deleteBatch: async (batchId: string): Promise<void> => {
+    clearClientCache('batch');
+    clearClientCache('stats_');
+    clearClientCache('students_');
     await api.delete(`/batches/${batchId}`);
   },
 
   createSection: async (batchId: string, name: string): Promise<Section> => {
+    clearClientCache('batch');
     const res = await api.post<{ section: Section }>(`/batches/${batchId}/sections`, { name });
     return res.data.section;
   },
 
   updateSection: async (sectionId: string, name: string): Promise<Section> => {
+    clearClientCache('batch');
     const res = await api.patch<{ section: Section }>(`/sections/${sectionId}`, { name });
     return res.data.section;
   },
 
   deleteSection: async (sectionId: string): Promise<void> => {
+    clearClientCache('batch');
+    clearClientCache('students_');
     await api.delete(`/sections/${sectionId}`);
   },
 
   getBatchSections: async (batchId: string): Promise<Section[]> => {
-    const res = await api.get<{ sections: Section[] }>(`/batches/${batchId}/sections`);
-    return res.data.sections;
+    return fetchWithDedupe(`batch_sections_${batchId}`, async () => {
+      const res = await api.get<{ sections: Section[] }>(`/batches/${batchId}/sections`);
+      return res.data.sections;
+    });
   },
 
   getAllocationBatches: async (sectionId: string): Promise<AllocationBatch[]> => {
-    const res = await api.get<{ allocation_batches: AllocationBatch[] }>(`/sections/${sectionId}/allocation-batches`);
-    return res.data.allocation_batches;
+    return fetchWithDedupe(`alloc_batches_${sectionId}`, async () => {
+      const res = await api.get<{ allocation_batches: AllocationBatch[] }>(`/sections/${sectionId}/allocation-batches`);
+      return res.data.allocation_batches;
+    });
   },
 
   createAllocationBatch: async (sectionId: string, name: string): Promise<AllocationBatch> => {
+    clearClientCache('batch');
+    clearClientCache('alloc_');
     const res = await api.post<{ allocation_batch: AllocationBatch }>(`/sections/${sectionId}/allocation-batches`, { name });
     return res.data.allocation_batch;
   },
 
   updateAllocationBatch: async (sectionId: string, allocationBatchId: string, name: string): Promise<AllocationBatch> => {
+    clearClientCache('batch');
+    clearClientCache('alloc_');
     const res = await api.patch<{ allocation_batch: AllocationBatch }>(`/sections/${sectionId}/allocation-batches/${allocationBatchId}`, { name });
     return res.data.allocation_batch;
   },
 
   deleteAllocationBatch: async (sectionId: string, allocationBatchId: string): Promise<void> => {
+    clearClientCache('batch');
+    clearClientCache('alloc_');
     await api.delete(`/sections/${sectionId}/allocation-batches/${allocationBatchId}`);
   },
 
   assignStudentsToAllocationBatch: async (sectionId: string, allocationBatchId: string, studentIds: string[]): Promise<void> => {
+    clearClientCache('batch');
+    clearClientCache('alloc_');
+    clearClientCache('students_');
     await api.post(`/sections/${sectionId}/allocation-batches/${allocationBatchId}/students`, { student_ids: studentIds });
   },
 };
@@ -442,6 +499,7 @@ export const studentApi = {
     allocationBatchId?: string;
     subBatch?: string;
     mentorId?: string;
+    currentYear?: string;
     search?: string;
   }): Promise<Student[]> => {
     const key = `students_${JSON.stringify(params || {})}`;
@@ -505,6 +563,8 @@ export const studentApi = {
       allocation_batch_id?: string;
       sub_batch?: string;
       department?: string;
+      mentor_id?: string;
+      current_year?: string;
     };
   }): Promise<{
     message: string;

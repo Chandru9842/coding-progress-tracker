@@ -7,6 +7,7 @@ import {
   isStaffAuthorizedForSection,
 } from '../services/studentAuthorizationService.js';
 import { syncStudentLeetCode } from '../services/leetcodeService.js';
+import { checkAndTriggerLazyCatchUpSync } from '../services/cronService.js';
 
 export async function getStudents(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -15,7 +16,10 @@ export async function getStudents(req: AuthenticatedRequest, res: Response): Pro
       return;
     }
 
-    const { batchId, sectionId, department, search, allocationBatchId, subBatch, mentorId } = req.query;
+    // Lazy automatic snapshot catch-up check
+    checkAndTriggerLazyCatchUpSync().catch(() => {});
+
+    const { batchId, sectionId, department, search, allocationBatchId, subBatch, mentorId, currentYear, year } = req.query;
 
     const students = await studentService.getStudentsForUser(
       { userId: req.user.userId, role: req.user.role },
@@ -26,6 +30,7 @@ export async function getStudents(req: AuthenticatedRequest, res: Response): Pro
         search: search as string | undefined,
         allocationBatchId: (allocationBatchId || subBatch) as string | undefined,
         mentorId: mentorId as string | undefined,
+        currentYear: (currentYear || year) as string | undefined,
       }
     );
 

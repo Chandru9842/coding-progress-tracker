@@ -21,6 +21,8 @@ import {
   FileSpreadsheet,
   AlertCircle,
   Sparkles,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import {
   analyzeAndParseStudents,
@@ -65,6 +67,71 @@ function formatStudyYear(currentYear?: string | null, batchName?: string | null,
   return '-';
 }
 
+function findMatchingStaff(rawMentorName: string, staffList: StaffUser[]): StaffUser | null {
+  if (!rawMentorName || rawMentorName === 'Unassigned' || staffList.length === 0) return null;
+  const rawClean = rawMentorName.trim().toLowerCase();
+  const normInput = rawClean.replace(/^(dr|mr|mrs|ms|prof|er)\.?\s*/i, '').replace(/[^a-z0-9]/g, '');
+  const tokens = rawClean
+    .replace(/^(dr|mr|mrs|ms|prof|er)\.?\s*/i, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length > 0 && !['dr', 'mr', 'mrs', 'ms', 'prof', 'er'].includes(t));
+
+  // 1. Exact case-insensitive match
+  const direct = staffList.find((s) => s.name.trim().toLowerCase() === rawClean);
+  if (direct) return direct;
+
+  // 2. Normalized match without title & punctuation
+  const normMatch = staffList.find((s) => {
+    const sNorm = s.name.toLowerCase().replace(/^(dr|mr|mrs|ms|prof|er)\.?\s*/i, '').replace(/[^a-z0-9]/g, '');
+    return sNorm === normInput;
+  });
+  if (normMatch) return normMatch;
+
+  // 3. Substring match
+  if (normInput.length >= 4) {
+    const subMatch = staffList.find((s) => {
+      const sNorm = s.name.toLowerCase().replace(/^(dr|mr|mrs|ms|prof|er)\.?\s*/i, '').replace(/[^a-z0-9]/g, '');
+      return sNorm.length >= 4 && (sNorm.includes(normInput) || normInput.includes(sNorm));
+    });
+    if (subMatch) return subMatch;
+  }
+
+  // 4. Token-based matching (handles Dr. A. Muthuraj -> Muthuraj / A. Muthuraj)
+  let bestScore = 0;
+  let bestStaff: StaffUser | null = null;
+  for (const stf of staffList) {
+    const sTokens = stf.name
+      .toLowerCase()
+      .replace(/^(dr|mr|mrs|ms|prof|er)\.?\s*/i, '')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter((t) => t.length > 0 && !['dr', 'mr', 'mrs', 'ms', 'prof', 'er'].includes(t));
+
+    let score = 0;
+    for (const t of tokens) {
+      if (t.length >= 3 && sTokens.some((st) => st.includes(t) || t.includes(st))) {
+        score += 2;
+      } else if (t.length < 3 && sTokens.includes(t)) {
+        score += 1;
+      }
+    }
+    const emailPrefix = (stf.email || '').split('@')[0].toLowerCase();
+    for (const t of tokens) {
+      if (t.length >= 3 && emailPrefix.includes(t)) {
+        score += 2;
+      }
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestStaff = stf;
+    }
+  }
+
+  if (bestScore >= 2) return bestStaff;
+  return null;
+}
+
 export const StudentsPage: React.FC = () => {
   const { user } = useAuth();
   const isAdmin = user?.role === 'ADMIN';
@@ -82,11 +149,16 @@ export const StudentsPage: React.FC = () => {
   const [filterBatchId, setFilterBatchId] = useState<string>('');
   const [filterSectionId, setFilterSectionId] = useState<string>('');
   const [filterDept, setFilterDept] = useState<string>('');
+  const [filterYear, setFilterYear] = useState<string>('');
   const [filterAllocBatchId, setFilterAllocBatchId] = useState<string>('');
   const [filterMentorId, setFilterMentorId] = useState<string>('');
   const [filterAllocBatches, setFilterAllocBatches] = useState<any[]>([]);
   const [formAllocBatches, setFormAllocBatches] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  // Pagination State for Instant Responsiveness
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(25);
 
   // Selection & Bulk Action States
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
@@ -117,12 +189,18 @@ export const StudentsPage: React.FC = () => {
   const [importFileName, setImportFileName] = useState<string>('');
   const [importRows, setImportRows] = useState<ParsedImportRow[]>([]);
   const [detectedMentors, setDetectedMentors] = useState<string[]>([]);
+  const [detectedYears, setDetectedYears] = useState<string[]>([]);
+  const [detectedSections, setDetectedSections] = useState<string[]>([]);
   const [selectedMentorFilters, setSelectedMentorFilters] = useState<Set<string>>(new Set(['ALL']));
+  const [selectedYearFilter, setSelectedYearFilter] = useState<string>('ALL');
+  const [selectedSectionFilter, setSelectedSectionFilter] = useState<string>('ALL');
   const [importBatchId, setImportBatchId] = useState<string>('');
   const [importSectionId, setImportSectionId] = useState<string>('');
   const [importAllocBatchId, setImportAllocBatchId] = useState<string>('');
   const [importSubBatchCustom, setImportSubBatchCustom] = useState<string>('');
   const [importCurrentYear, setImportCurrentYear] = useState<string>('');
+  const [importMentorId, setImportMentorId] = useState<string>('');
+  const [mentorMappings, setMentorMappings] = useState<Record<string, string>>({});
   const [importAllocBatches, setImportAllocBatches] = useState<any[]>([]);
   const [importDuplicateCount, setImportDuplicateCount] = useState<number>(0);
   const [importSearch, setImportSearch] = useState<string>('');
@@ -155,6 +233,7 @@ export const StudentsPage: React.FC = () => {
         batchId: filterBatchId || undefined,
         sectionId: filterSectionId || undefined,
         department: filterDept || undefined,
+        currentYear: filterYear || undefined,
         allocationBatchId: filterAllocBatchId || undefined,
         mentorId: filterMentorId || undefined,
         search: debouncedSearch || undefined,
@@ -241,8 +320,9 @@ export const StudentsPage: React.FC = () => {
   };
 
   useEffect(() => {
+    setCurrentPage(1);
     fetchStudents();
-  }, [debouncedSearch, filterBatchId, filterSectionId, filterDept, filterAllocBatchId, filterMentorId]);
+  }, [debouncedSearch, filterBatchId, filterSectionId, filterDept, filterYear, filterAllocBatchId, filterMentorId]);
 
   useEffect(() => {
     if (filterSectionId) {
@@ -378,6 +458,8 @@ export const StudentsPage: React.FC = () => {
     setSelectedMentorFilters(new Set(['ALL']));
     setImportSearch('');
     setImportCurrentYear('');
+    setImportMentorId('');
+    setMentorMappings({});
     setImportDuplicateCount(0);
     setImportResult(null);
 
@@ -454,7 +536,13 @@ export const StudentsPage: React.FC = () => {
     setImportFileName('');
     setImportRows([]);
     setSelectedMentorFilters(new Set(['ALL']));
+    setSelectedYearFilter('ALL');
+    setSelectedSectionFilter('ALL');
+    setDetectedYears([]);
+    setDetectedSections([]);
     setImportCurrentYear('');
+    setImportMentorId('');
+    setMentorMappings({});
     setImportDuplicateCount(0);
     setImportResult(null);
   };
@@ -472,7 +560,27 @@ export const StudentsPage: React.FC = () => {
       const result = analyzeAndParseStudents(text);
       setImportRows(result.rows);
       setDetectedMentors(result.detectedMentors);
+      setDetectedYears(result.detectedYears || []);
+      setDetectedSections(result.detectedSections || []);
+      setSelectedYearFilter('ALL');
+      setSelectedSectionFilter('ALL');
       setImportDuplicateCount(result.duplicateCount);
+
+      // Auto-populate mentorMappings for each detected mentor from the sheet against staffList created by admin
+      const autoMappings: Record<string, string> = {};
+      result.detectedMentors.forEach((mName) => {
+        if (mName === 'Unassigned') {
+          autoMappings[mName] = 'NONE';
+          return;
+        }
+        const matched = findMatchingStaff(mName, staffList);
+        if (matched) {
+          autoMappings[mName] = matched.id;
+        } else {
+          autoMappings[mName] = 'AUTO';
+        }
+      });
+      setMentorMappings(autoMappings);
 
       // Auto-detect matching batch if not explicitly picked yet
       const sampleYear = result.rows.find((r) => r.academicYear)?.academicYear;
@@ -570,6 +678,22 @@ export const StudentsPage: React.FC = () => {
       if (!selectedMentorFilters.has('ALL') && !selectedMentorFilters.has(row.cleanMentor)) {
         return false;
       }
+      // Year filter (All / 1st Year / 2nd Year, etc.)
+      if (selectedYearFilter !== 'ALL') {
+        const rowYear = (row.currentYear || row.academicYear || '').toLowerCase();
+        const targetYear = selectedYearFilter.toLowerCase();
+        if (!rowYear.includes(targetYear) && !targetYear.includes(rowYear)) {
+          return false;
+        }
+      }
+      // Section filter (All / Section A / Section B, etc.)
+      if (selectedSectionFilter !== 'ALL') {
+        const rowSec = (row.section || '').toUpperCase().replace(/^SECTION\s*/i, '').trim();
+        const targetSec = selectedSectionFilter.toUpperCase().replace(/^SECTION\s*/i, '').trim();
+        if (rowSec && targetSec && rowSec !== targetSec) {
+          return false;
+        }
+      }
       // Text search
       if (importSearch.trim()) {
         const s = importSearch.toLowerCase();
@@ -577,7 +701,8 @@ export const StudentsPage: React.FC = () => {
         const matchesName = row.name.toLowerCase().includes(s);
         const matchesHandle = row.cleanLeetCode.toLowerCase().includes(s);
         const matchesMentor = row.cleanMentor.toLowerCase().includes(s);
-        if (!matchesReg && !matchesName && !matchesHandle && !matchesMentor) return false;
+        const matchesSec = (row.section || '').toLowerCase().includes(s);
+        if (!matchesReg && !matchesName && !matchesHandle && !matchesMentor && !matchesSec) return false;
       }
       return true;
     });
@@ -591,7 +716,7 @@ export const StudentsPage: React.FC = () => {
       return;
     }
 
-    if (!importBatchId || !importSectionId) {
+    if (!importBatchId || (!importSectionId && importSectionId !== 'ALL')) {
       alert('Please select a target Academic Year (Batch) and Section.');
       return;
     }
@@ -600,25 +725,58 @@ export const StudentsPage: React.FC = () => {
       setIsImporting(true);
       setImportResult(null);
 
+      const targetBatch = batches.find((b) => b.id === importBatchId);
+
       const payload = {
-        students: targetRowsToImport.map((r) => ({
-          register_number: r.cleanRegisterNumber,
-          name: r.name,
-          department: r.department || 'CSE',
-          batch_id: importBatchId,
-          section_id: importSectionId,
-          allocation_batch_id: importAllocBatchId || undefined,
-          sub_batch: importSubBatchCustom || undefined,
-          current_year: r.currentYear || importCurrentYear || undefined,
-          leetcode_username: r.cleanLeetCode,
-          mentor_name: r.cleanMentor !== 'Unassigned' ? r.cleanMentor : undefined,
-        })),
+        students: targetRowsToImport.map((r) => {
+          let rowMentorId: string | undefined = undefined;
+          if (importMentorId && importMentorId !== 'AUTO') {
+            rowMentorId = importMentorId;
+          } else if (r.mentorStaffId && r.mentorStaffId !== 'AUTO') {
+            rowMentorId = r.mentorStaffId;
+          } else if (mentorMappings[r.cleanMentor] && mentorMappings[r.cleanMentor] !== 'AUTO') {
+            rowMentorId = mentorMappings[r.cleanMentor];
+          }
+
+          // Section resolution
+          let resolvedSectionId = importSectionId;
+          if (importSectionId === 'ALL' || !importSectionId) {
+            if (r.section && targetBatch?.sections) {
+              const cleanSec = r.section.toUpperCase().replace(/^SECTION\s*/i, '').trim();
+              const matchedSec = targetBatch.sections.find(
+                (sec) => sec.name.toUpperCase().trim() === cleanSec || `SECTION ${sec.name}`.toUpperCase() === r.section?.toUpperCase().trim()
+              );
+              if (matchedSec) {
+                resolvedSectionId = matchedSec.id;
+              }
+            }
+            if (resolvedSectionId === 'ALL' && targetBatch?.sections && targetBatch.sections.length > 0) {
+              resolvedSectionId = targetBatch.sections[0].id;
+            }
+          }
+
+          return {
+            register_number: r.cleanRegisterNumber,
+            name: r.name,
+            department: r.department || 'CSE',
+            batch_id: importBatchId,
+            section_id: resolvedSectionId,
+            section_name: r.section || undefined,
+            allocation_batch_id: importAllocBatchId || undefined,
+            sub_batch: importSubBatchCustom || undefined,
+            current_year: r.currentYear || importCurrentYear || undefined,
+            leetcode_username: r.cleanLeetCode,
+            mentor_name: r.cleanMentor !== 'Unassigned' ? r.cleanMentor : undefined,
+            mentor_id: rowMentorId,
+          };
+        }),
         targetScope: {
           batch_id: importBatchId,
           section_id: importSectionId,
           allocation_batch_id: importAllocBatchId || undefined,
           sub_batch: importSubBatchCustom || undefined,
           current_year: importCurrentYear || undefined,
+          mentor_id: (importMentorId && importMentorId !== 'AUTO') ? importMentorId : undefined,
         },
       };
 
@@ -758,6 +916,19 @@ export const StudentsPage: React.FC = () => {
             {batches.map((b) => (
               <option key={b.id} value={b.id}>{b.batch_name}</option>
             ))}
+          </select>
+
+          <select
+            className="form-input"
+            value={filterYear}
+            onChange={(e) => setFilterYear(e.target.value)}
+            style={{ flex: '1 1 130px' }}
+          >
+            <option value="">Study Year (All)</option>
+            <option value="1st Year">1st Year</option>
+            <option value="2nd Year">2nd Year</option>
+            <option value="3rd Year">3rd Year</option>
+            <option value="4th Year">4th Year</option>
           </select>
 
           <select
@@ -902,158 +1073,296 @@ export const StudentsPage: React.FC = () => {
           </div>
         )}
 
-        {!loading && (
-          <div className="glass-panel table-responsive-container">
-            <table style={{ width: '100%', minWidth: '1050px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
+        {!loading && (() => {
+          const totalStudents = students.length;
+          const totalPages = Math.max(1, Math.ceil(totalStudents / pageSize));
+          const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+          const startIndex = (safeCurrentPage - 1) * pageSize;
+          const endIndex = Math.min(startIndex + pageSize, totalStudents);
+          const paginatedStudents = students.slice(startIndex, endIndex);
+          const isAllSelected = totalStudents > 0 && selectedStudentIds.size === totalStudents;
 
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
-                  {canManage && (
-                    <th style={{ padding: '1rem', width: '40px', textAlign: 'center' }}>
-                      <input
-                        type="checkbox"
-                        checked={students.length > 0 && selectedStudentIds.size === students.length}
-                        onChange={handleToggleSelectAll}
-                        style={{ cursor: 'pointer' }}
-                        title="Select All Students"
-                      />
-                    </th>
-                  )}
-                  <th style={{ padding: '1rem', width: '60px', textAlign: 'center', whiteSpace: 'nowrap' }}>Rank</th>
-                  <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Register Number</th>
-                  <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Student Name</th>
-                  <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Year</th>
-                  <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Department</th>
-                  <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Batch</th>
-                  <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Section</th>
-                  <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Allocation Batch</th>
-                  <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Mentor (Staff)</th>
-                  <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>LeetCode Handle</th>
-                  {canManage && <th style={{ padding: '1rem', textAlign: 'right', whiteSpace: 'nowrap' }}>Actions</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {students.length === 0 ? (
-                  <tr>
-                    <td colSpan={canManage ? 12 : 10} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                      {search || filterBatchId ? 'No students match your filter criteria.' : 'No students yet.'}
-                    </td>
-                  </tr>
-                ) : (
-                  students.map((student, index) => {
-                    const isSelected = selectedStudentIds.has(student.id);
-                    return (
-                      <tr
-                        key={student.id}
-                        onClick={() => navigate(`/students/${student.id}`)}
+          return (
+            <>
+              <div className="glass-panel table-responsive-container">
+                <table style={{ width: '100%', minWidth: '1050px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+                      {canManage && (
+                        <th style={{ padding: '1rem', width: '40px', textAlign: 'center' }}>
+                          <input
+                            type="checkbox"
+                            checked={isAllSelected}
+                            onChange={handleToggleSelectAll}
+                            style={{ cursor: 'pointer' }}
+                            title="Select All Students"
+                          />
+                        </th>
+                      )}
+                      <th style={{ padding: '1rem', width: '60px', textAlign: 'center', whiteSpace: 'nowrap' }}>Rank</th>
+                      <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Register Number</th>
+                      <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Student Name</th>
+                      <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Year</th>
+                      <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Department</th>
+                      <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Batch</th>
+                      <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Section</th>
+                      <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Allocation Batch</th>
+                      <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Mentor (Staff)</th>
+                      <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>LeetCode Handle</th>
+                      {canManage && <th style={{ padding: '1rem', textAlign: 'right', whiteSpace: 'nowrap' }}>Actions</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {totalStudents === 0 ? (
+                      <tr>
+                        <td colSpan={canManage ? 12 : 10} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                          {search || filterBatchId ? 'No students match your filter criteria.' : 'No students yet.'}
+                        </td>
+                      </tr>
+                    ) : (
+                      paginatedStudents.map((student, index) => {
+                        const globalIndex = startIndex + index;
+                        const isSelected = selectedStudentIds.has(student.id);
+                        return (
+                          <tr
+                            key={student.id}
+                            onClick={() => navigate(`/students/${student.id}`)}
+                            style={{
+                              borderBottom: '1px solid var(--border-subtle)',
+                              cursor: 'pointer',
+                              backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.08)' : 'transparent',
+                              transition: 'var(--transition-fast)',
+                            }}
+                          >
+                            {canManage && (
+                              <td style={{ padding: '1rem', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={(e) => handleToggleSelectStudent(student.id, e as any)}
+                                  style={{ cursor: 'pointer' }}
+                                />
+                              </td>
+                            )}
+                            <td style={{ padding: '1rem', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                              <span style={{
+                                display: 'inline-block',
+                                minWidth: '26px',
+                                padding: '0.15rem 0.45rem',
+                                borderRadius: '4px',
+                                backgroundColor: globalIndex < 3 ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.04)',
+                                color: globalIndex < 3 ? 'var(--primary)' : 'var(--text-secondary)',
+                                fontSize: '0.82rem',
+                                fontWeight: 700,
+                              }}>
+                                {globalIndex + 1}
+                              </span>
+                            </td>
+                            <td style={{ padding: '1rem', fontWeight: 700, color: 'var(--primary)', whiteSpace: 'nowrap' }}>
+                              {student.register_number}
+                            </td>
+                            <td style={{ padding: '1rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
+                              {student.name}
+                            </td>
+                            <td style={{ padding: '1rem', whiteSpace: 'nowrap' }}>
+                              <span style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                padding: '0.2rem 0.55rem',
+                                borderRadius: '4px',
+                                backgroundColor: 'rgba(99, 102, 241, 0.12)',
+                                color: '#818cf8',
+                                fontSize: '0.78rem',
+                                fontWeight: 600,
+                              }}>
+                                {formatStudyYear(student.current_year, student.batch?.batch_name, student.batch?.start_year)}
+                              </span>
+                            </td>
+                            <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                              {student.department}
+                            </td>
+                            <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                              {student.batch?.batch_name || 'N/A'}
+                            </td>
+                            <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                              Section {student.section?.name || 'N/A'}
+                            </td>
+                            <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: 'rgba(255, 255, 255, 0.06)', padding: '0.2rem 0.55rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600 }}>
+                                {student.allocation_batch?.name || student.sub_batch || '-'}
+                              </span>
+                            </td>
+                            <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                              {student.mentor?.name ? (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', backgroundColor: 'rgba(99, 102, 241, 0.12)', color: '#818cf8', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600 }}>
+                                  <UserCheck size={13} />
+                                  <span>{student.mentor.name}</span>
+                                </span>
+                              ) : (
+                                <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Unassigned</span>
+                              )}
+                            </td>
+                            <td style={{ padding: '1rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                              {student.leetcode_username ? `@${student.leetcode_username}` : 'Not linked'}
+                            </td>
+                            {canManage && (
+                              <td style={{ padding: '1rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                <div style={{ display: 'inline-flex', gap: '0.5rem' }}>
+                                  <button
+                                    onClick={(e) => handleOpenEditModal(student, e)}
+                                    className="touch-target"
+                                    style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '0.4rem' }}
+                                    title="Edit Student"
+                                  >
+                                    <Edit2 size={16} />
+                                  </button>
+                                  <button
+                                    onClick={(e) => handleOpenDeleteStudent(student, e)}
+                                    className="touch-target"
+                                    style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', padding: '0.4rem' }}
+                                    title="Delete Student"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                </div>
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Enhanced Pagination Controls Bar */}
+              {totalStudents > 0 && (
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: '1rem',
+                  padding: '1rem 1.25rem',
+                  backgroundColor: 'rgba(15, 23, 42, 0.65)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: '0.875rem',
+                  color: 'var(--text-secondary)',
+                  marginTop: '0.75rem',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <span>
+                      Showing <strong style={{ color: 'var(--text-primary)' }}>{startIndex + 1}</strong> to{' '}
+                      <strong style={{ color: 'var(--text-primary)' }}>{endIndex}</strong> of{' '}
+                      <strong style={{ color: 'var(--primary)' }}>{totalStudents}</strong> students
+                    </span>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginLeft: '0.5rem' }}>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Rows:</span>
+                      <select
+                        className="form-input"
+                        value={pageSize}
+                        onChange={(e) => {
+                          setPageSize(Number(e.target.value));
+                          setCurrentPage(1);
+                        }}
                         style={{
-                          borderBottom: '1px solid var(--border-subtle)',
+                          padding: '0.2rem 0.5rem',
+                          fontSize: '0.8rem',
+                          borderRadius: '4px',
+                          backgroundColor: 'rgba(30, 41, 59, 0.8)',
+                          borderColor: 'var(--border-subtle)',
+                          color: 'var(--text-primary)',
                           cursor: 'pointer',
-                          backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.08)' : 'transparent',
-                          transition: 'var(--transition-fast)',
+                          width: 'auto',
                         }}
                       >
-                        {canManage && (
-                          <td style={{ padding: '1rem', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={(e) => handleToggleSelectStudent(student.id, e as any)}
-                              style={{ cursor: 'pointer' }}
-                            />
-                          </td>
-                        )}
-                        <td style={{ padding: '1rem', textAlign: 'center', whiteSpace: 'nowrap' }}>
-                          <span style={{
-                            display: 'inline-block',
-                            minWidth: '26px',
-                            padding: '0.15rem 0.45rem',
-                            borderRadius: '4px',
-                            backgroundColor: index < 3 ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.04)',
-                            color: index < 3 ? 'var(--primary)' : 'var(--text-secondary)',
-                            fontSize: '0.82rem',
-                            fontWeight: 700,
-                          }}>
-                            {index + 1}
-                          </span>
-                        </td>
-                        <td style={{ padding: '1rem', fontWeight: 700, color: 'var(--primary)', whiteSpace: 'nowrap' }}>
-                          {student.register_number}
-                        </td>
-                        <td style={{ padding: '1rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
-                          {student.name}
-                        </td>
-                        <td style={{ padding: '1rem', whiteSpace: 'nowrap' }}>
-                          <span style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            padding: '0.2rem 0.55rem',
-                            borderRadius: '4px',
-                            backgroundColor: 'rgba(99, 102, 241, 0.12)',
-                            color: '#818cf8',
-                            fontSize: '0.78rem',
-                            fontWeight: 600,
-                          }}>
-                            {formatStudyYear(student.current_year, student.batch?.batch_name, student.batch?.start_year)}
-                          </span>
-                        </td>
-                        <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                          {student.department}
-                        </td>
-                        <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                          {student.batch?.batch_name || 'N/A'}
-                        </td>
-                        <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                          Section {student.section?.name || 'N/A'}
-                        </td>
-                        <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', backgroundColor: 'rgba(255, 255, 255, 0.06)', padding: '0.2rem 0.55rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600 }}>
-                            {student.allocation_batch?.name || student.sub_batch || '-'}
-                          </span>
-                        </td>
-                        <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                          {student.mentor?.name ? (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', backgroundColor: 'rgba(99, 102, 241, 0.12)', color: '#818cf8', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600 }}>
-                              <UserCheck size={13} />
-                              <span>{student.mentor.name}</span>
-                            </span>
-                          ) : (
-                            <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Unassigned</span>
-                          )}
-                        </td>
-                        <td style={{ padding: '1rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                          {student.leetcode_username ? `@${student.leetcode_username}` : 'Not linked'}
-                        </td>
-                        {canManage && (
-                          <td style={{ padding: '1rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                            <div style={{ display: 'inline-flex', gap: '0.5rem' }}>
+                        <option value={10}>10</option>
+                        <option value={25}>25</option>
+                        <option value={50}>50</option>
+                        <option value={100}>100</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {totalPages > 1 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                      <button
+                        type="button"
+                        className="btn-secondary touch-target"
+                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                        disabled={safeCurrentPage === 1}
+                        style={{
+                          padding: '0.35rem 0.65rem',
+                          fontSize: '0.825rem',
+                          opacity: safeCurrentPage === 1 ? 0.45 : 1,
+                          cursor: safeCurrentPage === 1 ? 'not-allowed' : 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.25rem',
+                        }}
+                      >
+                        <ChevronLeft size={16} />
+                        <span>Previous</span>
+                      </button>
+
+                      {/* Google-style Page Number navigation */}
+                      {Array.from({ length: totalPages }, (_, i) => i + 1)
+                        .filter((p) => p === 1 || p === totalPages || Math.abs(p - safeCurrentPage) <= 2)
+                        .map((p, idx, arr) => {
+                          const prevP = arr[idx - 1];
+                          const hasEllipsis = prevP && p - prevP > 1;
+                          return (
+                            <React.Fragment key={p}>
+                              {hasEllipsis && <span style={{ padding: '0 0.25rem', color: 'var(--text-muted)' }}>...</span>}
                               <button
-                                onClick={(e) => handleOpenEditModal(student, e)}
-                                className="touch-target"
-                                style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '0.4rem' }}
-                                title="Edit Student"
+                                type="button"
+                                onClick={() => setCurrentPage(p)}
+                                style={{
+                                  minWidth: '32px',
+                                  height: '32px',
+                                  padding: '0 0.5rem',
+                                  borderRadius: '4px',
+                                  border: p === safeCurrentPage ? '1px solid var(--primary)' : '1px solid var(--border-subtle)',
+                                  backgroundColor: p === safeCurrentPage ? 'var(--primary)' : 'rgba(30, 41, 59, 0.6)',
+                                  color: p === safeCurrentPage ? '#ffffff' : 'var(--text-secondary)',
+                                  fontWeight: p === safeCurrentPage ? 700 : 500,
+                                  fontSize: '0.85rem',
+                                  cursor: 'pointer',
+                                }}
                               >
-                                <Edit2 size={16} />
+                                {p}
                               </button>
-                              <button
-                                onClick={(e) => handleOpenDeleteStudent(student, e)}
-                                className="touch-target"
-                                style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', padding: '0.4rem' }}
-                                title="Delete Student"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
-                          </td>
-                        )}
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
+                            </React.Fragment>
+                          );
+                        })}
+
+                      <button
+                        type="button"
+                        className="btn-secondary touch-target"
+                        onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                        disabled={safeCurrentPage === totalPages}
+                        style={{
+                          padding: '0.35rem 0.65rem',
+                          fontSize: '0.825rem',
+                          opacity: safeCurrentPage === totalPages ? 0.45 : 1,
+                          cursor: safeCurrentPage === totalPages ? 'not-allowed' : 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.25rem',
+                        }}
+                      >
+                        <span>Next</span>
+                        <ChevronRight size={16} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          );
+        })()}
 
         {/* SINGLE DELETE STUDENT CONFIRMATION MODAL */}
         {showDeleteModal && studentToDelete && (
@@ -1455,6 +1764,7 @@ export const StudentsPage: React.FC = () => {
                     style={{ fontSize: '0.85rem' }}
                   >
                     <option value="">Select Section</option>
+                    <option value="ALL">✨ All Sections (Preserve from CSV / Batch)</option>
                     {batches
                       .find((b) => b.id === importBatchId)
                       ?.sections?.map((sec) => (
@@ -1514,6 +1824,29 @@ export const StudentsPage: React.FC = () => {
                       style={{ fontSize: '0.85rem' }}
                     />
                   )}
+                </div>
+
+                <div>
+                  <label className="form-label" style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.35rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <UserCheck size={13} style={{ color: '#818cf8' }} />
+                    <span>Mentor / Staff (Created by Admin)</span>
+                  </label>
+                  <select
+                    className="form-input"
+                    value={importMentorId}
+                    onChange={(e) => setImportMentorId(e.target.value)}
+                    style={{ fontSize: '0.85rem' }}
+                  >
+                    <option value="">✨ Auto-Match from CSV Mentors (Default)</option>
+                    <option value="NONE">❌ Unassigned / No Mentor</option>
+                    <optgroup label="Assign Specific Staff (Created by Admin)">
+                      {staffList.map((stf) => (
+                        <option key={stf.id} value={stf.id}>
+                          👤 {stf.name} ({(stf.role || 'staff').toLowerCase()})
+                        </option>
+                      ))}
+                    </optgroup>
+                  </select>
                 </div>
               </div>
 
@@ -1643,77 +1976,279 @@ export const StudentsPage: React.FC = () => {
                     )}
                   </div>
 
-                  {/* Filter Toolbar */}
+                  {/* Mentor to Staff Assignment Mapping */}
+                  {detectedMentors.filter((m) => m !== 'Unassigned').length > 0 && (
+                    <div style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '0.5rem',
+                      padding: '0.85rem 1rem',
+                      borderRadius: '8px',
+                      backgroundColor: 'rgba(30, 41, 59, 0.75)',
+                      border: '1px solid rgba(99, 102, 241, 0.3)',
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                          <UserCheck size={16} style={{ color: '#818cf8' }} />
+                          <span>Map CSV Sheet Mentors to Admin-Created Staff:</span>
+                        </div>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                          Automatically matches detected sheet mentors or allows manual staff override
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.65rem' }}>
+                        {detectedMentors.filter((m) => m !== 'Unassigned').map((mentorName) => {
+                          const studentCount = importRows.filter((r) => r.cleanMentor === mentorName).length;
+                          const currentMappedVal = mentorMappings[mentorName] || 'AUTO';
+                          const mappedStaff = (currentMappedVal !== 'AUTO' && currentMappedVal !== 'NONE')
+                            ? staffList.find((s) => s.id === currentMappedVal)
+                            : null;
+
+                          return (
+                            <div
+                              key={mentorName}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.45rem',
+                                padding: '0.35rem 0.65rem',
+                                borderRadius: '6px',
+                                backgroundColor: mappedStaff ? 'rgba(99, 102, 241, 0.14)' : 'rgba(15, 23, 42, 0.7)',
+                                border: mappedStaff ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid var(--border-subtle)',
+                                fontSize: '0.78rem',
+                              }}
+                            >
+                              <div style={{ fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
+                                👤 {mentorName} <span style={{ color: 'var(--text-muted)', fontWeight: 'normal' }}>({studentCount})</span> &rarr;
+                              </div>
+                              <select
+                                className="form-input"
+                                value={currentMappedVal}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setMentorMappings((prev) => ({ ...prev, [mentorName]: val }));
+                                }}
+                                style={{
+                                  fontSize: '0.75rem',
+                                  padding: '0.2rem 0.4rem',
+                                  height: '28px',
+                                  minWidth: '150px',
+                                  borderColor: mappedStaff ? '#818cf8' : undefined,
+                                }}
+                              >
+                                <option value="AUTO">🔍 Auto-Match Staff</option>
+                                <option value="NONE">❌ Keep Unassigned</option>
+                                <optgroup label="Staff Created by Admin">
+                                  {staffList.map((stf) => (
+                                    <option key={stf.id} value={stf.id}>
+                                      👤 {stf.name} ({(stf.role || 'staff').toLowerCase()})
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              </select>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Filter Toolbar (Mentor, Year & Section Filter with All Options) */}
                   <div style={{
                     display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    flexWrap: 'wrap',
-                    gap: '0.75rem',
+                    flexDirection: 'column',
+                    gap: '0.65rem',
                     padding: '0.75rem',
                     backgroundColor: 'rgba(15, 23, 42, 0.5)',
                     borderRadius: '8px',
                     border: '1px solid var(--border-subtle)',
                   }}>
-                    {/* Mentor Filter Pills */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                        Mentor Filter:
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleToggleMentorFilter('ALL')}
-                        style={{
-                          padding: '0.25rem 0.6rem',
-                          borderRadius: '16px',
-                          fontSize: '0.75rem',
-                          fontWeight: 600,
-                          backgroundColor: selectedMentorFilters.has('ALL') ? 'var(--primary)' : 'rgba(255, 255, 255, 0.06)',
-                          color: selectedMentorFilters.has('ALL') ? '#ffffff' : 'var(--text-secondary)',
-                          border: selectedMentorFilters.has('ALL') ? '1px solid var(--primary)' : '1px solid var(--border-subtle)',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {selectedMentorFilters.has('ALL') ? '✓ ' : ''}All Students ({importRows.length})
-                      </button>
-                      {detectedMentors.map((mentor) => {
-                        const count = importRows.filter((r) => r.cleanMentor === mentor).length;
-                        const isSelected = selectedMentorFilters.has(mentor) && !selectedMentorFilters.has('ALL');
-                        const isUnassigned = mentor === 'Unassigned';
-                        return (
-                          <button
-                            key={mentor}
-                            type="button"
-                            onClick={(e) => handleToggleMentorFilter(mentor, e)}
-                            style={{
-                              padding: '0.25rem 0.6rem',
-                              borderRadius: '16px',
-                              fontSize: '0.75rem',
-                              fontWeight: 600,
-                              backgroundColor: isSelected ? 'var(--primary)' : 'rgba(255, 255, 255, 0.06)',
-                              color: isSelected ? '#ffffff' : isUnassigned ? '#f87171' : 'var(--text-secondary)',
-                              border: isSelected ? '1px solid var(--primary)' : isUnassigned ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid var(--border-subtle)',
-                              cursor: 'pointer',
-                            }}
-                            title={isUnassigned ? 'Students without a mentor in the file' : `Click to filter ${mentor} (Shift+Click to multi-select)`}
-                          >
-                            {isSelected ? '✓ ' : ''}{isUnassigned ? '⚠️ Unassigned' : `👤 ${mentor}`} ({count})
-                          </button>
-                        );
-                      })}
+                    {/* Top Row: Mentor Filter Pills & Search */}
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: '0.75rem',
+                    }}>
+                      {/* Mentor Filter Pills */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                          Mentor:
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleMentorFilter('ALL')}
+                          style={{
+                            padding: '0.2rem 0.55rem',
+                            borderRadius: '16px',
+                            fontSize: '0.73rem',
+                            fontWeight: 600,
+                            backgroundColor: selectedMentorFilters.has('ALL') ? 'var(--primary)' : 'rgba(255, 255, 255, 0.06)',
+                            color: selectedMentorFilters.has('ALL') ? '#ffffff' : 'var(--text-secondary)',
+                            border: selectedMentorFilters.has('ALL') ? '1px solid var(--primary)' : '1px solid var(--border-subtle)',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {selectedMentorFilters.has('ALL') ? '✓ ' : ''}All Mentors ({importRows.length})
+                        </button>
+                        {detectedMentors.map((mentor) => {
+                          const count = importRows.filter((r) => r.cleanMentor === mentor).length;
+                          const isSelected = selectedMentorFilters.has(mentor) && !selectedMentorFilters.has('ALL');
+                          const isUnassigned = mentor === 'Unassigned';
+                          return (
+                            <button
+                              key={mentor}
+                              type="button"
+                              onClick={(e) => handleToggleMentorFilter(mentor, e)}
+                              style={{
+                                padding: '0.2rem 0.55rem',
+                                borderRadius: '16px',
+                                fontSize: '0.73rem',
+                                fontWeight: 600,
+                                backgroundColor: isSelected ? 'var(--primary)' : 'rgba(255, 255, 255, 0.06)',
+                                color: isSelected ? '#ffffff' : isUnassigned ? '#f87171' : 'var(--text-secondary)',
+                                border: isSelected ? '1px solid var(--primary)' : isUnassigned ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid var(--border-subtle)',
+                                cursor: 'pointer',
+                              }}
+                              title={isUnassigned ? 'Students without a mentor in the file' : `Click to filter ${mentor} (Shift+Click to multi-select)`}
+                            >
+                              {isSelected ? '✓ ' : ''}{isUnassigned ? '⚠️ Unassigned' : `👤 ${mentor}`} ({count})
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Search inside preview */}
+                      <div style={{ position: 'relative', width: '220px' }}>
+                        <Search size={14} style={{ position: 'absolute', left: '0.65rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                        <input
+                          type="text"
+                          placeholder="Search parsed students..."
+                          value={importSearch}
+                          onChange={(e) => setImportSearch(e.target.value)}
+                          className="form-input"
+                          style={{ paddingLeft: '2rem', paddingRight: '0.5rem', paddingTop: '0.35rem', paddingBottom: '0.35rem', fontSize: '0.8rem' }}
+                        />
+                      </div>
                     </div>
 
-                    {/* Search inside preview */}
-                    <div style={{ position: 'relative', width: '220px' }}>
-                      <Search size={14} style={{ position: 'absolute', left: '0.65rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                      <input
-                        type="text"
-                        placeholder="Search parsed students..."
-                        value={importSearch}
-                        onChange={(e) => setImportSearch(e.target.value)}
-                        className="form-input"
-                        style={{ paddingLeft: '2rem', paddingRight: '0.5rem', paddingTop: '0.35rem', paddingBottom: '0.35rem', fontSize: '0.8rem' }}
-                      />
+                    {/* Second Row: Study Year & Section Filters */}
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: '1rem',
+                      paddingTop: '0.4rem',
+                      borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+                    }}>
+                      {/* Year Filter Pills */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                          Year:
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedYearFilter('ALL')}
+                          style={{
+                            padding: '0.2rem 0.55rem',
+                            borderRadius: '16px',
+                            fontSize: '0.73rem',
+                            fontWeight: 600,
+                            backgroundColor: selectedYearFilter === 'ALL' ? 'var(--primary)' : 'rgba(255, 255, 255, 0.06)',
+                            color: selectedYearFilter === 'ALL' ? '#ffffff' : 'var(--text-secondary)',
+                            border: selectedYearFilter === 'ALL' ? '1px solid var(--primary)' : '1px solid var(--border-subtle)',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {selectedYearFilter === 'ALL' ? '✓ ' : ''}All Years
+                        </button>
+                        {Array.from(new Set([
+                          ...detectedYears,
+                          ...importRows.map((r) => r.currentYear).filter(Boolean) as string[],
+                          '1st Year', '2nd Year', '3rd Year', '4th Year',
+                        ]))
+                          .filter((yr) => importRows.some((r) => (r.currentYear || r.academicYear || '').toLowerCase().includes(yr.toLowerCase())))
+                          .map((yr) => {
+                            const count = importRows.filter((r) => (r.currentYear || r.academicYear || '').toLowerCase().includes(yr.toLowerCase())).length;
+                            const isSel = selectedYearFilter.toLowerCase() === yr.toLowerCase();
+                            return (
+                              <button
+                                key={yr}
+                                type="button"
+                                onClick={() => setSelectedYearFilter(isSel ? 'ALL' : yr)}
+                                style={{
+                                  padding: '0.2rem 0.55rem',
+                                  borderRadius: '16px',
+                                  fontSize: '0.73rem',
+                                  fontWeight: 600,
+                                  backgroundColor: isSel ? 'var(--primary)' : 'rgba(255, 255, 255, 0.06)',
+                                  color: isSel ? '#ffffff' : 'var(--text-secondary)',
+                                  border: isSel ? '1px solid var(--primary)' : '1px solid var(--border-subtle)',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                {isSel ? '✓ ' : ''}{yr} ({count})
+                              </button>
+                            );
+                          })}
+                      </div>
+
+                      {/* Section Filter Pills */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                          Section:
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedSectionFilter('ALL')}
+                          style={{
+                            padding: '0.2rem 0.55rem',
+                            borderRadius: '16px',
+                            fontSize: '0.73rem',
+                            fontWeight: 600,
+                            backgroundColor: selectedSectionFilter === 'ALL' ? 'var(--primary)' : 'rgba(255, 255, 255, 0.06)',
+                            color: selectedSectionFilter === 'ALL' ? '#ffffff' : 'var(--text-secondary)',
+                            border: selectedSectionFilter === 'ALL' ? '1px solid var(--primary)' : '1px solid var(--border-subtle)',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {selectedSectionFilter === 'ALL' ? '✓ ' : ''}All Sections
+                        </button>
+                        {Array.from(new Set([
+                          ...detectedSections,
+                          ...importRows.map((r) => r.section).filter(Boolean) as string[],
+                          ...(batches.find((b) => b.id === importBatchId)?.sections?.map((s) => s.name) || []),
+                        ]))
+                          .filter(Boolean)
+                          .sort()
+                          .filter((sec) => importRows.some((r) => (r.section || '').toUpperCase().replace(/^SECTION\s*/i, '').trim() === sec.toUpperCase().replace(/^SECTION\s*/i, '').trim()))
+                          .map((sec) => {
+                            const cleanSec = sec.toUpperCase().replace(/^SECTION\s*/i, '').trim();
+                            const count = importRows.filter((r) => (r.section || '').toUpperCase().replace(/^SECTION\s*/i, '').trim() === cleanSec).length;
+                            const isSel = selectedSectionFilter.toUpperCase().replace(/^SECTION\s*/i, '').trim() === cleanSec;
+                            return (
+                              <button
+                                key={sec}
+                                type="button"
+                                onClick={() => setSelectedSectionFilter(isSel ? 'ALL' : cleanSec)}
+                                style={{
+                                  padding: '0.2rem 0.55rem',
+                                  borderRadius: '16px',
+                                  fontSize: '0.73rem',
+                                  fontWeight: 600,
+                                  backgroundColor: isSel ? 'var(--primary)' : 'rgba(255, 255, 255, 0.06)',
+                                  color: isSel ? '#ffffff' : 'var(--text-secondary)',
+                                  border: isSel ? '1px solid var(--primary)' : '1px solid var(--border-subtle)',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                {isSel ? '✓ ' : ''}Sec {cleanSec} ({count})
+                              </button>
+                            );
+                          })}
+                      </div>
                     </div>
                   </div>
 
@@ -1769,9 +2304,11 @@ export const StudentsPage: React.FC = () => {
                           <th style={{ padding: '0.6rem 0.75rem' }}>Register No</th>
                           <th style={{ padding: '0.6rem 0.75rem' }}>Student Name</th>
                           <th style={{ padding: '0.6rem 0.75rem' }}>Year</th>
+                          <th style={{ padding: '0.6rem 0.75rem' }}>Sec</th>
                           <th style={{ padding: '0.6rem 0.75rem' }}>Dept</th>
                           <th style={{ padding: '0.6rem 0.75rem' }}>LeetCode Handle</th>
                           <th style={{ padding: '0.6rem 0.75rem' }}>Detected Mentor</th>
+                          <th style={{ padding: '0.6rem 0.75rem' }}>Assigned Staff (Mentor)</th>
                           <th style={{ padding: '0.6rem 0.75rem', textAlign: 'right' }}>Status</th>
                         </tr>
                       </thead>
@@ -1816,6 +2353,15 @@ export const StudentsPage: React.FC = () => {
                                   : (row.academicYear || batches.find((b) => b.id === importBatchId)?.batch_name || 'Year 1')}
                               </span>
                             </td>
+                            <td style={{ padding: '0.55rem 0.75rem', whiteSpace: 'nowrap' }}>
+                              <span style={{ padding: '0.15rem 0.4rem', borderRadius: '4px', backgroundColor: 'rgba(255, 255, 255, 0.06)', fontSize: '0.72rem' }}>
+                                {row.section
+                                  ? (row.section.toUpperCase().startsWith('SEC') ? row.section : `Sec ${row.section}`)
+                                  : (batches.find((b) => b.id === importBatchId)?.sections?.find((s) => s.id === importSectionId)?.name
+                                    ? `Sec ${batches.find((b) => b.id === importBatchId)?.sections?.find((s) => s.id === importSectionId)?.name}`
+                                    : '-')}
+                              </span>
+                            </td>
                             <td style={{ padding: '0.55rem 0.75rem', color: 'var(--text-secondary)' }}>
                               <span style={{ padding: '0.15rem 0.4rem', borderRadius: '4px', backgroundColor: 'rgba(255, 255, 255, 0.06)', fontSize: '0.72rem' }}>
                                 {row.department}
@@ -1826,6 +2372,64 @@ export const StudentsPage: React.FC = () => {
                             </td>
                             <td style={{ padding: '0.55rem 0.75rem', color: 'var(--text-secondary)' }}>
                               {row.cleanMentor}
+                            </td>
+                            <td style={{ padding: '0.55rem 0.75rem', whiteSpace: 'nowrap' }}>
+                              {(() => {
+                                let resolvedStaffId: string | undefined = undefined;
+                                if (importMentorId && importMentorId !== 'AUTO') {
+                                  resolvedStaffId = importMentorId === 'NONE' ? undefined : importMentorId;
+                                } else if (row.mentorStaffId && row.mentorStaffId !== 'AUTO') {
+                                  resolvedStaffId = row.mentorStaffId === 'NONE' ? undefined : row.mentorStaffId;
+                                } else if (mentorMappings[row.cleanMentor]) {
+                                  const m = mentorMappings[row.cleanMentor];
+                                  if (m !== 'AUTO' && m !== 'NONE') {
+                                    resolvedStaffId = m;
+                                  }
+                                }
+
+                                const assignedStaff = resolvedStaffId ? staffList.find((s) => s.id === resolvedStaffId) : null;
+
+                                if (assignedStaff) {
+                                  return (
+                                    <span style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '0.3rem',
+                                      padding: '0.15rem 0.5rem',
+                                      borderRadius: '4px',
+                                      backgroundColor: 'rgba(99, 102, 241, 0.15)',
+                                      color: '#818cf8',
+                                      fontSize: '0.75rem',
+                                      fontWeight: 600,
+                                    }}>
+                                      <UserCheck size={12} /> {assignedStaff.name}
+                                    </span>
+                                  );
+                                }
+
+                                if (row.cleanMentor && row.cleanMentor !== 'Unassigned') {
+                                  return (
+                                    <span style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '0.3rem',
+                                      padding: '0.15rem 0.5rem',
+                                      borderRadius: '4px',
+                                      backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                                      color: '#fbbf24',
+                                      fontSize: '0.75rem',
+                                    }}>
+                                      🔍 {row.cleanMentor} (Auto)
+                                    </span>
+                                  );
+                                }
+
+                                return (
+                                  <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                                    Unassigned
+                                  </span>
+                                );
+                              })()}
                             </td>
                             <td style={{ padding: '0.55rem 0.75rem', textAlign: 'right' }}>
                               {row.isDuplicate ? (

@@ -9,10 +9,12 @@ export interface ParsedImportRow {
   cleanRegisterNumber: string;
   name: string;
   department: string;
+  section?: string;
   academicYear?: string;
   currentYear?: string;
   rawMentor: string;
   cleanMentor: string;
+  mentorStaffId?: string;
   phone: string;
   rawLeetCode: string;
   cleanLeetCode: string;
@@ -26,6 +28,8 @@ export interface ParsedImportRow {
 export interface ParseResult {
   rows: ParsedImportRow[];
   detectedMentors: string[];
+  detectedYears: string[];
+  detectedSections: string[];
   totalParsed: number;
   validCount: number;
   invalidCount: number;
@@ -159,7 +163,7 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
   const cleanedCSV = csvText.replace(/^\uFEFF/, '');
   const lines = parseCSVLines(cleanedCSV);
   if (lines.length === 0) {
-    return { rows: [], detectedMentors: [], totalParsed: 0, validCount: 0, invalidCount: 0, duplicateCount: 0, hasHeaders: false };
+    return { rows: [], detectedMentors: [], detectedYears: [], detectedSections: [], totalParsed: 0, validCount: 0, invalidCount: 0, duplicateCount: 0, hasHeaders: false };
   }
 
   // Filter out pure comment lines (e.g. starting with # or //)
@@ -169,7 +173,7 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
   });
 
   if (nonCommentLines.length === 0) {
-    return { rows: [], detectedMentors: [], totalParsed: 0, validCount: 0, invalidCount: 0, duplicateCount: 0, hasHeaders: false };
+    return { rows: [], detectedMentors: [], detectedYears: [], detectedSections: [], totalParsed: 0, validCount: 0, invalidCount: 0, duplicateCount: 0, hasHeaders: false };
   }
 
   // Check if first line contains header keywords (never misidentify data rows with URLs or register numbers)
@@ -199,6 +203,8 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
   const dataLines = hasHeaders ? nonCommentLines.slice(1) : nonCommentLines;
   const parsedRows: ParsedImportRow[] = [];
   const mentorSet = new Set<string>();
+  const yearSet = new Set<string>();
+  const sectionSet = new Set<string>();
   const seenRegNumbers = new Map<string, number>();
   let duplicateCount = 0;
 
@@ -206,6 +212,7 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
     let regNo = '';
     let name = '';
     let dept = 'CSE';
+    let section = '';
     let rawMentor = '';
     let phone = '';
     let leetcodeUrl = '';
@@ -227,13 +234,29 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
       // 2. Check for Academic Year range (e.g. 2023-2027, 2024-2028)
       if (!academicYear && /^(20\d\d)\s*[-/–]\s*(20\d\d)$/.test(cell)) {
         academicYear = cell.replace(/\s+/g, '').replace('/', '-');
+        yearSet.add(academicYear);
         continue;
       }
 
       // 3. Check for Study Year (e.g. 1st Year, 2nd Year, 3rd Year, 4th Year, II Year, III Year, IV Year)
       if (!currentYear && /^(1st|2nd|3rd|4th|I|II|III|IV)\s*year/i.test(cell)) {
         currentYear = cell.trim();
+        yearSet.add(currentYear);
         continue;
+      }
+
+      // 4. Check for Section (e.g. Section A, Sec-B, A, B, C)
+      if (!section) {
+        const secMatch = cell.match(/^(?:section|sec)[\s-_]*([A-Za-z0-9]+)$/i);
+        if (secMatch && secMatch[1]) {
+          section = secMatch[1].toUpperCase();
+          sectionSet.add(section);
+          continue;
+        } else if (/^[A-D]$/i.test(cell) && (firstLineStr.includes('sec') || c === 3 || c === 4)) {
+          section = cell.toUpperCase();
+          sectionSet.add(section);
+          continue;
+        }
       }
 
       // 4. Check for Register Number: 8-18 digits/characters with numbers (e.g. 814723104001, 21CS001, 717821P101)
@@ -347,6 +370,7 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
       cleanRegisterNumber: cleanRegNo,
       name: cleanName || 'Unnamed Student',
       department: dept,
+      section: section || undefined,
       academicYear: academicYear || undefined,
       currentYear: currentYear || undefined,
       rawMentor: rawMentor,
@@ -373,6 +397,8 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
   return {
     rows: parsedRows,
     detectedMentors,
+    detectedYears: Array.from(yearSet).sort(),
+    detectedSections: Array.from(sectionSet).sort(),
     totalParsed: parsedRows.length,
     validCount,
     invalidCount,
