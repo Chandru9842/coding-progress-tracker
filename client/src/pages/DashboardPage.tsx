@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext.js';
 import { statsApi } from '../services/api.js';
 import { DashboardStats } from '../types/index.js';
 import { Users, FolderKanban, UserCheck, GraduationCap, AlertCircle, Loader2 } from 'lucide-react';
+import { SyncStatus } from '../components/SyncStatus.js';
 
 export const DashboardPage: React.FC = () => {
   const { user } = useAuth();
@@ -210,6 +211,9 @@ export const DashboardPage: React.FC = () => {
             )}
           </div>
         )}
+
+        {/* Real-time Google Sheets Sync & Zero-Error Automation Status */}
+        {!loading && <SyncStatus variant="card" />}
       </div>
     </Layout>
   );

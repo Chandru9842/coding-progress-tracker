@@ -142,14 +142,14 @@ export async function assignBatches(req: AuthenticatedRequest, res: Response): P
 export async function assignSection(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const { staffId } = req.params;
-    const { sectionId, assignmentMode } = req.body;
+    const { sectionId, assignmentMode, allocationBatchId } = req.body;
 
     if (!sectionId || !['ALL', 'SELECTED'].includes(assignmentMode)) {
       res.status(400).json({ error: 'sectionId and valid assignmentMode (ALL | SELECTED) are required' });
       return;
     }
 
-    const result = await staffService.setSectionAssignmentForStaff(staffId, sectionId, assignmentMode);
+    const result = await staffService.setSectionAssignmentForStaff(staffId, sectionId, assignmentMode, allocationBatchId);
     res.status(200).json({ message: 'Section assignment updated successfully', assignment: result });
   } catch (error) {
     res.status(500).json({ error: 'Failed to assign section' });
@@ -159,7 +159,8 @@ export async function assignSection(req: AuthenticatedRequest, res: Response): P
 export async function removeSection(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const { staffId, sectionId } = req.params;
-    const result = await staffService.removeSectionAssignmentFromStaff(staffId, sectionId);
+    const allocationBatchId = (req.query.allocationBatchId as string) || undefined;
+    const result = await staffService.removeSectionAssignmentFromStaff(staffId, sectionId, allocationBatchId);
     res.status(200).json(result);
   } catch (error) {
     res.status(500).json({ error: 'Failed to remove section assignment' });

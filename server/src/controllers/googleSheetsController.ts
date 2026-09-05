@@ -143,3 +143,68 @@ export async function triggerSyncAll(req: AuthenticatedRequest, res: Response): 
     res.status(statusCode).json({ error: error.message || 'Failed to synchronize Google Sheets' });
   }
 }
+
+export async function getAutomationStatus(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    const { getDailyAutomationStatus } = await import('../services/cronService.js');
+    const status = getDailyAutomationStatus();
+    res.status(200).json({ status });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to retrieve automation status' });
+  }
+}
+
+export async function testWebhook(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    const result = await googleSheetsService.testGoogleSheetWebhook(req.params.linkId, {
+      userId: req.user.userId,
+      role: req.user.role,
+    });
+    res.status(200).json(result);
+  } catch (error: any) {
+    const statusCode = error.statusCode || 500;
+    res.status(statusCode).json({ error: error.message || 'Failed to test Google Sheet webhook' });
+  }
+}
+
+export async function runDailyAutomationNow(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    const { executeFullDailyReconciliation } = await import('../services/cronService.js');
+    const summary = await executeFullDailyReconciliation(true);
+    res.status(200).json({
+      message: 'Zero-Error daily automation executed successfully across all students and sheets',
+      summary,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to execute daily automation' });
+  }
+}
+
+export async function getGoogleSheetsSyncStatusController(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    const syncStatus = await googleSheetsService.getGoogleSheetsSyncStatus({
+      userId: req.user.userId,
+      role: req.user.role,
+    });
+    res.status(200).json(syncStatus);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to retrieve Google Sheets sync status' });
+  }
+}
+

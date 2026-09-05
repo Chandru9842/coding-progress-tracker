@@ -73,14 +73,32 @@ export async function getBatchesForStaff(staffId: string) {
       return inMemoryStore.batches
         .filter((b) => allBatchIds.includes(b.id))
         .map((b) => {
-          const bSecs = inMemoryStore.sections.filter((s) => s.batch_id === b.id);
+          const isEntireBatch = batchIds.includes(b.id);
+          const bSecs = inMemoryStore.sections.filter((s) => s.batch_id === b.id && (isEntireBatch || allSecIds.includes(s.id)));
           const bStus = inMemoryStore.students.filter((st) => st.batch_id === b.id);
           return {
             ...b,
-            sections: bSecs.map((sec) => ({
-              ...sec,
-              _count: { students: inMemoryStore.students.filter((st) => st.section_id === sec.id).length },
-            })),
+            sections: bSecs.map((sec) => {
+              const secAssignsForSec = inMemoryStore.staffSectionAssignments.filter(
+                (sa) => sa.staff_id === staffId && sa.section_id === sec.id
+              );
+              const hasAll = isEntireBatch || secAssignsForSec.some((sa) => sa.assignment_mode === 'ALL');
+              const assignedAbIds = secAssignsForSec.map((sa) => sa.allocation_batch_id).filter(Boolean);
+
+              let allocs = inMemoryStore.allocationBatches.filter((ab) => ab.section_id === sec.id);
+              if (!hasAll && assignedAbIds.length > 0) {
+                allocs = allocs.filter((ab) => assignedAbIds.includes(ab.id));
+              }
+
+              return {
+                ...sec,
+                allocation_batches: allocs.map((ab) => ({
+                  ...ab,
+                  _count: { students: inMemoryStore.students.filter((st) => st.allocation_batch_id === ab.id || st.sub_batch === ab.name).length },
+                })),
+                _count: { students: inMemoryStore.students.filter((st) => st.section_id === sec.id).length },
+              };
+            }),
             _count: { students: bStus.length, sections: bSecs.length },
           };
         });
@@ -95,11 +113,10 @@ export async function getBatchesForStaff(staffId: string) {
         ],
       },
       include: {
+        staff_batch_assignments: { where: { staff_id: staffId } },
         sections: {
-          select: {
-            id: true,
-            name: true,
-            created_at: true,
+          include: {
+            staff_section_assignments: { where: { staff_id: staffId } },
             allocation_batches: {
               include: { _count: { select: { students: true } } },
               orderBy: { name: 'asc' },
@@ -112,7 +129,24 @@ export async function getBatchesForStaff(staffId: string) {
       orderBy: { start_year: 'desc' },
     });
 
-    return batches;
+    return batches.map((b) => {
+      const isEntireBatch = b.staff_batch_assignments && b.staff_batch_assignments.length > 0;
+      return {
+        ...b,
+        sections: b.sections.map((sec) => {
+          const hasAll = isEntireBatch || sec.staff_section_assignments.some((sa) => sa.assignment_mode === 'ALL');
+          const assignedAbIds = sec.staff_section_assignments.map((sa) => sa.allocation_batch_id).filter(Boolean);
+          let allocs = sec.allocation_batches;
+          if (!hasAll && assignedAbIds.length > 0) {
+            allocs = allocs.filter((ab) => assignedAbIds.includes(ab.id));
+          }
+          return {
+            ...sec,
+            allocation_batches: allocs,
+          };
+        }),
+      };
+    });
   });
 }
 
@@ -470,15 +504,27 @@ export async function getSectionsByBatch(batchId: string) {
   });
 }
 
-export async function getAllocationBatchesBySection(sectionId: string) {
-  return serverCache.wrap(`alloc_batches_${sectionId}`, 15000, async () => {
+export async function getAllocationBatchesBySection(sectionId: string, staffId?: string) {
+  const cacheKey = staffId ? `alloc_batches_${sectionId}_staff_${staffId}` : `alloc_batches_${sectionId}`;
+  return serverCache.wrap(cacheKey, 15000, async () => {
     if (!process.env.DATABASE_URL) {
-      return inMemoryStore.allocationBatches
-        .filter((ab) => ab.section_id === sectionId)
-        .map((ab) => ({
-          ...ab,
-          _count: { students: inMemoryStore.students.filter((st) => st.allocation_batch_id === ab.id || st.sub_batch === ab.name).length },
-        }));
+      let allocs = inMemoryStore.allocationBatches.filter((ab) => ab.section_id === sectionId);
+
+      if (staffId) {
+        const secAssigns = inMemoryStore.staffSectionAssignments.filter(
+          (sa) => sa.staff_id === staffId && sa.section_id === sectionId
+        );
+        const hasAll = secAssigns.some((sa) => sa.assignment_mode === 'ALL');
+        const assignedAbIds = secAssigns.map((sa) => sa.allocation_batch_id).filter(Boolean);
+        if (!hasAll && assignedAbIds.length > 0) {
+          allocs = allocs.filter((ab) => assignedAbIds.includes(ab.id));
+        }
+      }
+
+      return allocs.map((ab) => ({
+        ...ab,
+        _count: { students: inMemoryStore.students.filter((st) => st.allocation_batch_id === ab.id || st.sub_batch === ab.name).length },
+      }));
     }
 
     const allocationBatches = await prisma.allocationBatch.findMany({
@@ -488,6 +534,18 @@ export async function getAllocationBatchesBySection(sectionId: string) {
       },
       orderBy: { name: 'asc' },
     });
+
+    if (staffId) {
+      const secAssigns = await prisma.staffSectionAssignment.findMany({
+        where: { staff_id: staffId, section_id: sectionId },
+      });
+      const hasAll = secAssigns.some((sa) => sa.assignment_mode === 'ALL');
+      const assignedAbIds = secAssigns.map((sa) => sa.allocation_batch_id).filter(Boolean) as string[];
+      if (!hasAll && assignedAbIds.length > 0) {
+        return allocationBatches.filter((ab) => assignedAbIds.includes(ab.id));
+      }
+    }
+
     return allocationBatches;
   });
 }
@@ -498,6 +556,9 @@ export async function createAllocationBatch(sectionId: string, name: string) {
   serverCache.invalidate('batch');
   serverCache.invalidate('alloc_batches_');
   serverCache.invalidate('sections_');
+  serverCache.invalidate('staff_');
+  serverCache.invalidate('students_');
+  serverCache.invalidate('stats_');
 
   if (!process.env.DATABASE_URL) {
     const existing = inMemoryStore.allocationBatches.find(
@@ -515,7 +576,21 @@ export async function createAllocationBatch(sectionId: string, name: string) {
       created_at: new Date(),
     };
     inMemoryStore.allocationBatches.push(newAb);
-    return { ...newAb, _count: { students: 0 } };
+
+    // Auto-link any existing students in this section that have matching sub_batch
+    let linkedCount = 0;
+    inMemoryStore.students.forEach((st) => {
+      if (st.section_id === sectionId && st.sub_batch) {
+        const s1 = st.sub_batch.toLowerCase().replace(/[\s-_]/g, '');
+        const s2 = cleanName.toLowerCase().replace(/[\s-_]/g, '');
+        if (s1 === s2) {
+          st.allocation_batch_id = newAb.id;
+          linkedCount++;
+        }
+      }
+    });
+
+    return { ...newAb, _count: { students: linkedCount } };
   }
 
   const existing = await prisma.allocationBatch.findUnique({
@@ -540,6 +615,18 @@ export async function createAllocationBatch(sectionId: string, name: string) {
     },
     include: {
       _count: { select: { students: true } },
+    },
+  });
+
+  // Auto-link any existing students in this section with matching sub_batch name
+  await prisma.student.updateMany({
+    where: {
+      section_id: sectionId,
+      sub_batch: { equals: cleanName, mode: 'insensitive' },
+      allocation_batch_id: null,
+    },
+    data: {
+      allocation_batch_id: allocationBatch.id,
     },
   });
 

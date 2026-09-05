@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, FileSpreadsheet, Download, Trash2, CheckCircle2, AlertCircle, X } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { RefreshCw, FileSpreadsheet, Download, Trash2, CheckCircle2, AlertCircle, X, Layers } from 'lucide-react';
 import { Layout } from '../components/Layout.js';
+import { GoogleSheetsIntegration } from '../components/GoogleSheetsIntegration.js';
 import {
   getReportFilters,
   getReportData,
@@ -20,6 +22,22 @@ import {
 } from '../api/reports.js';
 
 export default function ReportsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const currentTabParam = searchParams.get('tab');
+  const activeTab = currentTabParam === 'sheets' ? 'sheets' : 'reports';
+
+  const handleTabChange = (tab: 'reports' | 'sheets') => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (tab === 'sheets') {
+        next.set('tab', 'sheets');
+      } else {
+        next.delete('tab');
+      }
+      return next;
+    });
+  };
+
   const [filterOptions, setFilterOptions] = useState<ReportFilterOptions>({
     academicYears: [],
     departments: [],
@@ -396,9 +414,79 @@ export default function ReportsPage() {
   const isCustomDateInvalid = datePreset === 'custom' && !!fromDate && !!toDate && fromDate > toDate;
 
   return (
-    <Layout title="Coding Progress Reports">
+    <Layout title="Reports & Sync">
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
 
+        {/* Top-Level Tab Switcher: Reports & Exports vs Google Sheets Integration */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.65rem',
+          borderBottom: '1px solid var(--border-subtle)',
+          paddingBottom: '0.75rem',
+          flexWrap: 'wrap',
+        }}>
+          <button
+            id="tab-reports-exports"
+            type="button"
+            onClick={() => handleTabChange('reports')}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              padding: '0.65rem 1.25rem',
+              borderRadius: '8px',
+              fontWeight: 600,
+              fontSize: '0.9rem',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+              backgroundColor: activeTab === 'reports' ? 'var(--primary, #4f46e5)' : 'rgba(255, 255, 255, 0.04)',
+              color: activeTab === 'reports' ? '#ffffff' : 'var(--text-secondary)',
+              border: `1px solid ${activeTab === 'reports' ? 'var(--primary, #4f46e5)' : 'var(--border-subtle)'}`,
+            }}
+          >
+            <Layers size={16} />
+            <span>Reports & Exports</span>
+          </button>
+
+          <button
+            id="tab-google-sheets-integration"
+            type="button"
+            onClick={() => handleTabChange('sheets')}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              padding: '0.65rem 1.25rem',
+              borderRadius: '8px',
+              fontWeight: 600,
+              fontSize: '0.9rem',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+              backgroundColor: activeTab === 'sheets' ? '#10b981' : 'rgba(255, 255, 255, 0.04)',
+              color: activeTab === 'sheets' ? '#ffffff' : 'var(--text-secondary)',
+              border: `1px solid ${activeTab === 'sheets' ? '#10b981' : 'var(--border-subtle)'}`,
+            }}
+          >
+            <FileSpreadsheet size={16} style={{ color: activeTab === 'sheets' ? '#ffffff' : '#10b981' }} />
+            <span>Google Sheets Integration</span>
+            <span style={{
+              fontSize: '0.7rem',
+              padding: '0.15rem 0.45rem',
+              borderRadius: '9999px',
+              backgroundColor: activeTab === 'sheets' ? 'rgba(0, 0, 0, 0.25)' : 'rgba(16, 185, 129, 0.2)',
+              color: activeTab === 'sheets' ? '#ffffff' : '#34d399',
+              fontWeight: 700,
+            }}>
+              Zero-Error
+            </span>
+          </button>
+        </div>
+
+        {activeTab === 'sheets' ? (
+          <GoogleSheetsIntegration />
+        ) : (
+          <>
         {/* Top Header Banner */}
         <div style={{
           backgroundColor: 'var(--bg-card)',
@@ -1214,6 +1302,8 @@ export default function ReportsPage() {
           )}
         </div>
 
+          </>
+        )}
       </div>
 
       {/* Student Daily Progress Modal */}

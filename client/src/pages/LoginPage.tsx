@@ -156,7 +156,45 @@ export const LoginPage: React.FC = () => {
         </form>
 
         <div style={{
-          marginTop: '2rem',
+          marginTop: '1.25rem',
+          padding: '0.75rem 1rem',
+          backgroundColor: 'rgba(99, 102, 241, 0.08)',
+          border: '1px dashed var(--border-glow)',
+          borderRadius: 'var(--radius-sm)',
+          fontSize: '0.825rem',
+          color: 'var(--text-secondary)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.35rem',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Default Admin Credentials:</span>
+            <button
+              type="button"
+              onClick={() => {
+                setEmail('admin@college.edu');
+                setPassword('AdminPass123!');
+              }}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--primary)',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '0.8rem',
+                textDecoration: 'underline',
+              }}
+            >
+              Fill Credentials
+            </button>
+          </div>
+          <div style={{ fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+            admin@college.edu / AdminPass123!
+          </div>
+        </div>
+
+        <div style={{
+          marginTop: '1.5rem',
           paddingTop: '1.25rem',
           borderTop: '1px solid var(--border-subtle)',
           textAlign: 'center',

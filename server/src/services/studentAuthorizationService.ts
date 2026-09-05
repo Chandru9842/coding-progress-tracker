@@ -15,7 +15,15 @@ export async function isStaffAuthorizedForStudent(
     const secAssign = inMemoryStore.staffSectionAssignments.find((sa) => {
       if (sa.staff_id !== staffId || sa.section_id !== student.section_id) return false;
       if (sa.assignment_mode === 'ALL') return true;
-      if (sa.allocation_batch_id && sa.allocation_batch_id === student.allocation_batch_id) return true;
+      if (sa.allocation_batch_id) {
+        if (student.allocation_batch_id && sa.allocation_batch_id === student.allocation_batch_id) return true;
+        const ab = inMemoryStore.allocationBatches.find((a) => a.id === sa.allocation_batch_id);
+        if (ab && student.sub_batch) {
+          const s1 = ab.name.toLowerCase().replace(/[\s-_]/g, '');
+          const s2 = student.sub_batch.toLowerCase().replace(/[\s-_]/g, '');
+          if (s1 === s2) return true;
+        }
+      }
       return false;
     });
     if (secAssign) return true;
@@ -26,15 +34,30 @@ export async function isStaffAuthorizedForStudent(
     return !!batchAssign;
   }
 
+  const assignedAllocBatches = await prisma.staffSectionAssignment.findMany({
+    where: { staff_id: staffId, allocation_batch_id: { not: null } },
+    include: { allocation_batch: true },
+  });
+  const assignedAllocNames = assignedAllocBatches.map((a) => a.allocation_batch?.name).filter(Boolean) as string[];
+
+  const whereOr: any[] = [
+    { staff_student_assignments: { some: { staff_id: staffId } } },
+    { section: { staff_section_assignments: { some: { staff_id: staffId, assignment_mode: 'ALL' } } } },
+    { allocation_batch: { staff_section_assignments: { some: { staff_id: staffId } } } },
+    { batch: { staff_batch_assignments: { some: { staff_id: staffId } } } },
+  ];
+
+  if (assignedAllocNames.length > 0) {
+    whereOr.push({
+      section: { staff_section_assignments: { some: { staff_id: staffId } } },
+      sub_batch: { in: assignedAllocNames, mode: 'insensitive' },
+    });
+  }
+
   const authorized = await prisma.student.findFirst({
     where: {
       id: studentId,
-      OR: [
-        { staff_student_assignments: { some: { staff_id: staffId } } },
-        { section: { staff_section_assignments: { some: { staff_id: staffId, assignment_mode: 'ALL' } } } },
-        { allocation_batch: { staff_section_assignments: { some: { staff_id: staffId } } } },
-        { batch: { staff_batch_assignments: { some: { staff_id: staffId } } } },
-      ],
+      OR: whereOr,
     },
     select: { id: true },
   });
@@ -141,9 +164,17 @@ export async function getAuthorizedStudentIdsForStaff(
         const secStudents = inMemoryStore.students.filter((st) => st.section_id === sa.section_id);
         secStudents.forEach((st) => studentIds.add(st.id));
       } else if (sa.allocation_batch_id) {
-        const secStudents = inMemoryStore.students.filter(
-          (st) => st.section_id === sa.section_id && st.allocation_batch_id === sa.allocation_batch_id
-        );
+        const ab = inMemoryStore.allocationBatches.find((a) => a.id === sa.allocation_batch_id);
+        const abNorm = ab?.name ? ab.name.toLowerCase().replace(/[\s-_]/g, '') : '';
+        const secStudents = inMemoryStore.students.filter((st) => {
+          if (st.section_id !== sa.section_id) return false;
+          if (st.allocation_batch_id === sa.allocation_batch_id) return true;
+          if (abNorm && st.sub_batch) {
+            const stNorm = st.sub_batch.toLowerCase().replace(/[\s-_]/g, '');
+            if (stNorm === abNorm) return true;
+          }
+          return false;
+        });
         secStudents.forEach((st) => studentIds.add(st.id));
       }
     });
@@ -157,14 +188,29 @@ export async function getAuthorizedStudentIdsForStaff(
     return Array.from(studentIds);
   }
 
+  const assignedAllocBatches = await prisma.staffSectionAssignment.findMany({
+    where: { staff_id: staffId, allocation_batch_id: { not: null } },
+    include: { allocation_batch: true },
+  });
+  const assignedAllocNames = assignedAllocBatches.map((a) => a.allocation_batch?.name).filter(Boolean) as string[];
+
+  const whereOr: any[] = [
+    { staff_student_assignments: { some: { staff_id: staffId } } },
+    { section: { staff_section_assignments: { some: { staff_id: staffId, assignment_mode: 'ALL' } } } },
+    { allocation_batch: { staff_section_assignments: { some: { staff_id: staffId } } } },
+    { batch: { staff_batch_assignments: { some: { staff_id: staffId } } } },
+  ];
+
+  if (assignedAllocNames.length > 0) {
+    whereOr.push({
+      section: { staff_section_assignments: { some: { staff_id: staffId } } },
+      sub_batch: { in: assignedAllocNames, mode: 'insensitive' },
+    });
+  }
+
   const students = await prisma.student.findMany({
     where: {
-      OR: [
-        { staff_student_assignments: { some: { staff_id: staffId } } },
-        { section: { staff_section_assignments: { some: { staff_id: staffId, assignment_mode: 'ALL' } } } },
-        { allocation_batch: { staff_section_assignments: { some: { staff_id: staffId } } } },
-        { batch: { staff_batch_assignments: { some: { staff_id: staffId } } } },
-      ],
+      OR: whereOr,
     },
     select: { id: true },
   });

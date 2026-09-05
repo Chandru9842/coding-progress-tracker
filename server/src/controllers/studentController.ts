@@ -7,6 +7,7 @@ import {
   isStaffAuthorizedForSection,
 } from '../services/studentAuthorizationService.js';
 import { syncStudentLeetCode } from '../services/leetcodeService.js';
+import { syncAllActiveGoogleSheets } from '../services/googleSheetsService.js';
 import { checkAndTriggerLazyCatchUpSync } from '../services/cronService.js';
 
 export async function getStudents(req: AuthenticatedRequest, res: Response): Promise<void> {
@@ -49,10 +50,27 @@ export async function getStudentDetail(req: AuthenticatedRequest, res: Response)
 
     const { studentId } = req.params;
 
-    const student = await studentService.getStudentByIdForUser(
+    let student = await studentService.getStudentByIdForUser(
       { userId: req.user.userId, role: req.user.role },
       studentId
     );
+
+    // If student has leetcode_username and no snapshots, automatically fetch LeetCode and snapshot immediately
+    if (student && student.leetcode_username && (!student.snapshots || student.snapshots.length === 0)) {
+      try {
+        console.log(`[Auto-Snapshot] On-demand snapshot initialization for student ${student.name} (@${student.leetcode_username})`);
+        await syncStudentLeetCode(studentId, { userId: req.user.userId, role: req.user.role as UserRole });
+        const refreshed = await studentService.getStudentByIdForUser(
+          { userId: req.user.userId, role: req.user.role },
+          studentId
+        );
+        if (refreshed) {
+          student = refreshed;
+        }
+      } catch (err: any) {
+        console.warn(`[Auto-Snapshot] On-demand snapshot init note:`, err?.message || err);
+      }
+    }
 
     res.status(200).json({ student });
   } catch (error: any) {
@@ -103,14 +121,26 @@ export async function createStudent(req: AuthenticatedRequest, res: Response): P
 
     if (student && student.leetcode_username) {
       const authUser = { userId: req.user.userId, role: req.user.role as UserRole };
-      setImmediate(() => {
-        syncStudentLeetCode(student.id, authUser).catch((syncErr: any) => {
-          console.warn(`Automatic initial LeetCode sync for new student ${student.id} (${student.leetcode_username}) warned:`, syncErr.message);
-        });
+      try {
+        console.log(`[Auto-Sync] Automatically fetching initial LeetCode details & snapshot for new student ${student.name} (@${student.leetcode_username})...`);
+        await syncStudentLeetCode(student.id, authUser);
+
+        // Refresh student record with newly generated snapshot
+        const refreshed = await studentService.getStudentByIdForUser(authUser, student.id);
+        if (refreshed) {
+          student = refreshed;
+        }
+      } catch (syncErr: any) {
+        console.warn(`[Auto-Sync] Initial LeetCode sync for new student ${student.id} (${student.leetcode_username}) note:`, syncErr?.message || syncErr);
+      }
+
+      // Automatically sync all active Google Sheets with the new student and their snapshot
+      syncAllActiveGoogleSheets().catch((sheetErr: any) => {
+        console.warn(`[Auto-Sync] Google Sheet auto-sync on student create note:`, sheetErr?.message || sheetErr);
       });
     }
 
-    res.status(201).json({ message: 'Student created successfully', student });
+    res.status(201).json({ message: 'Student created successfully with initial LeetCode snapshot synced', student });
   } catch (error: any) {
     const statusCode = error.statusCode || 400;
     res.status(statusCode).json({ error: error.message || 'Failed to create student' });
@@ -145,7 +175,7 @@ export async function updateStudent(req: AuthenticatedRequest, res: Response): P
       }
     }
 
-    const student = await studentService.updateStudent(studentId, {
+    let student = await studentService.updateStudent(studentId, {
       register_number,
       name,
       department,
@@ -160,14 +190,25 @@ export async function updateStudent(req: AuthenticatedRequest, res: Response): P
 
     if (student && student.leetcode_username) {
       const authUser = { userId: req.user.userId, role: req.user.role as UserRole };
-      setImmediate(() => {
-        syncStudentLeetCode(student.id, authUser).catch((syncErr: any) => {
-          console.warn(`Automatic LeetCode sync for updated student ${student.id} (${student.leetcode_username}) warned:`, syncErr.message);
-        });
+      try {
+        console.log(`[Auto-Sync] Automatically syncing LeetCode details & snapshot for student ${student.name} (@${student.leetcode_username})...`);
+        await syncStudentLeetCode(student.id, authUser);
+
+        const refreshed = await studentService.getStudentByIdForUser(authUser, student.id);
+        if (refreshed) {
+          student = refreshed;
+        }
+      } catch (syncErr: any) {
+        console.warn(`[Auto-Sync] LeetCode sync for updated student ${student.id} (${student.leetcode_username}) note:`, syncErr?.message || syncErr);
+      }
+
+      // Automatically update linked Google Sheets with the updated student and snapshot
+      syncAllActiveGoogleSheets().catch((sheetErr: any) => {
+        console.warn(`[Auto-Sync] Google Sheet auto-sync on student update note:`, sheetErr?.message || sheetErr);
       });
     }
 
-    res.status(200).json({ message: 'Student updated successfully', student });
+    res.status(200).json({ message: 'Student updated successfully with LeetCode snapshot synced', student });
   } catch (error: any) {
     const statusCode = error.statusCode || 400;
     res.status(statusCode).json({ error: error.message || 'Failed to update student' });

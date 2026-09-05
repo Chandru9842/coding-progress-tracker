@@ -4,6 +4,7 @@ import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
 import { studentApi, syncApi, Student, DailySnapshot } from '../services/api.js';
 import { ArrowLeft, User, ShieldAlert, Code2, GraduationCap, Layers, Loader2, Activity, RefreshCw, CheckCircle2, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { SyncStatus } from '../components/SyncStatus.js';
 
 export const StudentDetailPage: React.FC = () => {
   const { studentId } = useParams<{ studentId: string }>();
@@ -33,6 +34,31 @@ export const StudentDetailPage: React.FC = () => {
       ]);
       setStudent(data);
       setSnapshots(snapData);
+
+      // Check if student has a LeetCode username and needs an auto-sync:
+      // (1) Has 0 snapshots
+      // (2) Or latest snapshot is not from today (YYYY-MM-DD IST)
+      const latestSnap = snapData && snapData.length > 0 ? snapData[0] : null;
+      const todayIST = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+      const latestDateStr = latestSnap ? new Date(latestSnap.snapshot_date).toISOString().split('T')[0] : '';
+      const needsDailySync = data?.leetcode_username && (!latestSnap || latestDateStr !== todayIST);
+
+      if (needsDailySync) {
+        try {
+          console.log(`[Auto-Snapshot] Auto-updating live LeetCode stats for ${data.name} (@${data.leetcode_username})...`);
+          await syncApi.syncStudent(studentId);
+          const [refreshedData, refreshedSnaps] = await Promise.all([
+            studentApi.getStudentById(studentId),
+            syncApi.getSnapshots(studentId),
+          ]);
+          setStudent(refreshedData);
+          setSnapshots(refreshedSnaps);
+          window.dispatchEvent(new CustomEvent('student-synced'));
+          window.dispatchEvent(new CustomEvent('sheets-synced'));
+        } catch (autoErr: any) {
+          console.warn('[Auto-Snapshot] Auto snapshot fetch note:', autoErr?.message || autoErr);
+        }
+      }
     } catch (err: any) {
       if (err.response?.status === 403) {
         setError('403 Forbidden: You are not authorized to view this student\'s profile.');
@@ -54,12 +80,18 @@ export const StudentDetailPage: React.FC = () => {
     try {
       setSyncing(true);
       setSyncMessage(null);
-      const res = await syncApi.syncStudent(studentId);
-      setSyncMessage(`Successfully synchronized LeetCode data for @${student.leetcode_username}`);
+      await syncApi.syncStudent(studentId);
+      setSyncMessage(`Successfully synchronized LeetCode data and updated linked Google Sheets for @${student.leetcode_username}`);
 
       // Refresh student and snapshots
-      const snapData = await syncApi.getSnapshots(studentId);
+      const [data, snapData] = await Promise.all([
+        studentApi.getStudentById(studentId),
+        syncApi.getSnapshots(studentId),
+      ]);
+      setStudent(data);
       setSnapshots(snapData);
+      window.dispatchEvent(new CustomEvent('student-synced'));
+      window.dispatchEvent(new CustomEvent('sheets-synced'));
     } catch (err: any) {
       alert(err.response?.data?.error || 'Failed to sync LeetCode data');
     } finally {
@@ -134,6 +166,8 @@ export const StudentDetailPage: React.FC = () => {
                 </div>
 
                 <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <SyncStatus variant="badge" />
+
                   {student.leetcode_username && (
                     <button
                       className="btn-primary"
@@ -242,24 +276,29 @@ export const StudentDetailPage: React.FC = () => {
 
             {/* LeetCode Solved Cards */}
             {latestSnapshot ? (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
-                <div className="glass-panel" style={{ padding: '1.25rem', textAlign: 'center' }}>
-                  <span style={{ fontSize: '0.75rem', color: '#4ade80', fontWeight: 700, textTransform: 'uppercase' }}>Easy</span>
-                  <h4 style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '0.25rem' }}>{latestSnapshot.easy_solved}</h4>
-                </div>
-                <div className="glass-panel" style={{ padding: '1.25rem', textAlign: 'center' }}>
-                  <span style={{ fontSize: '0.75rem', color: '#facc15', fontWeight: 700, textTransform: 'uppercase' }}>Medium</span>
-                  <h4 style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '0.25rem' }}>{latestSnapshot.medium_solved}</h4>
-                </div>
-                <div className="glass-panel" style={{ padding: '1.25rem', textAlign: 'center' }}>
-                  <span style={{ fontSize: '0.75rem', color: '#f87171', fontWeight: 700, textTransform: 'uppercase' }}>Hard</span>
-                  <h4 style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '0.25rem' }}>{latestSnapshot.hard_solved}</h4>
-                </div>
-                <div className="glass-panel" style={{ padding: '1.25rem', textAlign: 'center', backgroundColor: 'rgba(99, 102, 241, 0.15)' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--primary)', fontWeight: 700, textTransform: 'uppercase' }}>Total Solved</span>
-                  <h4 style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '0.25rem', color: 'var(--primary)' }}>{latestSnapshot.total_solved}</h4>
-                </div>
-              </div>
+              (() => {
+                const latestEasy = latestSnapshot.easy_solved + Math.max(0, latestSnapshot.total_solved - (latestSnapshot.easy_solved + latestSnapshot.medium_solved + latestSnapshot.hard_solved));
+                return (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
+                    <div className="glass-panel" style={{ padding: '1.25rem', textAlign: 'center' }}>
+                      <span style={{ fontSize: '0.75rem', color: '#4ade80', fontWeight: 700, textTransform: 'uppercase' }}>Easy</span>
+                      <h4 style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '0.25rem' }}>{latestEasy}</h4>
+                    </div>
+                    <div className="glass-panel" style={{ padding: '1.25rem', textAlign: 'center' }}>
+                      <span style={{ fontSize: '0.75rem', color: '#facc15', fontWeight: 700, textTransform: 'uppercase' }}>Medium</span>
+                      <h4 style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '0.25rem' }}>{latestSnapshot.medium_solved}</h4>
+                    </div>
+                    <div className="glass-panel" style={{ padding: '1.25rem', textAlign: 'center' }}>
+                      <span style={{ fontSize: '0.75rem', color: '#f87171', fontWeight: 700, textTransform: 'uppercase' }}>Hard</span>
+                      <h4 style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '0.25rem' }}>{latestSnapshot.hard_solved}</h4>
+                    </div>
+                    <div className="glass-panel" style={{ padding: '1.25rem', textAlign: 'center', backgroundColor: 'rgba(99, 102, 241, 0.15)' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--primary)', fontWeight: 700, textTransform: 'uppercase' }}>Total Solved</span>
+                      <h4 style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '0.25rem', color: 'var(--primary)' }}>{latestSnapshot.total_solved}</h4>
+                    </div>
+                  </div>
+                );
+              })()
             ) : (
               <div className="glass-panel" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
                 <Activity size={32} style={{ margin: '0 auto 0.75rem auto', color: 'var(--primary)' }} />
@@ -324,10 +363,16 @@ export const StudentDetailPage: React.FC = () => {
                         {currentSnapshots.map((snap, pageIdx) => {
                           const globalIdx = startIndex + pageIdx;
                           const prevSnap = snapshots[globalIdx + 1];
-                          const dailyEasy = prevSnap ? Math.max(0, snap.easy_solved - prevSnap.easy_solved) : 0;
-                          const dailyMedium = prevSnap ? Math.max(0, snap.medium_solved - prevSnap.medium_solved) : 0;
-                          const dailyHard = prevSnap ? Math.max(0, snap.hard_solved - prevSnap.hard_solved) : 0;
                           const dailyTotal = prevSnap ? Math.max(0, snap.total_solved - prevSnap.total_solved) : 0;
+                          let dailyEasy = prevSnap ? Math.max(0, snap.easy_solved - prevSnap.easy_solved) : 0;
+                          let dailyMedium = prevSnap ? Math.max(0, snap.medium_solved - prevSnap.medium_solved) : 0;
+                          let dailyHard = prevSnap ? Math.max(0, snap.hard_solved - prevSnap.hard_solved) : 0;
+
+                          if (dailyTotal > (dailyEasy + dailyMedium + dailyHard)) {
+                            dailyEasy += (dailyTotal - (dailyEasy + dailyMedium + dailyHard));
+                          }
+
+                          const snapEasy = snap.easy_solved + Math.max(0, snap.total_solved - (snap.easy_solved + snap.medium_solved + snap.hard_solved));
 
                           return (
                             <tr key={snap.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
@@ -356,7 +401,7 @@ export const StudentDetailPage: React.FC = () => {
                                 <span style={{ color: '#facc15', fontWeight: dailyMedium > 0 ? 700 : 400 }}>+{dailyMedium} M</span> &bull;{' '}
                                 <span style={{ color: '#f87171', fontWeight: dailyHard > 0 ? 700 : 400 }}>+{dailyHard} H</span>
                               </td>
-                              <td style={{ padding: '0.75rem', color: '#4ade80' }}>{snap.easy_solved}</td>
+                              <td style={{ padding: '0.75rem', color: '#4ade80' }}>{snapEasy}</td>
                               <td style={{ padding: '0.75rem', color: '#facc15' }}>{snap.medium_solved}</td>
                               <td style={{ padding: '0.75rem', color: '#f87171' }}>{snap.hard_solved}</td>
                               <td style={{ padding: '0.75rem', fontWeight: 700, color: 'var(--primary)' }}>{snap.total_solved}</td>

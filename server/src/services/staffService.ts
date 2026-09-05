@@ -90,11 +90,19 @@ export async function getStaffById(staffId: string) {
         }),
         assignedSections: secAssigns.map((sa) => {
           const sec = inMemoryStore.sections.find((section) => section.id === sa.section_id);
+          const b = sec ? inMemoryStore.batches.find((batch) => batch.id === sec.batch_id) : null;
+          const ab = sa.allocation_batch_id
+            ? inMemoryStore.allocationBatches.find((a) => a.id === sa.allocation_batch_id)
+            : null;
           return {
             id: sa.id,
             section_id: sa.section_id,
+            allocation_batch_id: sa.allocation_batch_id || null,
             assignment_mode: sa.assignment_mode,
             section: { id: sa.section_id, name: sec?.name || 'A', batch_id: sec?.batch_id || '' },
+            batch_name: b?.batch_name || '',
+            academic_year: b ? `${b.start_year}-${b.end_year}` : '',
+            allocation_batch: ab ? { id: ab.id, name: ab.name } : null,
           };
         }),
         directStudentAssignments: stAssigns.map((sa) => {
@@ -124,7 +132,12 @@ export async function getStaffById(staffId: string) {
         },
         staff_section_assignments: {
           include: {
-            section: { select: { id: true, name: true, batch_id: true } },
+            section: {
+              include: {
+                batch: { select: { id: true, batch_name: true, start_year: true, end_year: true } },
+              },
+            },
+            allocation_batch: { select: { id: true, name: true } },
           },
         },
         staff_student_assignments: {
@@ -146,7 +159,16 @@ export async function getStaffById(staffId: string) {
       assignedBatchesCount: staff.staff_batch_assignments.length,
       assignedStudentsCount: staff.staff_student_assignments.length,
       assignedBatches: staff.staff_batch_assignments.map((b) => b.batch),
-      assignedSections: staff.staff_section_assignments,
+      assignedSections: staff.staff_section_assignments.map((sa) => ({
+        id: sa.id,
+        section_id: sa.section_id,
+        allocation_batch_id: sa.allocation_batch_id || null,
+        assignment_mode: sa.assignment_mode,
+        section: sa.section,
+        batch_name: sa.section?.batch?.batch_name || '',
+        academic_year: sa.section?.batch ? `${sa.section.batch.start_year}-${sa.section.batch.end_year}` : '',
+        allocation_batch: sa.allocation_batch,
+      })),
       directStudentAssignments: staff.staff_student_assignments.map((sa) => sa.student),
     };
   });
@@ -400,73 +422,148 @@ export async function assignBatchesToStaff(staffId: string, batchIds: string[]) 
 export async function setSectionAssignmentForStaff(
   staffId: string,
   sectionId: string,
-  assignmentMode: 'ALL' | 'SELECTED'
+  assignmentMode: 'ALL' | 'SELECTED',
+  allocationBatchId?: string
 ) {
   serverCache.invalidate('students_');
   serverCache.invalidate('staff_');
   serverCache.invalidate('stats_');
   serverCache.invalidate('batch');
 
+  const cleanAllocBatchId = allocationBatchId && allocationBatchId !== 'ALL' ? allocationBatchId : null;
+
   if (!process.env.DATABASE_URL) {
-    const existing = inMemoryStore.staffSectionAssignments.find((ssa) => ssa.staff_id === staffId && ssa.section_id === sectionId);
-    if (existing) {
-      existing.assignment_mode = assignmentMode;
+    if (cleanAllocBatchId) {
+      const existing = inMemoryStore.staffSectionAssignments.find(
+        (ssa) => ssa.staff_id === staffId && ssa.section_id === sectionId && ssa.allocation_batch_id === cleanAllocBatchId
+      );
+      if (existing) {
+        existing.assignment_mode = assignmentMode;
+      } else {
+        inMemoryStore.staffSectionAssignments.push({
+          id: `ssa_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          staff_id: staffId,
+          section_id: sectionId,
+          allocation_batch_id: cleanAllocBatchId,
+          assignment_mode: assignmentMode,
+          created_at: new Date(),
+        });
+      }
     } else {
-      inMemoryStore.staffSectionAssignments.push({
-        id: `ssa_${Date.now()}_${Math.random()}`,
-        staff_id: staffId,
-        section_id: sectionId,
-        assignment_mode: assignmentMode,
-        created_at: new Date(),
-      });
+      // Base section assignment or ALL mode
+      const existing = inMemoryStore.staffSectionAssignments.find(
+        (ssa) => ssa.staff_id === staffId && ssa.section_id === sectionId && !ssa.allocation_batch_id
+      );
+      if (existing) {
+        existing.assignment_mode = assignmentMode;
+      } else {
+        inMemoryStore.staffSectionAssignments.push({
+          id: `ssa_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          staff_id: staffId,
+          section_id: sectionId,
+          allocation_batch_id: null,
+          assignment_mode: assignmentMode,
+          created_at: new Date(),
+        });
+      }
     }
     return { message: 'Section assignment updated successfully' };
   }
 
-  const existing = await prisma.staffSectionAssignment.findFirst({
-    where: {
-      staff_id: staffId,
-      section_id: sectionId,
-    },
-  });
-
-  if (existing) {
-    await prisma.staffSectionAssignment.update({
-      where: { id: existing.id },
-      data: { assignment_mode: assignmentMode },
-    });
-  } else {
-    await prisma.staffSectionAssignment.create({
-      data: {
+  if (cleanAllocBatchId) {
+    const existing = await prisma.staffSectionAssignment.findFirst({
+      where: {
         staff_id: staffId,
         section_id: sectionId,
-        assignment_mode: assignmentMode,
+        allocation_batch_id: cleanAllocBatchId,
       },
     });
+
+    if (existing) {
+      await prisma.staffSectionAssignment.update({
+        where: { id: existing.id },
+        data: { assignment_mode: assignmentMode },
+      });
+    } else {
+      await prisma.staffSectionAssignment.create({
+        data: {
+          staff_id: staffId,
+          section_id: sectionId,
+          allocation_batch_id: cleanAllocBatchId,
+          assignment_mode: assignmentMode,
+        },
+      });
+    }
+  } else {
+    const existing = await prisma.staffSectionAssignment.findFirst({
+      where: {
+        staff_id: staffId,
+        section_id: sectionId,
+        allocation_batch_id: null,
+      },
+    });
+
+    if (existing) {
+      await prisma.staffSectionAssignment.update({
+        where: { id: existing.id },
+        data: { assignment_mode: assignmentMode },
+      });
+    } else {
+      await prisma.staffSectionAssignment.create({
+        data: {
+          staff_id: staffId,
+          section_id: sectionId,
+          allocation_batch_id: null,
+          assignment_mode: assignmentMode,
+        },
+      });
+    }
   }
 
   return { message: 'Section assignment updated successfully' };
 }
 
-export async function removeSectionAssignmentFromStaff(staffId: string, sectionId: string) {
+export async function removeSectionAssignmentFromStaff(
+  staffId: string,
+  sectionId: string,
+  allocationBatchId?: string
+) {
   serverCache.invalidate('students_');
   serverCache.invalidate('staff_');
   serverCache.invalidate('stats_');
   serverCache.invalidate('batch');
 
+  const cleanAllocBatchId = allocationBatchId && allocationBatchId !== 'ALL' ? allocationBatchId : null;
+
   if (!process.env.DATABASE_URL) {
-    inMemoryStore.staffSectionAssignments = inMemoryStore.staffSectionAssignments.filter(
-      (ssa) => !(ssa.staff_id === staffId && ssa.section_id === sectionId)
-    );
+    if (cleanAllocBatchId) {
+      inMemoryStore.staffSectionAssignments = inMemoryStore.staffSectionAssignments.filter(
+        (ssa) => !(ssa.staff_id === staffId && ssa.section_id === sectionId && ssa.allocation_batch_id === cleanAllocBatchId)
+      );
+    } else {
+      inMemoryStore.staffSectionAssignments = inMemoryStore.staffSectionAssignments.filter(
+        (ssa) => !(ssa.staff_id === staffId && ssa.section_id === sectionId)
+      );
+    }
     return { message: 'Section assignment removed successfully' };
   }
 
-  await prisma.staffSectionAssignment.deleteMany({
-    where: {
-      staff_id: staffId,
-      section_id: sectionId,
-    },
-  });
+  if (cleanAllocBatchId) {
+    await prisma.staffSectionAssignment.deleteMany({
+      where: {
+        staff_id: staffId,
+        section_id: sectionId,
+        allocation_batch_id: cleanAllocBatchId,
+      },
+    });
+  } else {
+    await prisma.staffSectionAssignment.deleteMany({
+      where: {
+        staff_id: staffId,
+        section_id: sectionId,
+      },
+    });
+  }
 
   return { message: 'Section assignment removed successfully' };
 }
@@ -600,24 +697,36 @@ export async function getStaffAssignedScopes(staffId: string) {
     return {
       sections: sections.map((sec) => {
         const b = batches.find((batch) => batch.id === sec.batch_id);
-        const secAssign = secAssigns.find((sa) => sa.section_id === sec.id);
-        const mode = secAssign?.assignment_mode || (secAssigns.length === 0 ? 'ALL' : 'SELECTED');
-        const abList = allocBatches.filter((ab) => ab.section_id === sec.id);
-        const studentSubBatches = Array.from(
-          new Set(
-            inMemoryStore.students
-              .filter((st) => st.section_id === sec.id && st.sub_batch)
-              .map((st) => st.sub_batch as string)
-          )
-        );
+        const secAssignsForSec = secAssigns.filter((sa) => sa.section_id === sec.id);
+        const hasAllMode = secAssignsForSec.some((sa) => sa.assignment_mode === 'ALL') || secAssigns.length === 0;
+        const mode = hasAllMode ? 'ALL' : 'SELECTED';
 
         const mergedMap = new Map<string, { id: string; name: string }>();
-        abList.forEach((ab) => mergedMap.set(ab.name, { id: ab.id, name: ab.name }));
-        studentSubBatches.forEach((sb) => {
-          if (!mergedMap.has(sb)) {
-            mergedMap.set(sb, { id: sb, name: sb });
-          }
-        });
+
+        // If staff has specific allocation batch assignments in this section
+        const assignedAbIds = secAssignsForSec.map((sa) => sa.allocation_batch_id).filter(Boolean);
+        if (!hasAllMode && assignedAbIds.length > 0) {
+          assignedAbIds.forEach((abId) => {
+            const ab = inMemoryStore.allocationBatches.find((a) => a.id === abId);
+            if (ab) mergedMap.set(ab.name, { id: ab.id, name: ab.name });
+          });
+        } else {
+          // All allocation batches in the section
+          const abList = allocBatches.filter((ab) => ab.section_id === sec.id);
+          const studentSubBatches = Array.from(
+            new Set(
+              inMemoryStore.students
+                .filter((st) => st.section_id === sec.id && st.sub_batch)
+                .map((st) => st.sub_batch as string)
+            )
+          );
+          abList.forEach((ab) => mergedMap.set(ab.name, { id: ab.id, name: ab.name }));
+          studentSubBatches.forEach((sb) => {
+            if (!mergedMap.has(sb)) {
+              mergedMap.set(sb, { id: sb, name: sb });
+            }
+          });
+        }
 
         return {
           id: sec.id,
@@ -747,24 +856,27 @@ export async function getStaffAssignedScopes(staffId: string) {
       if (ab?.name) allocMap.set(ab.name, { id: ab.id, name: ab.name });
     });
 
-    // 2. Add section database allocation batches
-    dbAllocBatches
-      .filter((ab) => ab.section_id === sec.id)
-      .forEach((ab) => {
-        if (!allocMap.has(ab.name)) {
-          allocMap.set(ab.name, { id: ab.id, name: ab.name });
-        }
-      });
+    // If staff has assignment_mode === 'ALL' or no specific allocation batch assignments for this section:
+    if (sec.assignment_mode === 'ALL' || sec.allocation_batches_map.size === 0) {
+      // 2. Add section database allocation batches
+      dbAllocBatches
+        .filter((ab) => ab.section_id === sec.id)
+        .forEach((ab) => {
+          if (!allocMap.has(ab.name)) {
+            allocMap.set(ab.name, { id: ab.id, name: ab.name });
+          }
+        });
 
-    // 3. Add student sub_batch strings (e.g. Batch-1, Batch-2, Batch-3)
-    studentsWithSubBatches
-      .filter((st) => st.section_id === sec.id && st.sub_batch)
-      .forEach((st) => {
-        const sb = st.sub_batch as string;
-        if (!allocMap.has(sb)) {
-          allocMap.set(sb, { id: sb, name: sb });
-        }
-      });
+      // 3. Add student sub_batch strings (e.g. Batch-1, Batch-2, Batch-3)
+      studentsWithSubBatches
+        .filter((st) => st.section_id === sec.id && st.sub_batch)
+        .forEach((st) => {
+          const sb = st.sub_batch as string;
+          if (!allocMap.has(sb)) {
+            allocMap.set(sb, { id: sb, name: sb });
+          }
+        });
+    }
 
     return {
       id: sec.id,

@@ -164,7 +164,8 @@ export async function getBatchSections(req: AuthenticatedRequest, res: Response)
 export async function getAllocationBatches(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
     const { sectionId } = req.params;
-    const allocation_batches = await batchService.getAllocationBatchesBySection(sectionId);
+    const staffId = req.user?.role === 'STAFF' ? req.user.userId : undefined;
+    const allocation_batches = await batchService.getAllocationBatchesBySection(sectionId, staffId);
     res.status(200).json({ allocation_batches });
   } catch (error) {
     res.status(500).json({ error: 'Failed to retrieve allocation batches' });

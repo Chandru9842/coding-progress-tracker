@@ -296,6 +296,14 @@ export const StaffManagementPage: React.FC = () => {
         if (secAssign && secAssign.assignment_mode === 'ALL') {
           setAssignmentMode('ALL');
           setSelectedStudentIds(new Set(students.map((s) => s.id)));
+        } else if (secAssign && secAssign.allocation_batch_id) {
+          setAssignmentMode('ALLOCATION_BATCH');
+          setSelectedAllocationBatchId(secAssign.allocation_batch_id);
+          const targetAb = allocBatches.find((ab: any) => ab.id === secAssign.allocation_batch_id);
+          const matching = students.filter(
+            (st) => st.allocation_batch_id === secAssign.allocation_batch_id || (targetAb && st.sub_batch === targetAb.name)
+          );
+          setSelectedStudentIds(new Set(matching.map((s) => s.id)));
         } else {
           setAssignmentMode('SELECTED');
           const directIds = new Set(
@@ -336,6 +344,14 @@ export const StaffManagementPage: React.FC = () => {
       setSubmitting(true);
       if (assignmentMode === 'ALL') {
         await staffApi.assignSection(selectedStaffId, selectedSectionId, 'ALL');
+      } else if (assignmentMode === 'ALLOCATION_BATCH' && selectedAllocationBatchId) {
+        await staffApi.assignSection(
+          selectedStaffId,
+          selectedSectionId,
+          'SELECTED',
+          Array.from(selectedStudentIds),
+          selectedAllocationBatchId
+        );
       } else {
         await staffApi.assignSection(selectedStaffId, selectedSectionId, 'SELECTED', Array.from(selectedStudentIds));
       }
@@ -346,6 +362,23 @@ export const StaffManagementPage: React.FC = () => {
       fetchStaff();
     } catch (err: any) {
       alert(err.response?.data?.error || 'Failed to save section assignment');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Remove Section / Allocation Batch Assignment
+  const handleRemoveSectionAssignment = async (sectionId: string, allocationBatchId?: string) => {
+    if (!selectedStaffId) return;
+    try {
+      setSubmitting(true);
+      await staffApi.removeSection(selectedStaffId, sectionId, allocationBatchId);
+      alert('Responsibility assignment removed!');
+      const updatedDetail = await staffApi.getStaffById(selectedStaffId);
+      setStaffDetail(updatedDetail);
+      fetchStaff();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to remove responsibility assignment');
     } finally {
       setSubmitting(false);
     }
@@ -1133,9 +1166,80 @@ export const StaffManagementPage: React.FC = () => {
               </button>
             </div>
 
-            {/* Section 2: Student Responsibility Distribution */}
+            {/* Section 2: Active Section & Allocation Batch Responsibilities */}
+            <div style={{ marginBottom: '2rem', backgroundColor: 'rgba(15, 23, 42, 0.5)', padding: '1.25rem', borderRadius: 'var(--radius-sm)' }}>
+              <h4 style={{ fontSize: '1rem', marginBottom: '0.75rem', color: 'var(--text-primary)' }}>
+                2. Active Section & Allocation Batch Responsibilities
+              </h4>
+              {(!staffDetail.assignedSections || staffDetail.assignedSections.length === 0) ? (
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: 0 }}>
+                  No specific section or allocation batch responsibilities currently assigned.
+                </p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {staffDetail.assignedSections.map((sec) => {
+                    const modeLabel = sec.assignment_mode === 'ALL'
+                      ? 'All Students (Entire Section)'
+                      : sec.allocation_batch_name
+                        ? `Allocation Batch: ${sec.allocation_batch_name}`
+                        : 'Selected Students';
+                    return (
+                      <div
+                        key={sec.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '0.6rem 0.85rem',
+                          borderRadius: 'var(--radius-sm)',
+                          backgroundColor: 'rgba(255, 255, 255, 0.04)',
+                          border: '1px solid var(--border-subtle)',
+                        }}
+                      >
+                        <div style={{ fontSize: '0.875rem' }}>
+                          <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                            {sec.batch_name} ({sec.department})
+                          </span>
+                          <span style={{ margin: '0 0.5rem', color: 'var(--text-muted)' }}>•</span>
+                          <span style={{ color: 'var(--primary)' }}>Section {sec.section_name}</span>
+                          <span style={{ margin: '0 0.5rem', color: 'var(--text-muted)' }}>•</span>
+                          <span style={{
+                            fontSize: '0.75rem',
+                            padding: '0.15rem 0.5rem',
+                            borderRadius: '9999px',
+                            backgroundColor: sec.assignment_mode === 'ALL' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(99, 102, 241, 0.15)',
+                            color: sec.assignment_mode === 'ALL' ? '#10b981' : '#818cf8',
+                            border: '1px solid currentColor',
+                          }}>
+                            {modeLabel}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() => handleRemoveSectionAssignment(sec.section_id || sec.id, sec.allocation_batch_id || undefined)}
+                          disabled={submitting}
+                          style={{
+                            padding: '0.3rem 0.5rem',
+                            fontSize: '0.75rem',
+                            color: '#f87171',
+                            borderColor: 'rgba(239, 68, 68, 0.3)',
+                          }}
+                          title="Remove assignment"
+                        >
+                          <Trash2 size={13} style={{ marginRight: '0.25rem' }} />
+                          Remove
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Section 3: Student Responsibility Distribution */}
             <div style={{ backgroundColor: 'rgba(15, 23, 42, 0.5)', padding: '1.25rem', borderRadius: 'var(--radius-sm)' }}>
-              <h4 style={{ fontSize: '1rem', marginBottom: '0.75rem', color: 'var(--accent-staff)' }}>2. Student Responsibility Distribution</h4>
+              <h4 style={{ fontSize: '1rem', marginBottom: '0.75rem', color: 'var(--accent-staff)' }}>3. Assign Section / Allocation Batch Responsibility</h4>
 
               {/* Batch & Section selector */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>

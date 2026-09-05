@@ -163,13 +163,28 @@ export async function getStudentsForUser(
     // High-Performance Security Scoping for STAFF users:
     // Evaluated in a single PostgreSQL query via native foreign key relation indexes
     if (user.role === 'STAFF') {
+      const assignedAllocBatches = await prisma.staffSectionAssignment.findMany({
+        where: { staff_id: user.userId, allocation_batch_id: { not: null } },
+        include: { allocation_batch: true },
+      });
+      const assignedAllocNames = assignedAllocBatches.map((a) => a.allocation_batch?.name).filter(Boolean) as string[];
+
+      const staffOr: any[] = [
+        { staff_student_assignments: { some: { staff_id: user.userId } } },
+        { section: { staff_section_assignments: { some: { staff_id: user.userId, assignment_mode: 'ALL' } } } },
+        { allocation_batch: { staff_section_assignments: { some: { staff_id: user.userId } } } },
+        { batch: { staff_batch_assignments: { some: { staff_id: user.userId } } } },
+      ];
+
+      if (assignedAllocNames.length > 0) {
+        staffOr.push({
+          section: { staff_section_assignments: { some: { staff_id: user.userId } } },
+          sub_batch: { in: assignedAllocNames, mode: 'insensitive' },
+        });
+      }
+
       andClauses.push({
-        OR: [
-          { staff_student_assignments: { some: { staff_id: user.userId } } },
-          { section: { staff_section_assignments: { some: { staff_id: user.userId, assignment_mode: 'ALL' } } } },
-          { allocation_batch: { staff_section_assignments: { some: { staff_id: user.userId } } } },
-          { batch: { staff_batch_assignments: { some: { staff_id: user.userId } } } },
-        ],
+        OR: staffOr,
       });
     }
 

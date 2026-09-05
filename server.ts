@@ -25,7 +25,7 @@ function mountStatic(expressApp: express.Application) {
 
   // SPA fallback for all non-API routes
   expressApp.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api')) {
+    if (req.path.startsWith('/api') || req.path.startsWith('/v1')) {
       return next();
     }
     res.setHeader('Cache-Control', 'no-cache');
@@ -42,11 +42,12 @@ async function startServer() {
     console.warn('[Server] Initial seed notice:', seedErr);
   }
 
+  const isProduction = process.env.NODE_ENV === 'production';
   const distIndexHtml = path.resolve(process.cwd(), 'client/dist/index.html');
   const distExists = fs.existsSync(distIndexHtml);
 
-  if (distExists) {
-    console.log('[Server] Serving pre-compiled high-performance frontend bundle from client/dist');
+  if (isProduction && distExists) {
+    console.log('[Server] Serving pre-compiled frontend bundle from client/dist');
     mountStatic(app);
   } else {
     try {
@@ -60,6 +61,22 @@ async function startServer() {
         appType: 'spa',
       });
       app.use(vite.middlewares);
+
+      // Handle SPA fallback for routes not handled by Vite middlewares or API
+      app.use('*', async (req, res, next) => {
+        if (req.originalUrl.startsWith('/api') || req.originalUrl.startsWith('/v1')) {
+          return next();
+        }
+        try {
+          const indexPath = path.resolve(process.cwd(), 'client/index.html');
+          let template = fs.readFileSync(indexPath, 'utf-8');
+          template = await vite.transformIndexHtml(req.originalUrl, template);
+          res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
+        } catch (e) {
+          next(e);
+        }
+      });
+
       console.log('[Server] Vite dev middleware attached.');
     } catch (viteErr) {
       console.warn('[Server] Falling back to static assets:', viteErr);

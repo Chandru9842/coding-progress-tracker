@@ -2,6 +2,7 @@ import { prisma } from '../db/client.js';
 import { inMemoryStore } from '../db/inMemoryStore.js';
 import { UserRole } from '../types/index.js';
 import { syncStudentLeetCode } from './leetcodeService.js';
+import { syncAllActiveGoogleSheets } from './googleSheetsService.js';
 import { serverCache } from '../utils/serverCache.js';
 
 export interface BulkImportStudentRow {
@@ -239,18 +240,23 @@ export async function bulkImportStudents(
     if (!effectiveSectionId || effectiveSectionId === 'ALL') {
       const rowSecName = (row as any).section_name || (row as any).section;
       if (rowSecName && effectiveBatchId) {
+        const cleanSecStr = (s: string) =>
+          s.toUpperCase().replace(/^(?:SECTION|SEC|CSE|IT|ECE|EEE|MECH|AIDS|AIML)[\s-_]*/i, '').replace(/[\s-_]/g, '');
+        const targetClean = cleanSecStr(String(rowSecName));
+
         if (!process.env.DATABASE_URL) {
           const matched = inMemoryStore.sections.find(
-            (s) => s.batch_id === effectiveBatchId && s.name.toUpperCase() === rowSecName.trim().toUpperCase()
+            (s) => s.batch_id === effectiveBatchId &&
+              (s.name.toUpperCase() === String(rowSecName).trim().toUpperCase() ||
+               cleanSecStr(s.name) === targetClean)
           );
           if (matched) effectiveSectionId = matched.id;
         } else {
-          const matched = await prisma.section.findFirst({
-            where: {
-              batch_id: effectiveBatchId,
-              name: { equals: rowSecName.trim(), mode: 'insensitive' },
-            },
-          });
+          const sections = await prisma.section.findMany({ where: { batch_id: effectiveBatchId } });
+          const matched = sections.find(
+            (s) => s.name.toUpperCase() === String(rowSecName).trim().toUpperCase() ||
+              cleanSecStr(s.name) === targetClean
+          );
           if (matched) effectiveSectionId = matched.id;
         }
       }
@@ -268,8 +274,70 @@ export async function bulkImportStudents(
     }
 
     const effectiveDept = row.department || defaultDept;
-    const effectiveAllocBatchId = row.allocation_batch_id || defaultAllocBatchId || null;
-    const effectiveSubBatch = row.sub_batch || defaultSubBatch || null;
+    let effectiveAllocBatchId = row.allocation_batch_id || defaultAllocBatchId || null;
+    let rawSubBatch = row.sub_batch || (row as any).allocation_batch || (row as any).batch_no || defaultSubBatch || null;
+
+    // Normalize sub_batch (e.g. "batc5" -> "Batch-5", "batch-1" -> "Batch-1")
+    let effectiveSubBatch: string | null = null;
+    if (rawSubBatch) {
+      const s = String(rawSubBatch).trim();
+      const m = s.match(/^(?:batch|batc|b)[\s-_]*(\d+)$/i);
+      effectiveSubBatch = m ? `Batch-${m[1]}` : s;
+    }
+
+    // Auto-resolve or create Allocation Batch in target section
+    if (effectiveSectionId && effectiveSubBatch && !effectiveAllocBatchId) {
+      if (!process.env.DATABASE_URL) {
+        const norm = (val: string) => val.toLowerCase().replace(/[\s-_]/g, '').replace(/^batc(?=\d)/, 'batch');
+        const targetNorm = norm(effectiveSubBatch);
+        const existingAb = inMemoryStore.allocationBatches.find(
+          (ab) => ab.section_id === effectiveSectionId &&
+            (ab.name.toLowerCase() === effectiveSubBatch!.toLowerCase() || norm(ab.name) === targetNorm)
+        );
+        if (existingAb) {
+          effectiveAllocBatchId = existingAb.id;
+          effectiveSubBatch = existingAb.name;
+        } else {
+          const newAb = {
+            id: `ab_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            section_id: effectiveSectionId,
+            name: effectiveSubBatch,
+            created_at: new Date(),
+          };
+          inMemoryStore.allocationBatches.push(newAb);
+          effectiveAllocBatchId = newAb.id;
+        }
+      } else {
+        let existingAb = await prisma.allocationBatch.findFirst({
+          where: {
+            section_id: effectiveSectionId,
+            name: { equals: effectiveSubBatch, mode: 'insensitive' },
+          },
+        });
+        if (!existingAb) {
+          try {
+            existingAb = await prisma.allocationBatch.create({
+              data: {
+                section_id: effectiveSectionId,
+                name: effectiveSubBatch,
+              },
+            });
+          } catch {
+            existingAb = await prisma.allocationBatch.findFirst({
+              where: {
+                section_id: effectiveSectionId,
+                name: { equals: effectiveSubBatch, mode: 'insensitive' },
+              },
+            });
+          }
+        }
+        if (existingAb) {
+          effectiveAllocBatchId = existingAb.id;
+          effectiveSubBatch = existingAb.name;
+        }
+      }
+    }
+
     const effectiveCurrentYear = row.current_year || targetScope?.current_year || undefined;
 
     if (!effectiveBatchId || !effectiveSectionId) {
@@ -434,18 +502,25 @@ export async function bulkImportStudents(
     }
   }
 
-  // 4. Trigger initial background LeetCode fetch for imported students (non-blocking with gentle throttling)
+  // 4. Trigger initial background LeetCode fetch for all imported students
   if (newlyCreatedOrUpdatedIds.length > 0) {
     const authContext = { userId: user.userId, role: user.role };
-    const idsToSync = newlyCreatedOrUpdatedIds.slice(0, 25);
     (async () => {
-      for (const stId of idsToSync) {
+      console.log(`[Import-Sync] Starting background LeetCode fetch for ${newlyCreatedOrUpdatedIds.length} imported student(s)...`);
+      for (const stId of newlyCreatedOrUpdatedIds) {
         try {
-          await syncStudentLeetCode(stId, authContext);
+          await syncStudentLeetCode(stId, authContext, { skipGoogleSheetSync: true });
         } catch {
-          // Ignore background sync errors
+          // Ignore individual background sync errors
         }
-        await new Promise((r) => setTimeout(r, 800));
+        await new Promise((r) => setTimeout(r, 400));
+      }
+      // Once all imported students are synced, push once to all active Google Sheets!
+      try {
+        await syncAllActiveGoogleSheets();
+        console.log(`[Import-Sync] Completed bulk Google Sheet synchronization for imported students.`);
+      } catch (sheetErr: any) {
+        console.warn(`[Import-Sync] Google Sheet bulk sync note:`, sheetErr?.message || sheetErr);
       }
     })().catch(() => {});
   }

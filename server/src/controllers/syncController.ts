@@ -181,24 +181,24 @@ export async function getSyncStatus(req: AuthenticatedRequest, res: Response): P
 
     const istDate = leetcodeService.getISTDate().toISOString().split('T')[0];
 
+    const { getGoogleSheetsSyncStatus } = await import('../services/googleSheetsService.js');
+    const googleSheetsStatus = await getGoogleSheetsSyncStatus({
+      userId: req.user.userId,
+      role: req.user.role,
+    });
+
     res.status(200).json({
       status: 'ACTIVE',
       periodicPollingIntervalMinutes: 15,
-      dailyReconciliationIST: '1:00 PM IST (07:30 UTC)',
+      dailyReconciliationIST: '12:30 AM IST (Asia/Kolkata)',
       currentISTDate: istDate,
+      googleSheets: googleSheetsStatus,
       vercelCronConfig: {
         cronEndpoint: '/api/v1/cron/daily-sync',
-        scheduleUTC: '0 23 * * *',
+        scheduleUTC: '0 19 * * *',
         hobbyPlanNote: 'Vercel Hobby plan supports once-per-day cron schedules with hour-level precision.',
       },
     });
-
-
-
-
-
-
-
   } catch (error: any) {
     res.status(500).json({ error: 'Failed to retrieve sync status' });
   }

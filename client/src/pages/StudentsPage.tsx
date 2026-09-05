@@ -24,6 +24,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
+import { SyncStatus } from '../components/SyncStatus.js';
 import {
   analyzeAndParseStudents,
   downloadSampleCSVFile,
@@ -435,14 +436,18 @@ export const StudentsPage: React.FC = () => {
         if (updated && updated.id) {
           setStudents((prev) => prev.map((s) => s.id === editingStudentId ? { ...s, ...updated } : s));
         }
+        setSyncNotice('Student updated successfully! LeetCode details & Google Sheets automatically synced.');
       } else {
         const created = await studentApi.createStudent(studentForm);
         if (created && created.id) {
           setStudents((prev) => [created, ...prev]);
         }
+        setSyncNotice('Student added successfully! Initial LeetCode snapshot & Google Sheets automatically synced.');
       }
       setShowStudentModal(false);
       fetchStudents(false);
+      window.dispatchEvent(new CustomEvent('student-synced'));
+      window.dispatchEvent(new CustomEvent('sheets-synced'));
     } catch (err: any) {
       alert(err.response?.data?.error || 'Failed to save student record');
     } finally {
@@ -818,7 +823,9 @@ export const StudentsPage: React.FC = () => {
             </p>
           </div>
 
-          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <SyncStatus variant="badge" align="left" />
+
             <button
               className="btn-secondary"
               onClick={handleSyncBatchOrAll}

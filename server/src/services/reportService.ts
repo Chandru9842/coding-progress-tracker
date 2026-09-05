@@ -274,7 +274,26 @@ export function calculateStudentPeriodStats(
     periodHard = 0;
   }
 
-  const periodTotal = periodEasy + periodMedium + periodHard;
+  let periodTotal = periodEasy + periodMedium + periodHard;
+
+  if (priorBaselineSnap) {
+    const endSnap = periodSnaps.length > 0 ? periodSnaps[periodSnaps.length - 1] : null;
+    if (endSnap) {
+      const rawTotalDelta = Math.max(0, (endSnap.total_solved || 0) - (priorBaselineSnap.total_solved || 0));
+      if (rawTotalDelta > periodTotal) {
+        periodEasy += (rawTotalDelta - periodTotal);
+        periodTotal = rawTotalDelta;
+      }
+    }
+  } else if (periodSnaps.length >= 2) {
+    const firstSnap = periodSnaps[0];
+    const lastSnap = periodSnaps[periodSnaps.length - 1];
+    const rawTotalDelta = Math.max(0, (lastSnap.total_solved || 0) - (firstSnap.total_solved || 0));
+    if (rawTotalDelta > periodTotal) {
+      periodEasy += (rawTotalDelta - periodTotal);
+      periodTotal = rawTotalDelta;
+    }
+  }
 
   return {
     easy_solved: periodEasy,

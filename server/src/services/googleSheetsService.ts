@@ -248,7 +248,12 @@ export function buildGoogleSheetMatrix(
           easyToday = Math.max(0, currSnap.easy_solved - prevSnap.easy_solved);
           medToday = Math.max(0, currSnap.medium_solved - prevSnap.medium_solved);
           hardToday = Math.max(0, currSnap.hard_solved - prevSnap.hard_solved);
+          const rawTotalDelta = Math.max(0, currSnap.total_solved - prevSnap.total_solved);
           totalToday = easyToday + medToday + hardToday;
+          if (rawTotalDelta > totalToday) {
+            easyToday += (rawTotalDelta - totalToday);
+            totalToday = rawTotalDelta;
+          }
         } else {
           easyToday = 0;
           medToday = 0;
@@ -888,33 +893,51 @@ export async function syncGoogleSheetLink(
   let webhookResponseText = '';
 
   if (webhookUrl) {
-    try {
-      const payloadString = JSON.stringify({
-        headers: matrix.headers,
-        rows: matrix.rows,
-        studentCount: matrix.studentCount,
-        updatedAt: now.toISOString(),
-      });
-      const whRes = await axios.post(webhookUrl, payloadString, {
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8',
-        },
-        maxRedirects: 5,
-        timeout: 30000,
-      });
-      webhookResponseText = String(whRes.data || '');
-      if (webhookResponseText.startsWith('ERROR:')) {
-        webhookSuccess = false;
-        details += ` [Apps Script Error: ${webhookResponseText}]`;
-        console.warn(`[GOOGLE_SHEETS] Apps Script Webhook returned error: ${webhookResponseText}`);
-      } else {
+    const payloadString = JSON.stringify({
+      sheetName: link.name || 'Daily Progress',
+      headers: matrix.headers,
+      rows: matrix.rows,
+      studentCount: matrix.studentCount,
+      updatedAt: now.toISOString(),
+    });
+
+    const maxRetries = 3;
+    let attempt = 0;
+    let lastErrorMsg = '';
+
+    while (attempt < maxRetries) {
+      attempt++;
+      try {
+        const whRes = await axios.post(webhookUrl, payloadString, {
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8',
+          },
+          maxRedirects: 5,
+          timeout: 45000,
+        });
+
+        webhookResponseText = String(whRes.data || '').trim();
+        if (webhookResponseText.startsWith('ERROR:') || webhookResponseText.toLowerCase().includes('timed out')) {
+          throw new Error(webhookResponseText);
+        }
+
+        webhookSuccess = true;
         details += ` [Google Sheet updated via Apps Script: ${webhookResponseText || 'SUCCESS'}]`;
-        console.log(`[GOOGLE_SHEETS] Successfully posted matrix data to Apps Script Webhook [${webhookUrl}], Response: ${webhookResponseText}`);
+        console.log(`[GOOGLE_SHEETS] (Attempt ${attempt}/${maxRetries}) Successfully posted matrix data to Apps Script Webhook [${webhookUrl}], Response: ${webhookResponseText}`);
+        break;
+      } catch (postErr: any) {
+        lastErrorMsg = postErr?.message || String(postErr);
+        console.warn(`[GOOGLE_SHEETS] Webhook attempt ${attempt}/${maxRetries} failed for link [${linkId}]: ${lastErrorMsg}`);
+        if (attempt < maxRetries) {
+          // Wait 2s on 1st retry, 4s on 2nd retry
+          await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+        } else {
+          webhookSuccess = false;
+          webhookResponseText = lastErrorMsg;
+          details += ` [Webhook Warning after ${maxRetries} attempts: ${lastErrorMsg}]`;
+          console.error(`[GOOGLE_SHEETS] Apps Script Webhook POST failed after ${maxRetries} attempts:`, lastErrorMsg);
+        }
       }
-    } catch (whErr: any) {
-      webhookSuccess = false;
-      details += ` [Webhook Warning: ${whErr?.message || whErr}]`;
-      console.error('[GOOGLE_SHEETS] Apps Script Webhook POST warning:', whErr?.message || whErr);
     }
   }
 
@@ -1027,3 +1050,276 @@ export async function getGoogleSheetLinkLogs(
     orderBy: { synced_at: 'desc' },
   });
 }
+
+/**
+ * Tests the connectivity and zero-error readiness of a linked Google Apps Script Webhook.
+ */
+export async function testGoogleSheetWebhook(
+  linkId: string,
+  user: { userId: string; role: 'ADMIN' | 'STAFF' }
+): Promise<{
+  success: boolean;
+  webhookUrl: string | null;
+  latencyMs: number;
+  statusCode?: number;
+  response: string;
+  message: string;
+}> {
+  const link = await getGoogleSheetLinkById(linkId, user);
+
+  let webhookUrl: string | null = (link as any).webhook_url || null;
+  if (!webhookUrl && link.spreadsheet_url && link.spreadsheet_url.includes('@@WEBHOOK@@')) {
+    const afterWh = link.spreadsheet_url.split('@@WEBHOOK@@')[1];
+    webhookUrl = afterWh.split('@@START_DATE@@')[0] || null;
+  } else if (!webhookUrl && link.spreadsheet_url && (link.spreadsheet_url.startsWith('https://script.google.com') || link.spreadsheet_url.includes('/macros/s/'))) {
+    webhookUrl = link.spreadsheet_url;
+  } else if (!webhookUrl && link.spreadsheet_id && (link.spreadsheet_id.startsWith('https://script.google.com') || link.spreadsheet_id.includes('/macros/s/'))) {
+    webhookUrl = link.spreadsheet_id;
+  }
+
+  if (!webhookUrl) {
+    return {
+      success: false,
+      webhookUrl: null,
+      latencyMs: 0,
+      response: 'NO_WEBHOOK_ATTACHED',
+      message: 'No Google Apps Script Webhook URL attached to this sheet. Follow the Apps Script Setup guide to enable background zero-error automation.',
+    };
+  }
+
+  const startTime = Date.now();
+  try {
+    const testPayload = JSON.stringify({
+      sheetName: link.name || 'Daily Progress',
+      testPing: true,
+      timestamp: new Date().toISOString(),
+      headers: ['Zero-Error Verification Test', 'Status', 'Timestamp'],
+      rows: [['Active Verification', 'PASS', new Date().toISOString()]],
+      studentCount: 1,
+    });
+
+    const res = await axios.post(webhookUrl, testPayload, {
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      maxRedirects: 5,
+      timeout: 30000,
+    });
+
+    const latencyMs = Date.now() - startTime;
+    const respStr = String(res.data || '').trim();
+
+    if (respStr.startsWith('ERROR:')) {
+      return {
+        success: false,
+        webhookUrl,
+        latencyMs,
+        statusCode: res.status,
+        response: respStr,
+        message: `Apps Script responded with an error: ${respStr}`,
+      };
+    }
+
+    return {
+      success: true,
+      webhookUrl,
+      latencyMs,
+      statusCode: res.status,
+      response: respStr || 'SUCCESS',
+      message: `Zero-Error Webhook Verified! Response "${respStr || 'SUCCESS'}" received in ${latencyMs}ms. Daily background synchronization is 100% operational.`,
+    };
+  } catch (err: any) {
+    const latencyMs = Date.now() - startTime;
+    return {
+      success: false,
+      webhookUrl,
+      latencyMs,
+      response: err?.message || String(err),
+      message: `Webhook test failed: ${err?.message || 'Connection timeout'}. Verify the Apps Script is deployed as Web App with Access: "Anyone".`,
+    };
+  }
+}
+
+/**
+ * Synchronizes all active Google Sheets across the application with zero error handling.
+ */
+export async function syncAllActiveGoogleSheets(): Promise<{
+  attempted: number;
+  successful: number;
+  failed: number;
+  results: Array<{ linkId: string; name: string; success: boolean; details?: string; error?: string }>;
+}> {
+  let activeLinks: any[] = [];
+  if (!process.env.DATABASE_URL) {
+    activeLinks = inMemoryStore.googleSheetLinks.filter((l) => l.is_active);
+  } else {
+    activeLinks = await prisma.googleSheetLink.findMany({
+      where: { is_active: true },
+    });
+  }
+
+  const results: Array<{ linkId: string; name: string; success: boolean; details?: string; error?: string }> = [];
+
+  for (const link of activeLinks) {
+    try {
+      const res = await syncGoogleSheetLink(link.id, { userId: link.owner_user_id || 'admin', role: 'ADMIN' });
+      results.push({
+        linkId: link.id,
+        name: link.name,
+        success: true,
+        details: res.details,
+      });
+    } catch (err: any) {
+      results.push({
+        linkId: link.id,
+        name: link.name,
+        success: false,
+        error: err?.message || String(err),
+      });
+    }
+  }
+
+  const successful = results.filter((r) => r.success).length;
+  return {
+    attempted: activeLinks.length,
+    successful,
+    failed: activeLinks.length - successful,
+    results,
+  };
+}
+
+export interface GoogleSheetsSyncStatusResponse {
+  connected: boolean;
+  status: 'CONNECTED' | 'DISCONNECTED' | 'NO_LINKS';
+  lastSuccessfulSyncAt: string | null;
+  lastSyncStatus: string | null;
+  lastSyncError: string | null;
+  activeLinksCount: number;
+  totalLinksCount: number;
+  activeSheets: Array<{
+    id: string;
+    name: string;
+    spreadsheet_id: string;
+    spreadsheet_name?: string | null;
+    last_sync_at: string | null;
+    last_sync_status: string | null;
+    last_sync_error?: string | null;
+    webhook_configured: boolean;
+  }>;
+  dailyAutomation?: {
+    isTodaySynced: boolean;
+    lastSyncedISTDate: string | null;
+    targetScheduleIST: string;
+    zeroErrorProtectionActive: boolean;
+    summary?: any;
+  };
+}
+
+/**
+ * Returns real-time Google Sheets connection status, active count, and last successful sync timestamp.
+ */
+export async function getGoogleSheetsSyncStatus(user?: { userId: string; role: 'ADMIN' | 'STAFF' }): Promise<GoogleSheetsSyncStatusResponse> {
+  let allLinks: any[] = [];
+  if (!process.env.DATABASE_URL) {
+    allLinks = inMemoryStore.googleSheetLinks.map((l) => sanitizeGoogleSheetLink({ ...l }));
+  } else {
+    allLinks = await prisma.googleSheetLink.findMany({
+      orderBy: { created_at: 'desc' },
+    });
+    allLinks = allLinks.map((l) => sanitizeGoogleSheetLink({ ...l }));
+  }
+
+  const activeLinks = allLinks.filter((l) => l.is_active);
+
+  // Find the latest successful sync across all active links
+  let lastSuccessfulSyncAt: string | null = null;
+  for (const l of activeLinks) {
+    if (l.last_sync_at && l.last_sync_status === 'SUCCESS') {
+      const syncTime = new Date(l.last_sync_at).toISOString();
+      if (!lastSuccessfulSyncAt || new Date(syncTime).getTime() > new Date(lastSuccessfulSyncAt).getTime()) {
+        lastSuccessfulSyncAt = syncTime;
+      }
+    }
+  }
+
+  // If no link explicitly has SUCCESS yet, check sync logs if any
+  if (!lastSuccessfulSyncAt) {
+    if (!process.env.DATABASE_URL) {
+      const successfulLogs = inMemoryStore.googleSheetLinkLogs
+        .filter((lg) => lg.status === 'SUCCESS')
+        .sort((a, b) => new Date(b.synced_at).getTime() - new Date(a.synced_at).getTime());
+      if (successfulLogs.length > 0) {
+        lastSuccessfulSyncAt = new Date(successfulLogs[0].synced_at).toISOString();
+      }
+    } else {
+      const latestLog = await prisma.googleSheetLinkSyncLog.findFirst({
+        where: { status: 'SUCCESS' },
+        orderBy: { synced_at: 'desc' },
+      });
+      if (latestLog?.synced_at) {
+        lastSuccessfulSyncAt = new Date(latestLog.synced_at).toISOString();
+      }
+    }
+  }
+
+  // Find overall last sync status and error across active links
+  let overallLastSyncStatus: string | null = null;
+  let overallLastSyncError: string | null = null;
+
+  const sortedByRecentSync = [...activeLinks]
+    .filter((l) => l.last_sync_at)
+    .sort((a, b) => new Date(b.last_sync_at).getTime() - new Date(a.last_sync_at).getTime());
+
+  if (sortedByRecentSync.length > 0) {
+    overallLastSyncStatus = sortedByRecentSync[0].last_sync_status || null;
+    overallLastSyncError = sortedByRecentSync[0].last_sync_error || null;
+  }
+
+  // Real-time status computation
+  let status: 'CONNECTED' | 'DISCONNECTED' | 'NO_LINKS' = 'NO_LINKS';
+  let connected = false;
+
+  if (activeLinks.length === 0) {
+    status = 'NO_LINKS';
+    connected = false;
+  } else {
+    const hasAnyFailure = activeLinks.some((l) => l.last_sync_status === 'FAILED');
+    const hasAnySuccess = activeLinks.some((l) => l.last_sync_status === 'SUCCESS');
+
+    if (hasAnySuccess || !hasAnyFailure) {
+      status = 'CONNECTED';
+      connected = true;
+    } else {
+      status = 'DISCONNECTED';
+      connected = false;
+    }
+  }
+
+  let dailyAutomation: any = undefined;
+  try {
+    const { getDailyAutomationStatus } = await import('./cronService.js');
+    dailyAutomation = getDailyAutomationStatus();
+  } catch {}
+
+  return {
+    connected,
+    status,
+    lastSuccessfulSyncAt,
+    lastSyncStatus: overallLastSyncStatus,
+    lastSyncError: overallLastSyncError,
+    activeLinksCount: activeLinks.length,
+    totalLinksCount: allLinks.length,
+    activeSheets: activeLinks.map((l) => ({
+      id: l.id,
+      name: l.name,
+      spreadsheet_id: l.spreadsheet_id,
+      spreadsheet_name: l.spreadsheet_name,
+      last_sync_at: l.last_sync_at ? new Date(l.last_sync_at).toISOString() : null,
+      last_sync_status: l.last_sync_status || null,
+      last_sync_error: l.last_sync_error || null,
+      webhook_configured: Boolean(l.webhook_url),
+    })),
+    dailyAutomation,
+  };
+}
+

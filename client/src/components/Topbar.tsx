@@ -2,6 +2,7 @@ import React from 'react';
 import { useAuth } from '../context/AuthContext.js';
 import { LogOut, User as UserIcon, Menu } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { SyncStatus } from './SyncStatus.js';
 
 interface TopbarProps {
   title: string;
@@ -52,13 +53,15 @@ export const Topbar: React.FC<TopbarProps> = ({ title, onToggleMobileMenu }) => 
             <Menu size={22} />
           </button>
         )}
-        <h2 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '180px' }}>
+        <h2 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 'clamp(220px, 40vw, 450px)' }}>
           {title}
         </h2>
       </div>
 
-      {/* User Status & Controls */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+      {/* Sync Status Badge & User Controls */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        {user && <SyncStatus variant="badge" />}
+
         {user && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <span className={`badge-role ${user.role.toLowerCase()}`}>

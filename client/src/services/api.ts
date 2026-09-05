@@ -97,7 +97,19 @@ export interface StaffUser {
   assignedBatchesCount?: number;
   assignedStudentsCount?: number;
   assignedBatches: Array<{ id: string; batch_name: string }>;
-  assignedSections: Array<{ id: string; name: string; batch_id: string; section_id?: string; assignment_mode?: 'ALL' | 'SELECTED' }>;
+  assignedSections: Array<{
+    id: string;
+    name?: string;
+    batch_id: string;
+    section_id?: string;
+    assignment_mode?: 'ALL' | 'SELECTED';
+    allocation_batch_id?: string;
+    allocation_batch_name?: string;
+    section_name?: string;
+    batch_name?: string;
+    department?: string;
+    academic_year?: string;
+  }>;
   directStudentAssignments: Array<{ id: string; name: string; register_number: string; section_id?: string }>;
   staff_batch_assignments?: Array<{ batch: { id: string; batch_name: string } }>;
   staff_section_assignments?: Array<{ section: { id: string; name: string; batch_id: string }; assignment_mode: 'ALL' | 'SELECTED' }>;
@@ -357,15 +369,18 @@ export const staffApi = {
     await api.post(`/staff/${staffId}/batches`, { batchIds });
   },
 
-  assignSection: async (staffId: string, sectionId: string, assignmentMode: 'ALL' | 'SELECTED', studentIds?: string[]): Promise<void> => {
-    await api.post(`/staff/${staffId}/sections`, { sectionId, assignmentMode });
+  assignSection: async (staffId: string, sectionId: string, assignmentMode: 'ALL' | 'SELECTED', studentIds?: string[], allocationBatchId?: string): Promise<void> => {
+    await api.post(`/staff/${staffId}/sections`, { sectionId, assignmentMode, allocationBatchId });
     if (assignmentMode === 'SELECTED' && studentIds && studentIds.length > 0) {
-      await api.post(`/staff/${staffId}/students`, { studentIds });
+      await api.post(`/staff/${staffId}/students`, { sectionId, studentIds });
     }
   },
 
-  removeSection: async (staffId: string, sectionId: string): Promise<void> => {
-    await api.delete(`/staff/${staffId}/sections/${sectionId}`);
+  removeSection: async (staffId: string, sectionId: string, allocationBatchId?: string): Promise<void> => {
+    const url = allocationBatchId
+      ? `/staff/${staffId}/sections/${sectionId}?allocationBatchId=${encodeURIComponent(allocationBatchId)}`
+      : `/staff/${staffId}/sections/${sectionId}`;
+    await api.delete(url);
   },
 
   assignStudents: async (staffId: string, studentIds: string[]): Promise<void> => {
@@ -589,11 +604,15 @@ export const syncApi = {
   },
 
   syncBatch: async (batchId: string): Promise<any> => {
+    clearClientCache('sheets_');
+    clearClientCache('students_');
     const res = await api.post(`/sync/batch/${batchId}`);
     return res.data;
   },
 
   syncAll: async (): Promise<any> => {
+    clearClientCache('sheets_');
+    clearClientCache('students_');
     const res = await api.post('/sync/all');
     return res.data;
   },
@@ -641,6 +660,8 @@ export interface GoogleSheetLink {
   last_sync_status?: string | null;
   last_sync_error?: string | null;
   owner?: { id: string; name: string; email: string; role: string } | null;
+  created_by?: string;
+  batches?: Array<{ id: string; batch_name: string }>;
   created_at: string;
   updated_at: string;
 }
@@ -686,7 +707,7 @@ export const googleSheetsApi = {
       name?: string;
       spreadsheet_id?: string;
       spreadsheet_name?: string;
-      webhook_url?: string;
+      webhook_url?: string | null;
       start_date?: string | null;
       is_active?: boolean;
       academic_year?: string;
@@ -724,4 +745,57 @@ export const googleSheetsApi = {
     const res = await api.get<{ logs: GoogleSheetLinkLog[] }>(`/google-sheets/links/${linkId}/logs`);
     return res.data.logs;
   },
+
+  getLinkLogs: async (linkId: string): Promise<GoogleSheetLinkLog[]> => {
+    return googleSheetsApi.getLogs(linkId);
+  },
+
+  getAutomationStatus: async (): Promise<any> => {
+    const res = await api.get<{ status: any }>('/google-sheets/automation-status');
+    return res.data.status;
+  },
+
+  runDailyAutomation: async (): Promise<any> => {
+    const res = await api.post<{ message: string; summary: any }>('/google-sheets/run-daily-automation');
+    return res.data;
+  },
+
+  testWebhook: async (linkId: string): Promise<any> => {
+    const res = await api.post<any>(`/google-sheets/links/${linkId}/test-webhook`);
+    return res.data;
+  },
+
+  getSyncStatus: async (): Promise<GoogleSheetsSyncStatus> => {
+    return fetchWithDedupe('sheets_sync_status', async () => {
+      const res = await api.get<GoogleSheetsSyncStatus>('/google-sheets/sync-status');
+      return res.data;
+    });
+  },
 };
+
+export interface GoogleSheetsSyncStatus {
+  connected: boolean;
+  status: 'CONNECTED' | 'DISCONNECTED' | 'NO_LINKS';
+  lastSuccessfulSyncAt: string | null;
+  lastSyncStatus: string | null;
+  lastSyncError: string | null;
+  activeLinksCount: number;
+  totalLinksCount: number;
+  activeSheets: Array<{
+    id: string;
+    name: string;
+    spreadsheet_id: string;
+    spreadsheet_name?: string | null;
+    last_sync_at: string | null;
+    last_sync_status: string | null;
+    last_sync_error?: string | null;
+    webhook_configured: boolean;
+  }>;
+  dailyAutomation?: {
+    isTodaySynced: boolean;
+    lastSyncedISTDate: string | null;
+    targetScheduleIST: string;
+    zeroErrorProtectionActive: boolean;
+    summary?: any;
+  };
+}
