@@ -2,6 +2,7 @@ import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext.js';
 import { ProtectedRoute } from './components/ProtectedRoute.js';
+import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { Loader2 } from 'lucide-react';
 
 const LoginPage = lazy(() => import('./pages/LoginPage.js').then((m) => ({ default: m.LoginPage })));
@@ -13,6 +14,7 @@ const BatchDetailPage = lazy(() => import('./pages/BatchDetailPage.js').then((m)
 const StudentsPage = lazy(() => import('./pages/StudentsPage.js').then((m) => ({ default: m.StudentsPage })));
 const StudentDetailPage = lazy(() => import('./pages/StudentDetailPage.js').then((m) => ({ default: m.StudentDetailPage })));
 const ReportsPage = lazy(() => import('./pages/ReportsPage.js'));
+const DiagnosticsPage = lazy(() => import('./pages/DiagnosticsPage.js').then((m) => ({ default: m.DiagnosticsPage })));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage.js').then((m) => ({ default: m.NotFoundPage })));
 
 const RouteLoadingFallback: React.FC = () => (
@@ -36,30 +38,33 @@ export const App: React.FC = () => {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Suspense fallback={<RouteLoadingFallback />}>
-          <Routes>
-            {/* Root path redirect to Dashboard */}
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <ErrorBoundary>
+          <Suspense fallback={<RouteLoadingFallback />}>
+            <Routes>
+              {/* Root path redirect to Dashboard */}
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
-            {/* Public Route */}
-            <Route path="/login" element={<LoginPage />} />
+              {/* Public Route */}
+              <Route path="/login" element={<LoginPage />} />
 
-            {/* Protected Routes */}
-            <Route element={<ProtectedRoute />}>
-              <Route path="/dashboard" element={<DashboardPage />} />
-              <Route path="/staff-management" element={<StaffManagementPage />} />
-              <Route path="/batches" element={<BatchesPage />} />
-              <Route path="/batches/:batchId" element={<BatchDetailPage />} />
-              <Route path="/students" element={<StudentsPage />} />
-              <Route path="/students/:studentId" element={<StudentDetailPage />} />
-              <Route path="/reports" element={<ReportsPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-            </Route>
+              {/* Protected Routes */}
+              <Route element={<ProtectedRoute />}>
+                <Route path="/dashboard" element={<DashboardPage />} />
+                <Route path="/staff-management" element={<StaffManagementPage />} />
+                <Route path="/batches" element={<BatchesPage />} />
+                <Route path="/batches/:batchId" element={<BatchDetailPage />} />
+                <Route path="/students" element={<StudentsPage />} />
+                <Route path="/students/:studentId" element={<StudentDetailPage />} />
+                <Route path="/reports" element={<ReportsPage />} />
+                <Route path="/diagnostics" element={<DiagnosticsPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+              </Route>
 
-            {/* Dedicated 404 Route */}
-            <Route path="*" element={<NotFoundPage />} />
-          </Routes>
-        </Suspense>
+              {/* Dedicated 404 Route */}
+              <Route path="*" element={<NotFoundPage />} />
+            </Routes>
+          </Suspense>
+        </ErrorBoundary>
       </AuthProvider>
     </BrowserRouter>
   );

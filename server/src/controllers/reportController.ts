@@ -42,7 +42,12 @@ export async function getReportData(req: AuthenticatedRequest, res: Response): P
       sortBy,
       sortOrder,
       activityStatus,
+      minProblems,
     } = req.query;
+
+    const parsedMinProblems = minProblems !== undefined && minProblems !== null && String(minProblems).trim() !== ''
+      ? parseInt(String(minProblems), 10)
+      : undefined;
 
     const data = await reportService.getReportData(
       {
@@ -57,6 +62,7 @@ export async function getReportData(req: AuthenticatedRequest, res: Response): P
         sortBy: sortBy as any,
         sortOrder: sortOrder as any,
         activityStatus: activityStatus as any,
+        minProblems: isNaN(parsedMinProblems as any) ? undefined : parsedMinProblems,
       },
       { userId: req.user.userId, role: req.user.role }
     );
@@ -110,7 +116,12 @@ export async function exportCsvReport(req: AuthenticatedRequest, res: Response):
       sortBy,
       sortOrder,
       activityStatus,
+      minProblems,
     } = req.body;
+
+    const parsedMinProblems = minProblems !== undefined && minProblems !== null && String(minProblems).trim() !== ''
+      ? parseInt(String(minProblems), 10)
+      : undefined;
 
     const result = await reportService.exportCsvReport(
       {
@@ -125,6 +136,7 @@ export async function exportCsvReport(req: AuthenticatedRequest, res: Response):
         sortBy,
         sortOrder,
         activityStatus,
+        minProblems: isNaN(parsedMinProblems as any) ? undefined : parsedMinProblems,
       },
       { userId: req.user.userId, role: req.user.role }
     );
@@ -158,7 +170,12 @@ export async function exportExcelReport(req: AuthenticatedRequest, res: Response
       sortBy,
       sortOrder,
       activityStatus,
+      minProblems,
     } = req.body;
+
+    const parsedMinProblems = minProblems !== undefined && minProblems !== null && String(minProblems).trim() !== ''
+      ? parseInt(String(minProblems), 10)
+      : undefined;
 
     const result = await reportService.exportExcelReport(
       {
@@ -173,6 +190,7 @@ export async function exportExcelReport(req: AuthenticatedRequest, res: Response
         sortBy,
         sortOrder,
         activityStatus,
+        minProblems: isNaN(parsedMinProblems as any) ? undefined : parsedMinProblems,
       },
       { userId: req.user.userId, role: req.user.role }
     );

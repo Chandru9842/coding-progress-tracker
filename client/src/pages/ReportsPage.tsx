@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { RefreshCw, FileSpreadsheet, Download, Trash2, CheckCircle2, AlertCircle, X, Layers } from 'lucide-react';
+import { RefreshCw, FileSpreadsheet, Download, Trash2, CheckCircle2, AlertCircle, X, Layers, AlertTriangle } from 'lucide-react';
 import { Layout } from '../components/Layout.js';
 import { GoogleSheetsIntegration } from '../components/GoogleSheetsIntegration.js';
+import { SyncErrorsView } from '../components/SyncErrorsView.js';
 import {
   getReportFilters,
   getReportData,
@@ -24,13 +25,16 @@ import {
 export default function ReportsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const currentTabParam = searchParams.get('tab');
-  const activeTab = currentTabParam === 'sheets' ? 'sheets' : 'reports';
+  const activeTab: 'reports' | 'sheets' | 'errors' =
+    currentTabParam === 'sheets' ? 'sheets' : currentTabParam === 'errors' ? 'errors' : 'reports';
 
-  const handleTabChange = (tab: 'reports' | 'sheets') => {
+  const handleTabChange = (tab: 'reports' | 'sheets' | 'errors') => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       if (tab === 'sheets') {
         next.set('tab', 'sheets');
+      } else if (tab === 'errors') {
+        next.set('tab', 'errors');
       } else {
         next.delete('tab');
       }
@@ -93,6 +97,7 @@ export default function ReportsPage() {
   const [sortBy, setSortBy] = useState<'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name'>('total');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [activityStatus, setActivityStatus] = useState<'all' | 'active' | 'no_activity'>('all');
+  const [minProblems, setMinProblems] = useState<string>('');
 
   const [reportData, setReportData] = useState<ReportDataResponse | null>(null);
   const [reportsList, setReportsList] = useState<ReportItem[]>([]);
@@ -227,6 +232,7 @@ export default function ReportsPage() {
     setLoading(true);
     setError(null);
     try {
+      const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
       const data = await getReportData({
         academicYear: academicYear || undefined,
         department: department || undefined,
@@ -239,6 +245,7 @@ export default function ReportsPage() {
         sortBy,
         sortOrder,
         activityStatus,
+        minProblems: (parsedMin !== undefined && !isNaN(parsedMin)) ? parsedMin : undefined,
       });
       setReportData(data);
     } catch (err: any) {
@@ -265,6 +272,7 @@ export default function ReportsPage() {
       const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
       setSuccessMsg(res.message ? `${res.message} (completed in ${res.durationSeconds || elapsedSec}s)` : `⚡ Successfully synchronized LeetCode data for ${res.successful || 0} student(s) in ${elapsedSec}s`);
 
+      const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
       const refreshedData = await getReportData({
         academicYear: academicYear || undefined,
         department: department || undefined,
@@ -277,6 +285,7 @@ export default function ReportsPage() {
         sortBy,
         sortOrder,
         activityStatus,
+        minProblems: (parsedMin !== undefined && !isNaN(parsedMin)) ? parsedMin : undefined,
       });
       setReportData(refreshedData);
     } catch (err: any) {
@@ -320,6 +329,7 @@ export default function ReportsPage() {
     setSuccessMsg(null);
     setError(null);
     try {
+      const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
       const res = await exportExcelReport({
         academicYear: academicYear || undefined,
         department: department || undefined,
@@ -332,6 +342,7 @@ export default function ReportsPage() {
         sortBy,
         sortOrder,
         activityStatus,
+        minProblems: (parsedMin !== undefined && !isNaN(parsedMin)) ? parsedMin : undefined,
       });
       setSuccessMsg(`📊 Excel report exported successfully with auto-fitted columns as ${res.fileName}`);
       const updatedList = await getReportsList();
@@ -348,6 +359,7 @@ export default function ReportsPage() {
     setSuccessMsg(null);
     setError(null);
     try {
+      const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
       const res = await exportCsvReport({
         academicYear: academicYear || undefined,
         department: department || undefined,
@@ -360,6 +372,7 @@ export default function ReportsPage() {
         sortBy,
         sortOrder,
         activityStatus,
+        minProblems: (parsedMin !== undefined && !isNaN(parsedMin)) ? parsedMin : undefined,
       });
       setSuccessMsg(`📄 CSV report exported successfully as ${res.fileName}`);
       const updatedList = await getReportsList();
@@ -481,10 +494,35 @@ export default function ReportsPage() {
               Zero-Error
             </span>
           </button>
+
+          <button
+            id="tab-sync-errors"
+            type="button"
+            onClick={() => handleTabChange('errors')}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              padding: '0.65rem 1.25rem',
+              borderRadius: '8px',
+              fontWeight: 600,
+              fontSize: '0.9rem',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+              backgroundColor: activeTab === 'errors' ? '#ef4444' : 'rgba(255, 255, 255, 0.04)',
+              color: activeTab === 'errors' ? '#ffffff' : 'var(--text-secondary)',
+              border: `1px solid ${activeTab === 'errors' ? '#ef4444' : 'var(--border-subtle)'}`,
+            }}
+          >
+            <AlertTriangle size={16} style={{ color: activeTab === 'errors' ? '#ffffff' : '#f87171' }} />
+            <span>Sync Errors</span>
+          </button>
         </div>
 
         {activeTab === 'sheets' ? (
           <GoogleSheetsIntegration />
+        ) : activeTab === 'errors' ? (
+          <SyncErrorsView />
         ) : (
           <>
         {/* Top Header Banner */}
@@ -859,6 +897,54 @@ export default function ReportsPage() {
               </select>
             </div>
 
+            {/* Minimum Problems Solved Filter */}
+            <div>
+              <label htmlFor="filter-min-problems" style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+                Min Problems Solved
+              </label>
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                <input
+                  id="filter-min-problems"
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="e.g. 2 (solved ≥ 2)"
+                  value={minProblems}
+                  onChange={(e) => setMinProblems(e.target.value)}
+                  style={{
+                    width: '100%',
+                    backgroundColor: 'var(--bg-input, #0f172a)',
+                    border: minProblems ? '1px solid #3b82f6' : '1px solid var(--border-subtle)',
+                    color: 'var(--text-main)',
+                    padding: '0.6rem 0.75rem',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '0.875rem',
+                  }}
+                />
+                {minProblems && (
+                  <button
+                    type="button"
+                    onClick={() => setMinProblems('')}
+                    style={{
+                      position: 'absolute',
+                      right: '0.5rem',
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--text-muted)',
+                      cursor: 'pointer',
+                      padding: '0.2rem',
+                    }}
+                    title="Clear filter"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              <span style={{ display: 'block', fontSize: '0.7rem', color: minProblems ? '#60a5fa' : 'var(--text-muted)', marginTop: '0.25rem' }}>
+                {minProblems ? `Filter: Students who solved ≥ ${minProblems}` : 'e.g. enter 2 to show students with 2+ solved'}
+              </span>
+            </div>
+
             {/* Sorting Filter */}
             <div>
               <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
@@ -909,7 +995,38 @@ export default function ReportsPage() {
 
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.25rem' }}>
+            <button
+              id="reset-filters-btn"
+              type="button"
+              onClick={() => {
+                setAcademicYear('');
+                setDepartment('');
+                setBatchId('');
+                setSectionId('');
+                setAllocationBatchId('');
+                setStaffId('');
+                setFromDate('');
+                setToDate('');
+                setDatePreset('all');
+                setActivityStatus('all');
+                setMinProblems('');
+                setSortBy('total');
+                setSortOrder('desc');
+              }}
+              style={{
+                padding: '0.65rem 1.25rem',
+                backgroundColor: 'transparent',
+                color: 'var(--text-muted)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-sm)',
+                fontWeight: 600,
+                fontSize: '0.875rem',
+                cursor: 'pointer',
+              }}
+            >
+              Reset
+            </button>
             <button
               id="apply-filters-btn"
               onClick={handleApplyFilters}
@@ -977,6 +1094,21 @@ export default function ReportsPage() {
                   <span style={{ color: '#4ade80' }}>E: {reportData.summary.overallTotalEasy ?? reportData.summary.totalEasy}</span> | <span style={{ color: '#fbbf24' }}>M: {reportData.summary.overallTotalMedium ?? reportData.summary.totalMedium}</span> | <span style={{ color: '#f87171' }}>H: {reportData.summary.overallTotalHard ?? reportData.summary.totalHard}</span>
                 </div>
               </div>
+
+              {/* Minimum Problems Filter Active Box */}
+              {minProblems && (
+                <div style={{ backgroundColor: 'rgba(59, 130, 246, 0.08)', padding: '1.25rem', borderRadius: 'var(--radius-md)', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#60a5fa', fontWeight: 700, textTransform: 'uppercase' }}>
+                    🎯 Solved ≥ {minProblems} Problems
+                  </div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#60a5fa', marginTop: '0.25rem' }}>
+                    {reportData.students.length}
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                    Matching Students
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -993,9 +1125,16 @@ export default function ReportsPage() {
               <h3 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)' }}>
                 Student Coding Leaderboard & Report Data ({reportData?.students.length || 0})
               </h3>
-              <span style={{ fontSize: '0.8rem', color: (fromDate || toDate) ? '#4ade80' : 'var(--primary)', fontWeight: 600, display: 'inline-block', marginTop: '0.25rem' }}>
-                {(fromDate || toDate) ? `⚡ Showing New Solved Progress (${fromDate || 'Start'} to ${toDate || 'Today'})` : '🏆 Showing All-Time Cumulative Totals'}
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
+                <span style={{ fontSize: '0.8rem', color: (fromDate || toDate) ? '#4ade80' : 'var(--primary)', fontWeight: 600 }}>
+                  {(fromDate || toDate) ? `⚡ Showing New Solved Progress (${fromDate || 'Start'} to ${toDate || 'Today'})` : '🏆 Showing All-Time Cumulative Totals'}
+                </span>
+                {minProblems && (
+                  <span style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', padding: '0.15rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
+                    🎯 Min Solved: ≥ {minProblems}
+                  </span>
+                )}
+              </div>
             </div>
             <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
               Click any student row to inspect date-wise daily progress history

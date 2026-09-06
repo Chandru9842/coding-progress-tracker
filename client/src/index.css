@@ -50,13 +50,26 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Glassmorphism utility */
+/* Glassmorphism utility & Card Containers */
 .glass-panel {
   background: var(--bg-card);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
+  padding: 1.5rem;
+}
+
+/* Specific inner padding overrides for tables inside cards to avoid double padding */
+.glass-panel.table-responsive-container,
+.table-responsive-container {
+  padding: 0;
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  margin-bottom: 1.25rem;
 }
 
 /* App Layout */
@@ -225,6 +238,45 @@ h1, h2, h3, h4 {
   border-radius: var(--radius-md);
   border: 1px solid var(--border-subtle);
   margin-bottom: 1rem;
+}
+
+/* Global Table Cell Vertical Alignment & Baseline Consistency */
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+table th,
+table td {
+  vertical-align: middle !important;
+}
+
+table th {
+  font-weight: 600;
+  letter-spacing: 0.025em;
+  padding-top: 0.875rem !important;
+  padding-bottom: 0.875rem !important;
+}
+
+table td {
+  padding-top: 0.875rem !important;
+  padding-bottom: 0.875rem !important;
+}
+
+/* Ensure flex containers inside table cells align items vertically centered */
+table td > div,
+table th > div,
+table td.flex,
+table th.flex {
+  align-items: center;
+}
+
+/* Card container consistency */
+.card-container-standard {
+  padding: 1.5rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
 }
 
 .mobile-only {

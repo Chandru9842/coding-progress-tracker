@@ -6,6 +6,7 @@ import { getBatchesForStaff } from './batchService.js';
 import { getStaffAssignedScopes } from './staffService.js';
 import { getAuthorizedStudentIdsForStaff } from './studentAuthorizationService.js';
 import { toISTDateString } from './reportService.js';
+import { diagnosticLogService } from './diagnosticLogService.js';
 
 export interface GoogleSheetLinkDTO {
   id: string;
@@ -741,9 +742,12 @@ export async function syncGoogleSheetLink(
   details: string;
   matrix: GoogleSheetMatrix;
 }> {
+  const syncStartTime = Date.now();
   const link = await getGoogleSheetLinkById(linkId, user);
+  const stopTask = diagnosticLogService.startSyncTask(`sheet_${linkId}`, `Sync Google Sheet: ${link.name}`);
 
-  let studentRows: any[] = [];
+  try {
+    let studentRows: any[] = [];
   let snapshotRows: any[] = [];
 
   let activeBatchIds = [...link.batch_ids];
@@ -983,6 +987,20 @@ export async function syncGoogleSheetLink(
     });
   }
 
+  const sheetsLatencyMs = Date.now() - syncStartTime;
+  diagnosticLogService.recordLog({
+    targetType: 'GOOGLE_SHEET',
+    targetId: linkId,
+    targetName: link.name,
+    identifier: link.spreadsheet_id,
+    department: link.department || undefined,
+    latencyMs: sheetsLatencyMs,
+    status: webhookSuccess ? 'SUCCESS' : 'WARNING',
+    details: `Exported ${matrix.studentCount} student rows and ${matrix.dateColumnsCount} dates in ${(sheetsLatencyMs / 1000).toFixed(2)}s. ${webhookSuccess ? 'Webhook delivery confirmed.' : 'Apps Script warning: ' + (webhookResponseText || 'Not acknowledged')}`,
+    errorMessage: webhookSuccess ? undefined : (webhookResponseText || 'Webhook dispatch warning'),
+    source: link.webhook_url ? 'apps_script_webhook' : 'matrix_export',
+  });
+
   return {
     success: true,
     rowsSynced: matrix.studentCount,
@@ -991,6 +1009,9 @@ export async function syncGoogleSheetLink(
     details,
     matrix,
   };
+  } finally {
+    stopTask();
+  }
 }
 
 export async function deleteGoogleSheetLink(

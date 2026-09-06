@@ -55,21 +55,17 @@ export async function getStudentDetail(req: AuthenticatedRequest, res: Response)
       studentId
     );
 
-    // If student has leetcode_username and no snapshots, automatically fetch LeetCode and snapshot immediately
+    // If student has leetcode_username and no snapshots, trigger background initialization without blocking GET response
     if (student && student.leetcode_username && (!student.snapshots || student.snapshots.length === 0)) {
-      try {
-        console.log(`[Auto-Snapshot] On-demand snapshot initialization for student ${student.name} (@${student.leetcode_username})`);
-        await syncStudentLeetCode(studentId, { userId: req.user.userId, role: req.user.role as UserRole });
-        const refreshed = await studentService.getStudentByIdForUser(
-          { userId: req.user.userId, role: req.user.role },
-          studentId
-        );
-        if (refreshed) {
-          student = refreshed;
+      const authUser = { userId: req.user.userId, role: req.user.role as UserRole };
+      setImmediate(async () => {
+        try {
+          console.log(`[Auto-Snapshot Background] On-demand snapshot initialization for student ${student.name} (@${student.leetcode_username})`);
+          await syncStudentLeetCode(studentId, authUser, { skipGoogleSheetSync: true });
+        } catch (err: any) {
+          console.warn(`[Auto-Snapshot Background] On-demand snapshot init note:`, err?.message || err);
         }
-      } catch (err: any) {
-        console.warn(`[Auto-Snapshot] On-demand snapshot init note:`, err?.message || err);
-      }
+      });
     }
 
     res.status(200).json({ student });
@@ -121,26 +117,25 @@ export async function createStudent(req: AuthenticatedRequest, res: Response): P
 
     if (student && student.leetcode_username) {
       const authUser = { userId: req.user.userId, role: req.user.role as UserRole };
-      try {
-        console.log(`[Auto-Sync] Automatically fetching initial LeetCode details & snapshot for new student ${student.name} (@${student.leetcode_username})...`);
-        await syncStudentLeetCode(student.id, authUser);
+      const createdStudentId = student.id;
+      const createdStudentName = student.name;
+      const createdUsername = student.leetcode_username;
 
-        // Refresh student record with newly generated snapshot
-        const refreshed = await studentService.getStudentByIdForUser(authUser, student.id);
-        if (refreshed) {
-          student = refreshed;
+      // Perform LeetCode sync and Google Sheet sync in background without blocking HTTP response
+      setImmediate(async () => {
+        try {
+          console.log(`[Auto-Sync Background] Asynchronously fetching initial LeetCode details & snapshot for new student ${createdStudentName} (@${createdUsername})...`);
+          await syncStudentLeetCode(createdStudentId, authUser);
+          syncAllActiveGoogleSheets().catch((sheetErr: any) => {
+            console.warn(`[Auto-Sync Background] Google Sheet auto-sync on student create note:`, sheetErr?.message || sheetErr);
+          });
+        } catch (syncErr: any) {
+          console.warn(`[Auto-Sync Background] Initial LeetCode sync for new student ${createdStudentId} note:`, syncErr?.message || syncErr);
         }
-      } catch (syncErr: any) {
-        console.warn(`[Auto-Sync] Initial LeetCode sync for new student ${student.id} (${student.leetcode_username}) note:`, syncErr?.message || syncErr);
-      }
-
-      // Automatically sync all active Google Sheets with the new student and their snapshot
-      syncAllActiveGoogleSheets().catch((sheetErr: any) => {
-        console.warn(`[Auto-Sync] Google Sheet auto-sync on student create note:`, sheetErr?.message || sheetErr);
       });
     }
 
-    res.status(201).json({ message: 'Student created successfully with initial LeetCode snapshot synced', student });
+    res.status(201).json({ message: 'Student created successfully', student });
   } catch (error: any) {
     const statusCode = error.statusCode || 400;
     res.status(statusCode).json({ error: error.message || 'Failed to create student' });
@@ -190,25 +185,24 @@ export async function updateStudent(req: AuthenticatedRequest, res: Response): P
 
     if (student && student.leetcode_username) {
       const authUser = { userId: req.user.userId, role: req.user.role as UserRole };
-      try {
-        console.log(`[Auto-Sync] Automatically syncing LeetCode details & snapshot for student ${student.name} (@${student.leetcode_username})...`);
-        await syncStudentLeetCode(student.id, authUser);
+      const updatedStudentId = student.id;
+      const updatedStudentName = student.name;
+      const updatedUsername = student.leetcode_username;
 
-        const refreshed = await studentService.getStudentByIdForUser(authUser, student.id);
-        if (refreshed) {
-          student = refreshed;
+      setImmediate(async () => {
+        try {
+          console.log(`[Auto-Sync Background] Asynchronously syncing LeetCode details for updated student ${updatedStudentName} (@${updatedUsername})...`);
+          await syncStudentLeetCode(updatedStudentId, authUser);
+          syncAllActiveGoogleSheets().catch((sheetErr: any) => {
+            console.warn(`[Auto-Sync Background] Google Sheet auto-sync on student update note:`, sheetErr?.message || sheetErr);
+          });
+        } catch (syncErr: any) {
+          console.warn(`[Auto-Sync Background] LeetCode sync for updated student ${updatedStudentId} note:`, syncErr?.message || syncErr);
         }
-      } catch (syncErr: any) {
-        console.warn(`[Auto-Sync] LeetCode sync for updated student ${student.id} (${student.leetcode_username}) note:`, syncErr?.message || syncErr);
-      }
-
-      // Automatically update linked Google Sheets with the updated student and snapshot
-      syncAllActiveGoogleSheets().catch((sheetErr: any) => {
-        console.warn(`[Auto-Sync] Google Sheet auto-sync on student update note:`, sheetErr?.message || sheetErr);
       });
     }
 
-    res.status(200).json({ message: 'Student updated successfully with LeetCode snapshot synced', student });
+    res.status(200).json({ message: 'Student updated successfully', student });
   } catch (error: any) {
     const statusCode = error.statusCode || 400;
     res.status(statusCode).json({ error: error.message || 'Failed to update student' });

@@ -2,8 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
-import { batchApi, studentApi, Batch, Student } from '../services/api.js';
-import { ArrowLeft, FolderKanban, Layers, Users, Plus, Edit2, Trash2, Loader2, X, ExternalLink, GraduationCap, UserCheck } from 'lucide-react';
+import { batchApi, studentApi, syncApi, Batch, Student } from '../services/api.js';
+import { ArrowLeft, FolderKanban, Layers, Users, Plus, Edit2, Trash2, Loader2, X, ExternalLink, GraduationCap, UserCheck, RefreshCw, Zap, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export const BatchDetailPage: React.FC = () => {
   const { batchId } = useParams<{ batchId: string }>();
@@ -43,6 +43,50 @@ export const BatchDetailPage: React.FC = () => {
   const [selectedAllocBatch, setSelectedAllocBatch] = useState<any>(null);
   const [allocDetailStudents, setAllocDetailStudents] = useState<Student[]>([]);
   const [loadingAllocStudents, setLoadingAllocStudents] = useState<boolean>(false);
+
+  // Force Refresh Section State
+  const [sectionSyncing, setSectionSyncing] = useState<Record<string, boolean>>({});
+  const [sectionSyncFeedback, setSectionSyncFeedback] = useState<Record<string, { type: 'success' | 'error'; message: string }>>({});
+
+  const handleForceRefreshSection = async (sectionId: string, secName: string) => {
+    setSectionSyncing((prev) => ({ ...prev, [sectionId]: true }));
+    setSectionSyncFeedback((prev) => {
+      const copy = { ...prev };
+      delete copy[sectionId];
+      return copy;
+    });
+
+    try {
+      const res = await syncApi.syncSection(sectionId);
+      const stats = res?.data;
+      const msg = stats
+        ? `Synced ${stats.successful}/${stats.totalAttempted} students in ${stats.durationSeconds}s`
+        : `Immediate sync finished for Section ${secName}`;
+
+      setSectionSyncFeedback((prev) => ({
+        ...prev,
+        [sectionId]: { type: 'success', message: msg },
+      }));
+      await fetchBatch();
+    } catch (err: any) {
+      setSectionSyncFeedback((prev) => ({
+        ...prev,
+        [sectionId]: {
+          type: 'error',
+          message: err.response?.data?.error || 'Failed to force refresh section',
+        },
+      }));
+    } finally {
+      setSectionSyncing((prev) => ({ ...prev, [sectionId]: false }));
+      setTimeout(() => {
+        setSectionSyncFeedback((prev) => {
+          const copy = { ...prev };
+          delete copy[sectionId];
+          return copy;
+        });
+      }, 7000);
+    }
+  };
 
   const handleOpenAllocDetailModal = async (sec: any, ab: any) => {
     setSelectedAllocSection(sec);
@@ -250,36 +294,91 @@ export const BatchDetailPage: React.FC = () => {
                       backgroundColor: 'rgba(15, 23, 42, 0.6)', border: '1px solid var(--border-subtle)',
                       display: 'flex', flexDirection: 'column', gap: '0.75rem'
                     }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--text-primary)' }}>
-                          Section {sec.name}
-                        </span>
-                        {isAdmin && (
-                          <div style={{ display: 'flex', gap: '0.35rem' }}>
-                            <button
-                              onClick={() => {
-                                setEditingSectionId(sec.id);
-                                setSectionName(sec.name);
-                                setShowSectionModal(true);
-                              }}
-                              style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
-                              title="Edit Section"
-                            >
-                              <Edit2 size={14} />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteSection(sec.id, sec.name)}
-                              style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer' }}
-                              title="Delete Section"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        )}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                          <span style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--text-primary)' }}>
+                            Section {sec.name}
+                          </span>
+                          <span style={{ fontSize: '0.75rem', padding: '0.15rem 0.5rem', borderRadius: '12px', backgroundColor: 'rgba(255, 255, 255, 0.06)', color: 'var(--text-muted)' }}>
+                            {sec._count?.students || 0} students
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                          {/* Force Refresh Button: Bypasses global auto-sync queue */}
+                          <button
+                            id={`force-refresh-sec-${sec.id}`}
+                            onClick={() => handleForceRefreshSection(sec.id, sec.name)}
+                            disabled={sectionSyncing[sec.id]}
+                            className="btn-secondary"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.35rem',
+                              fontSize: '0.75rem',
+                              fontWeight: 600,
+                              padding: '0.3rem 0.65rem',
+                              borderRadius: 'var(--radius-sm)',
+                              backgroundColor: sectionSyncing[sec.id] ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                              borderColor: sectionSyncing[sec.id] ? 'rgba(16, 185, 129, 0.4)' : 'var(--border-subtle)',
+                              color: sectionSyncing[sec.id] ? '#34d399' : 'var(--text-primary)',
+                              cursor: sectionSyncing[sec.id] ? 'wait' : 'pointer',
+                              transition: 'all 0.15s ease',
+                            }}
+                            title="Force Refresh: Immediately sync all students in this section, bypassing the global auto-sync queue"
+                          >
+                            <RefreshCw size={12} className={sectionSyncing[sec.id] ? 'animate-spin' : ''} />
+                            <span>{sectionSyncing[sec.id] ? 'Syncing...' : 'Force Refresh'}</span>
+                          </button>
+
+                          {isAdmin && (
+                            <div style={{ display: 'flex', gap: '0.25rem', borderLeft: '1px solid var(--border-subtle)', paddingLeft: '0.4rem' }}>
+                              <button
+                                onClick={() => {
+                                  setEditingSectionId(sec.id);
+                                  setSectionName(sec.name);
+                                  setShowSectionModal(true);
+                                }}
+                                style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '0.25rem' }}
+                                title="Edit Section"
+                              >
+                                <Edit2 size={14} />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteSection(sec.id, sec.name)}
+                                style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', padding: '0.25rem' }}
+                                title="Delete Section"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                        {sec._count?.students || 0} Enrolled Student(s)
-                      </span>
+
+                      {/* Force Refresh Feedback */}
+                      {sectionSyncFeedback[sec.id] && (
+                        <div
+                          style={{
+                            padding: '0.4rem 0.65rem',
+                            borderRadius: 'var(--radius-sm)',
+                            fontSize: '0.75rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.4rem',
+                            backgroundColor: sectionSyncFeedback[sec.id].type === 'success' ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                            color: sectionSyncFeedback[sec.id].type === 'success' ? '#34d399' : '#f87171',
+                            border: `1px solid ${sectionSyncFeedback[sec.id].type === 'success' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                          }}
+                        >
+                          {sectionSyncFeedback[sec.id].type === 'success' ? (
+                            <CheckCircle2 size={13} style={{ flexShrink: 0 }} />
+                          ) : (
+                            <AlertCircle size={13} style={{ flexShrink: 0 }} />
+                          )}
+                          <span>{sectionSyncFeedback[sec.id].message}</span>
+                        </div>
+                      )}
 
                       {/* Allocation Batches list inside Section */}
                       <div style={{ marginTop: '0.5rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border-subtle)' }}>

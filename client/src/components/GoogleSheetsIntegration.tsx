@@ -38,12 +38,12 @@ import {
 
 export const APPS_SCRIPT_V320_CODE = `/**
  * Coding Progress Tracker - Google Sheets Zero-Error Webhook Engine
- * Version: 3.2.0 (Zero-Error Autonomous Multi-Tab Engine)
+ * Version: 3.3.0 (Zero-Error Autonomous Multi-Tab Engine with Pristine Alignment)
  * Author: Chandru M (https://github.com/Chandru9842)
  */
 
 function doGet(e) {
-  return ContentService.createTextOutput("Google Sheets Webhook Active (v3.2.0 Zero-Error Engine)").setMimeType(ContentService.MimeType.TEXT);
+  return ContentService.createTextOutput("Google Sheets Webhook Active (v3.3.0 Zero-Error Engine)").setMimeType(ContentService.MimeType.TEXT);
 }
 
 function doPost(e) {
@@ -94,28 +94,67 @@ function doPost(e) {
 
     // 2. Format Header Row
     var headerRange = sheet.getRange(1, 1, 1, totalCols);
-    headerRange.setBackground("#1E293B");
+    headerRange.setBackground("#0F172A");
     headerRange.setFontColor("#FFFFFF");
     headerRange.setFontWeight("bold");
     headerRange.setFontFamily("Calibri");
     headerRange.setFontSize(11);
     headerRange.setHorizontalAlignment("center");
     headerRange.setVerticalAlignment("middle");
-    sheet.setRowHeight(1, 34);
+    sheet.setRowHeight(1, 36);
     sheet.setFrozenRows(1);
     if (totalCols >= 2) {
       sheet.setFrozenColumns(2);
     }
 
-    // 3. Auto-fit columns with safety bounds
-    for (var col = 1; col <= Math.min(totalCols, 15); col++) {
-      sheet.autoResizeColumn(col);
-      var width = sheet.getColumnWidth(col);
-      if (width < 80) sheet.setColumnWidth(col, 80);
-      if (width > 260) sheet.setColumnWidth(col, 260);
+    // 3. Format Data Rows (middle vertical alignment fixes misaligned cells!)
+    if (totalRows > 0) {
+      var dataRange = sheet.getRange(2, 1, totalRows, totalCols);
+      dataRange.setVerticalAlignment("middle");
+      dataRange.setFontFamily("Calibri");
+      dataRange.setFontSize(10);
+
+      // Center-align identifier columns: Academic Year (1), Department (2), Section (3), Allocation Batch (4), Register No (6)
+      sheet.getRange(2, 1, totalRows, 4).setHorizontalAlignment("center");
+      sheet.getRange(2, 6, totalRows, 1).setHorizontalAlignment("center");
+
+      // Left-align text columns: Mentor (5), Student Name (7), LeetCode ID (8)
+      sheet.getRange(2, 5, totalRows, 1).setHorizontalAlignment("left");
+      sheet.getRange(2, 7, totalRows, 2).setHorizontalAlignment("left");
+
+      // Date tracking columns (Col 9+): Left-align, wrap text, middle vertical alignment
+      if (totalCols >= 9) {
+        var dateColsCount = totalCols - 8;
+        var dateRange = sheet.getRange(2, 9, totalRows, dateColsCount);
+        dateRange.setHorizontalAlignment("left");
+        dateRange.setVerticalAlignment("middle");
+        dateRange.setWrapStrategy(SpreadsheetApp.WrapStrategy.WRAP);
+      }
+
+      // Clean subtle borders for the entire grid
+      fullRange.setBorder(true, true, true, true, true, true, "#CBD5E1", SpreadsheetApp.BorderStyle.SOLID);
+
+      // Elegant alternating zebra banding for rows
+      for (var r = 2; r <= totalRows + 1; r++) {
+        var rowColor = (r % 2 === 0) ? "#FFFFFF" : "#F8FAFC";
+        sheet.getRange(r, 1, 1, totalCols).setBackground(rowColor);
+      }
+
+      // Set comfortable row height for data rows so multiline progress fits with breathing room
+      sheet.setRowHeights(2, totalRows, 38);
     }
 
-    return ContentService.createTextOutput("SUCCESS: " + totalRows + " rows synced at " + new Date().toISOString()).setMimeType(ContentService.MimeType.TEXT);
+    // 4. Clean column width formatting
+    var standardWidths = [120, 100, 135, 130, 165, 140, 200, 150];
+    for (var c = 0; c < standardWidths.length && c < totalCols; c++) {
+      sheet.setColumnWidth(c + 1, standardWidths[c]);
+    }
+    // Date progress columns get generous 250px so Overall & Today counters fit cleanly
+    for (var dc = 9; dc <= totalCols; dc++) {
+      sheet.setColumnWidth(dc, 250);
+    }
+
+    return ContentService.createTextOutput("SUCCESS: " + totalRows + " rows synced with middle alignment at " + new Date().toISOString()).setMimeType(ContentService.MimeType.TEXT);
   } catch (err) {
     return ContentService.createTextOutput("ERROR: " + err.toString()).setMimeType(ContentService.MimeType.TEXT);
   } finally {
@@ -140,7 +179,7 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
   const [assignedBatches, setAssignedBatches] = useState<Batch[]>([]);
   const [automationStatus, setAutomationStatus] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
   // Quick Connect URL State
   const [quickInputUrl, setQuickInputUrl] = useState<string>(defaultQuickUrl);
@@ -230,7 +269,7 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
   }, [quickInputUrl]);
 
   useEffect(() => {
-    loadData();
+    loadData(true);
   }, []);
 
   // Global Escape Key Listener for all modals
@@ -258,9 +297,11 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
     };
   }, [showLinkModal, editingLink, showLogsModal, showScriptModal]);
 
-  const loadData = async () => {
+  const loadData = async (isInitial = false) => {
     try {
-      setLoading(true);
+      if (isInitial) {
+        setLoading(true);
+      }
       const [links, batches] = await Promise.all([
         googleSheetsApi.getLinks(),
         batchApi.getBatches(),
@@ -286,7 +327,9 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
     } catch (err: any) {
       console.error('Failed to load Google Sheets settings:', err);
     } finally {
-      setLoading(false);
+      if (isInitial) {
+        setLoading(false);
+      }
     }
   };
 
@@ -393,9 +436,34 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
         };
       }
 
-      const newLink = await googleSheetsApi.createLink(payload);
+      const tempLinkId = `temp_link_${Date.now()}`;
+      const optimisticLink: GoogleSheetLink = {
+        id: tempLinkId,
+        owner_user_id: user?.id || 'current_user',
+        name: payload.name,
+        spreadsheet_id: payload.spreadsheet_id,
+        spreadsheet_name: payload.name,
+        spreadsheet_url: spreadsheetId.includes('http') ? spreadsheetId : `https://docs.google.com/spreadsheets/d/${spreadsheetId}`,
+        webhook_url: payload.webhook_url || null,
+        start_date: payload.start_date || null,
+        academic_year: payload.academic_year || null,
+        department: payload.department || null,
+        section_id: payload.section_id || null,
+        allocation_batch_id: payload.allocation_batch_id || null,
+        batch_ids: payload.batch_ids || [],
+        is_active: true,
+        is_auto_sync_enabled: true,
+        sync_students: true,
+        sync_daily_progress: true,
+        last_sync_status: 'PENDING',
+        last_sync_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        owner: user ? { id: user.id, name: user.name, email: user.email, role: user.role } : null,
+      };
 
-      setMessage({ type: 'success', text: `Google Sheet [${newLink.name}] linked and populated successfully!` });
+      // Immediately display optimistic sheet card and close modal (0ms latency perception)
+      setSheetLinks((prev) => [optimisticLink, ...prev]);
       setShowLinkModal(false);
       setLinkName('');
       setSpreadsheetId('');
@@ -403,13 +471,23 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
       setWebhookUrl('');
       setDateScopeMode('ALL');
       setCustomStartDate('');
-
       setSelectedAcademicYear('');
       setSelectedDepartment('ALL');
       setSelectedBatchIds(new Set());
-      await loadData();
+      setMessage({ type: 'info', text: `Linking [${optimisticLink.name}] in background...` });
+
+      const newLink = await googleSheetsApi.createLink(payload);
+      if (newLink && newLink.id) {
+        // Swap optimistic card with real confirmed link
+        setSheetLinks((prev) => prev.map((l) => (l.id === tempLinkId ? { ...newLink, ...l, id: newLink.id, last_sync_status: newLink.last_sync_status || 'SUCCESS' } : l)));
+      }
+
+      setMessage({ type: 'success', text: `Google Sheet [${newLink.name}] linked and populated successfully!` });
+      loadData(false);
       if (onSyncComplete) onSyncComplete();
     } catch (err: any) {
+      // Revert optimistic addition if failed
+      setSheetLinks((prev) => prev.filter((l) => !l.id.startsWith('temp_link_')));
       setMessage({ type: 'error', text: err.response?.data?.error || 'Failed to link Google Sheet.' });
     } finally {
       setSubmitting(false);
@@ -704,9 +782,25 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
           style={{
             padding: '0.85rem 1.25rem',
             borderRadius: '8px',
-            backgroundColor: message.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-            border: `1px solid ${message.type === 'success' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
-            color: message.type === 'success' ? '#34d399' : '#f87171',
+            backgroundColor:
+              message.type === 'success'
+                ? 'rgba(16, 185, 129, 0.15)'
+                : message.type === 'info'
+                ? 'rgba(99, 102, 241, 0.15)'
+                : 'rgba(239, 68, 68, 0.15)',
+            border: `1px solid ${
+              message.type === 'success'
+                ? 'rgba(16, 185, 129, 0.3)'
+                : message.type === 'info'
+                ? 'rgba(99, 102, 241, 0.35)'
+                : 'rgba(239, 68, 68, 0.3)'
+            }`,
+            color:
+              message.type === 'success'
+                ? '#34d399'
+                : message.type === 'info'
+                ? '#a5b4fc'
+                : '#f87171',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
@@ -714,7 +808,13 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-            {message.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+            {message.type === 'success' ? (
+              <CheckCircle2 size={18} />
+            ) : message.type === 'info' ? (
+              <RefreshCw size={18} className="animate-spin" />
+            ) : (
+              <AlertCircle size={18} />
+            )}
             <span>{message.text}</span>
           </div>
           <button

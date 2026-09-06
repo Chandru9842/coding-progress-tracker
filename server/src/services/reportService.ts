@@ -25,6 +25,7 @@ export interface ReportFilterParams {
   sortBy?: 'total' | 'easy' | 'medium' | 'hard';
   sortOrder?: 'asc' | 'desc';
   activityStatus?: 'all' | 'active' | 'no_activity';
+  minProblems?: number;
   reportType?: string;
 }
 
@@ -324,6 +325,7 @@ export async function getReportData(
     sortBy = 'total',
     sortOrder = 'desc',
     activityStatus = 'all',
+    minProblems,
   } = filters;
 
   // STAFF Scope Validation
@@ -584,6 +586,11 @@ export async function getReportData(
     studentsList = studentsList.filter((st) => st.has_activity);
   } else if (activityStatus === 'no_activity') {
     studentsList = studentsList.filter((st) => !st.has_activity);
+  }
+
+  // Apply Minimum Problems Solved Filter (e.g. 2+ problems solved)
+  if (minProblems !== undefined && !isNaN(minProblems) && minProblems > 0) {
+    studentsList = studentsList.filter((st) => (st.total_solved || 0) >= minProblems);
   }
 
   // Apply Sorting

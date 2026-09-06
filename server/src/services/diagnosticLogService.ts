@@ -48,13 +48,19 @@ class DiagnosticLogService {
 
   public getActiveSyncStatus(): {
     isSyncing: boolean;
+    activeCount: number;
     activeTaskCount: number;
+    activeTasks: string[];
     currentTasks: string[];
   } {
+    const taskDescriptions = Array.from(this.activeTasks.values()).map((t) => t.description);
+    const count = this.activeTasks.size;
     return {
-      isSyncing: this.activeTasks.size > 0,
-      activeTaskCount: this.activeTasks.size,
-      currentTasks: Array.from(this.activeTasks.values()).map((t) => t.description),
+      isSyncing: count > 0,
+      activeCount: count,
+      activeTaskCount: count,
+      activeTasks: taskDescriptions,
+      currentTasks: taskDescriptions,
     };
   }
 
@@ -128,10 +134,33 @@ class DiagnosticLogService {
     totalSyncs: number;
     avgLatencyMs: number;
     leetcodeAvgMs: number;
+    leetcodeAvgLatencyMs: number;
     sheetsAvgMs: number;
+    googleSheetsAvgLatencyMs: number;
     errorCount: number;
     warningCount: number;
     successRate: number;
+    activeSyncCount: number;
+    activeSyncTasks: string[];
+    bottleneckStudents: Array<{
+      studentId: string;
+      studentName: string;
+      username?: string;
+      batchName?: string;
+      avgLatencyMs: number;
+      maxLatencyMs: number;
+      syncCount: number;
+      failCount: number;
+      lastError?: string;
+    }>;
+    bottleneckBatches: Array<{
+      batchId: string;
+      batchName: string;
+      department?: string;
+      avgLatencyMs: number;
+      maxLatencyMs: number;
+      syncCount: number;
+    }>;
     topBottleneckStudents: Array<{
       targetId: string;
       targetName: string;
@@ -149,16 +178,23 @@ class DiagnosticLogService {
       syncCount: number;
     }>;
   } {
+    const activeStatus = this.getActiveSyncStatus();
     const total = this.logs.length;
     if (total === 0) {
       return {
         totalSyncs: 0,
         avgLatencyMs: 0,
         leetcodeAvgMs: 0,
+        leetcodeAvgLatencyMs: 0,
         sheetsAvgMs: 0,
+        googleSheetsAvgLatencyMs: 0,
         errorCount: 0,
         warningCount: 0,
         successRate: 100,
+        activeSyncCount: activeStatus.activeCount,
+        activeSyncTasks: activeStatus.activeTasks,
+        bottleneckStudents: [],
+        bottleneckBatches: [],
         topBottleneckStudents: [],
         topBottleneckBatches: [],
       };
@@ -186,7 +222,9 @@ class DiagnosticLogService {
         identifier?: string;
         batchName?: string;
         totalLatency: number;
+        maxLatency: number;
         count: number;
+        failCount: number;
         lastError?: string;
       }
     >();
@@ -197,7 +235,9 @@ class DiagnosticLogService {
         const existing = studentMap.get(l.targetId);
         if (existing) {
           existing.totalLatency += l.latencyMs;
+          existing.maxLatency = Math.max(existing.maxLatency, l.latencyMs);
           existing.count += 1;
+          if (l.status === 'FAILED') existing.failCount += 1;
           if (l.errorMessage) existing.lastError = l.errorMessage;
         } else {
           studentMap.set(l.targetId, {
@@ -206,24 +246,38 @@ class DiagnosticLogService {
             identifier: l.identifier,
             batchName: l.batchName,
             totalLatency: l.latencyMs,
+            maxLatency: l.latencyMs,
             count: 1,
+            failCount: l.status === 'FAILED' ? 1 : 0,
             lastError: l.errorMessage,
           });
         }
       });
 
-    const topBottleneckStudents = Array.from(studentMap.values())
+    const bottleneckStudents = Array.from(studentMap.values())
       .map((s) => ({
-        targetId: s.targetId,
-        targetName: s.targetName,
-        identifier: s.identifier,
+        studentId: s.targetId,
+        studentName: s.targetName,
+        username: s.identifier,
         batchName: s.batchName,
         avgLatencyMs: Math.round(s.totalLatency / s.count),
+        maxLatencyMs: s.maxLatency,
         syncCount: s.count,
+        failCount: s.failCount,
         lastError: s.lastError,
       }))
       .sort((a, b) => b.avgLatencyMs - a.avgLatencyMs)
-      .slice(0, 5);
+      .slice(0, 10);
+
+    const topBottleneckStudents = bottleneckStudents.map((s) => ({
+      targetId: s.studentId,
+      targetName: s.studentName,
+      identifier: s.username,
+      batchName: s.batchName,
+      avgLatencyMs: s.avgLatencyMs,
+      syncCount: s.syncCount,
+      lastError: s.lastError,
+    }));
 
     // Aggregate batch bottlenecks
     const batchMap = new Map<
@@ -233,6 +287,7 @@ class DiagnosticLogService {
         batchName?: string;
         department?: string;
         totalLatency: number;
+        maxLatency: number;
         count: number;
       }
     >();
@@ -244,6 +299,7 @@ class DiagnosticLogService {
         const existing = batchMap.get(key);
         if (existing) {
           existing.totalLatency += l.latencyMs;
+          existing.maxLatency = Math.max(existing.maxLatency, l.latencyMs);
           existing.count += 1;
         } else {
           batchMap.set(key, {
@@ -251,30 +307,49 @@ class DiagnosticLogService {
             batchName: l.batchName,
             department: l.department,
             totalLatency: l.latencyMs,
+            maxLatency: l.latencyMs,
             count: 1,
           });
         }
       });
 
-    const topBottleneckBatches = Array.from(batchMap.values())
+    const bottleneckBatches = Array.from(batchMap.values())
       .map((b) => ({
-        batchId: b.batchId,
-        batchName: b.batchName,
+        batchId: b.batchId || b.batchName || 'unknown',
+        batchName: b.batchName || 'Unknown Batch',
         department: b.department,
         avgLatencyMs: Math.round(b.totalLatency / b.count),
+        maxLatencyMs: b.maxLatency,
         syncCount: b.count,
       }))
       .sort((a, b) => b.avgLatencyMs - a.avgLatencyMs)
-      .slice(0, 5);
+      .slice(0, 10);
+
+    const topBottleneckBatches = bottleneckBatches.map((b) => ({
+      batchId: b.batchId,
+      batchName: b.batchName,
+      department: b.department,
+      avgLatencyMs: b.avgLatencyMs,
+      syncCount: b.syncCount,
+    }));
+
+    const leetcodeAvgMs = leetcodeLogs.length > 0 ? Math.round(leetcodeLatency / leetcodeLogs.length) : 0;
+    const sheetsAvgMs = sheetsLogs.length > 0 ? Math.round(sheetsLatency / sheetsLogs.length) : 0;
 
     return {
       totalSyncs: total,
       avgLatencyMs: Math.round(totalLatency / total),
-      leetcodeAvgMs: leetcodeLogs.length > 0 ? Math.round(leetcodeLatency / leetcodeLogs.length) : 0,
-      sheetsAvgMs: sheetsLogs.length > 0 ? Math.round(sheetsLatency / sheetsLogs.length) : 0,
+      leetcodeAvgMs,
+      leetcodeAvgLatencyMs: leetcodeAvgMs,
+      sheetsAvgMs,
+      googleSheetsAvgLatencyMs: sheetsAvgMs,
       errorCount,
       warningCount,
       successRate: total > 0 ? Math.round((successCount / total) * 100) : 100,
+      activeSyncCount: activeStatus.activeCount,
+      activeSyncTasks: activeStatus.activeTasks,
+      bottleneckStudents,
+      bottleneckBatches,
       topBottleneckStudents,
       topBottleneckBatches,
     };

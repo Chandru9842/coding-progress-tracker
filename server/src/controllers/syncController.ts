@@ -1,6 +1,8 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../types/index.js';
 import * as leetcodeService from '../services/leetcodeService.js';
+import { diagnosticLogService } from '../services/diagnosticLogService.js';
+import { syncErrorService } from '../services/syncErrorService.js';
 import { prisma } from '../db/client.js';
 import { inMemoryStore } from '../db/inMemoryStore.js';
 
@@ -192,6 +194,7 @@ export async function getSyncStatus(req: AuthenticatedRequest, res: Response): P
       periodicPollingIntervalMinutes: 15,
       dailyReconciliationIST: '12:30 AM IST (Asia/Kolkata)',
       currentISTDate: istDate,
+      activeSync: diagnosticLogService.getActiveSyncStatus(),
       googleSheets: googleSheetsStatus,
       vercelCronConfig: {
         cronEndpoint: '/api/v1/cron/daily-sync',
@@ -201,5 +204,176 @@ export async function getSyncStatus(req: AuthenticatedRequest, res: Response): P
     });
   } catch (error: any) {
     res.status(500).json({ error: 'Failed to retrieve sync status' });
+  }
+}
+
+/**
+ * Force refresh an entire section immediately, bypassing the global auto-sync queue.
+ */
+export async function syncSection(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const { sectionId } = req.params;
+    const result = await leetcodeService.syncSectionLeetCode(sectionId, {
+      userId: req.user.userId,
+      role: req.user.role,
+    });
+
+    res.status(200).json({
+      message: `Section ${result.sectionName} immediate sync completed`,
+      data: result,
+    });
+  } catch (error: any) {
+    const statusCode = error.statusCode || 500;
+    res.status(statusCode).json({ error: error.message || 'Failed to force refresh section' });
+  }
+}
+
+/**
+ * Diagnostic logs dashboard endpoints
+ */
+export async function getDiagnosticLogs(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const { targetType, status, search, limit } = req.query;
+
+    const result = diagnosticLogService.getLogs({
+      targetType: targetType as any,
+      status: status as any,
+      search: search as string,
+      limit: limit ? parseInt(limit as string, 10) : undefined,
+    });
+
+    const summary = diagnosticLogService.getSummary();
+
+    res.status(200).json({
+      logs: result.logs,
+      total: result.total,
+      summary,
+    });
+  } catch (error: any) {
+    console.error('Failed to retrieve diagnostic logs:', error);
+    res.status(500).json({ error: error.message || 'Failed to retrieve diagnostic logs' });
+  }
+}
+
+export async function clearDiagnosticLogs(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user || req.user.role !== 'ADMIN') {
+      res.status(403).json({ error: 'Forbidden: Admin access required' });
+      return;
+    }
+
+    diagnosticLogService.clearLogs();
+    res.status(200).json({ message: 'Diagnostic logs cleared successfully' });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to clear diagnostic logs' });
+  }
+}
+
+export async function getActiveSyncStatus(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const status = diagnosticLogService.getActiveSyncStatus();
+    res.status(200).json(status);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to retrieve active sync status' });
+  }
+}
+
+/**
+ * Sync Errors tracking & retry endpoints
+ */
+export async function getSyncErrors(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const errors = syncErrorService.getErrors();
+    res.status(200).json({
+      errors,
+      count: errors.length,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to retrieve sync errors' });
+  }
+}
+
+export async function retryFailedStudent(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const { studentId } = req.params;
+    const result = await leetcodeService.syncStudentLeetCode(studentId, {
+      userId: req.user.userId,
+      role: req.user.role,
+    });
+
+    res.status(200).json({
+      message: `Retried sync for ${result.studentName} (@${result.leetcodeUsername})`,
+      data: result,
+    });
+  } catch (error: any) {
+    const statusCode = error.statusCode || 500;
+    res.status(statusCode).json({ error: error.message || 'Retry attempt failed' });
+  }
+}
+
+export async function retryAllFailedStudents(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const errors = syncErrorService.getErrors();
+    if (errors.length === 0) {
+      res.status(200).json({ message: 'No failed sync records to retry', successful: 0, failed: 0 });
+      return;
+    }
+
+    const results = await Promise.all(
+      errors.map(async (errRecord) => {
+        try {
+          const res = await leetcodeService.syncStudentLeetCode(errRecord.studentId, {
+            userId: req.user!.userId,
+            role: req.user!.role,
+          });
+          return { studentId: errRecord.studentId, success: true, stats: res.stats };
+        } catch (err: any) {
+          return { studentId: errRecord.studentId, success: false, error: err?.message };
+        }
+      })
+    );
+
+    const successful = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+
+    res.status(200).json({
+      message: `Retried ${errors.length} failed profiles: ${successful} resolved, ${failed} still failing`,
+      totalAttempted: errors.length,
+      successful,
+      failed,
+      results,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to retry sync errors' });
   }
 }

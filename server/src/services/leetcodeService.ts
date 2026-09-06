@@ -4,6 +4,8 @@ import { inMemoryStore } from '../db/inMemoryStore.js';
 import { isStaffAuthorizedForStudent, getAuthorizedStudentIdsForStaff } from './studentAuthorizationService.js';
 import { syncGoogleSheetLink } from './googleSheetsService.js';
 import { runMidnightAutoSync } from './cronService.js';
+import { diagnosticLogService } from './diagnosticLogService.js';
+import { syncErrorService } from './syncErrorService.js';
 
 import { UserRole } from '../types/index.js';
 
@@ -65,7 +67,7 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Referer': `https://leetcode.com/u/${cleanUsername}/`,
       },
-      timeout: 6000,
+      timeout: 2500,
     });
 
     const user = gqlRes.data?.data?.matchedUser;
@@ -123,7 +125,7 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
 
   // 2. Try High-Availability Backup: Faisal Shohag Vercel LeetCode API
   try {
-    const backupRes = await axios.get(`https://leetcode-api-faisalshohag.vercel.app/${cleanUsername}`, { timeout: 5000 });
+    const backupRes = await axios.get(`https://leetcode-api-faisalshohag.vercel.app/${cleanUsername}`, { timeout: 2000 });
     if (backupRes.data && (typeof backupRes.data.totalSolved === 'number' || Array.isArray(backupRes.data.matchedUserStats?.acSubmissionNum))) {
       let easy = typeof backupRes.data.easySolved === 'number' ? backupRes.data.easySolved : 0;
       let medium = typeof backupRes.data.mediumSolved === 'number' ? backupRes.data.mediumSolved : 0;
@@ -164,7 +166,7 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
 
   // 3. Try Tertiary Backup: Alfa LeetCode Proxy
   try {
-    const alfaRes = await axios.get(`https://alfa-leetcode-api.onrender.com/userProfile/${cleanUsername}`, { timeout: 4000 });
+    const alfaRes = await axios.get(`https://alfa-leetcode-api.onrender.com/userProfile/${cleanUsername}`, { timeout: 2000 });
     if (alfaRes.data && typeof alfaRes.data.totalSolved === 'number') {
       let easy = typeof alfaRes.data.easySolved === 'number' ? alfaRes.data.easySolved : 0;
       let medium = typeof alfaRes.data.mediumSolved === 'number' ? alfaRes.data.mediumSolved : 0;
@@ -219,6 +221,8 @@ export async function syncStudentLeetCode(
   user: { userId: string; role: UserRole },
   options?: { skipGoogleSheetSync?: boolean }
 ) {
+  const startTime = Date.now();
+
   // Authorization Check
   if (user.role === 'STAFF') {
     const isAuth = await isStaffAuthorizedForStudent(user.userId, studentId);
@@ -230,10 +234,24 @@ export async function syncStudentLeetCode(
   }
 
   let student: any = null;
+  let studentBatch: any = null;
+  let studentSection: any = null;
+
   if (!process.env.DATABASE_URL) {
     student = inMemoryStore.students.find((s) => s.id === studentId);
+    if (student) {
+      studentBatch = inMemoryStore.batches.find((b) => b.id === student.batch_id);
+      studentSection = inMemoryStore.sections.find((sec) => sec.id === student.section_id);
+    }
   } else {
-    student = await prisma.student.findUnique({ where: { id: studentId } });
+    student = await prisma.student.findUnique({
+      where: { id: studentId },
+      include: { batch: true, section: true },
+    });
+    if (student) {
+      studentBatch = student.batch;
+      studentSection = student.section;
+    }
   }
 
   if (!student) {
@@ -249,10 +267,30 @@ export async function syncStudentLeetCode(
   }
 
   let stats: LeetCodeStats;
+  let fetchError: string | null = null;
+  let rawSource = 'official_graphql';
+
   try {
     stats = await fetchLeetCodeStats(student.leetcode_username);
+    // Successfully parsed live profile -> resolve any previously recorded error
+    syncErrorService.resolveError(student.id);
   } catch (apiErr: any) {
-    console.warn(`[Zero-Error Fallback] Live LeetCode API unreachable for @${student.leetcode_username} (${apiErr?.message || apiErr}). Searching for previous snapshot to carry forward...`);
+    fetchError = apiErr?.message || String(apiErr);
+    console.warn(`[Zero-Error Fallback] Live LeetCode API unreachable for @${student.leetcode_username} (${fetchError}). Searching for previous snapshot to carry forward...`);
+
+    // Record error in sync error service for admin review and retry
+    syncErrorService.recordError({
+      studentId: student.id,
+      studentName: student.name,
+      registerNumber: student.register_number,
+      leetcodeUsername: student.leetcode_username,
+      batchId: student.batch_id,
+      batchName: studentBatch?.batch_name,
+      department: studentBatch?.department,
+      sectionId: student.section_id,
+      sectionName: studentSection?.name,
+      errorMessage: fetchError,
+    });
 
     let latestSnapshot: any = null;
     if (!process.env.DATABASE_URL) {
@@ -275,6 +313,7 @@ export async function syncStudentLeetCode(
         hardSolved: latestSnapshot.hard_solved,
         totalSolved: latestSnapshot.total_solved,
       };
+      rawSource = 'fallback_snapshot_cache';
       console.log(`[Zero-Error Fallback] Carried forward previous snapshot (${latestSnapshot.total_solved} solved) for @${student.leetcode_username}, guaranteeing 0% error.`);
     } else {
       stats = {
@@ -284,6 +323,7 @@ export async function syncStudentLeetCode(
         hardSolved: 0,
         totalSolved: 0,
       };
+      rawSource = 'zero_default';
     }
   }
 
@@ -412,6 +452,26 @@ export async function syncStudentLeetCode(
     }
   }
 
+  const latencyMs = Date.now() - startTime;
+  diagnosticLogService.recordLog({
+    targetType: 'LEETCODE_STUDENT',
+    targetId: student.id,
+    targetName: student.name,
+    identifier: student.leetcode_username,
+    batchId: student.batch_id,
+    batchName: studentBatch?.batch_name,
+    sectionId: student.section_id,
+    sectionName: studentSection?.name,
+    department: studentBatch?.department,
+    latencyMs,
+    status: fetchError ? 'FAILED' : 'SUCCESS',
+    errorMessage: fetchError || undefined,
+    details: fetchError
+      ? `Sync encountered warning/error: ${fetchError}. Carried forward snapshot.`
+      : `Synchronized ${stats.totalSolved} total solved (Easy: ${stats.easySolved}, Med: ${stats.mediumSolved}, Hard: ${stats.hardSolved})`,
+    source: rawSource,
+  });
+
   return {
     studentId,
     studentName: student.name,
@@ -419,6 +479,7 @@ export async function syncStudentLeetCode(
     batchId: student.batch_id,
     stats,
     snapshot,
+    latencyMs,
     syncedAt: new Date().toISOString(),
   };
 }
@@ -488,8 +549,10 @@ async function syncGoogleSheetsForBatchIds(batchIds: string[], user: { userId: s
 export async function syncBatchLeetCode(batchId: string, user: { userId: string; role: UserRole }) {
   const startTime = Date.now();
   let studentList: Array<{ id: string; batch_id: string }> = [];
+  let batchInfo: any = null;
 
   if (!process.env.DATABASE_URL) {
+    batchInfo = inMemoryStore.batches.find((b) => b.id === batchId);
     let list = inMemoryStore.students.filter((s) => s.batch_id === batchId && s.leetcode_username);
     if (user.role === 'STAFF') {
       const authorizedIds = await getAuthorizedStudentIdsForStaff(user.userId);
@@ -497,6 +560,7 @@ export async function syncBatchLeetCode(batchId: string, user: { userId: string;
     }
     studentList = list.map((s) => ({ id: s.id, batch_id: s.batch_id }));
   } else {
+    batchInfo = await prisma.batch.findUnique({ where: { id: batchId } });
     let where: any = { batch_id: batchId, leetcode_username: { not: null } };
     if (user.role === 'STAFF') {
       const authorizedIds = await getAuthorizedStudentIdsForStaff(user.userId);
@@ -506,28 +570,50 @@ export async function syncBatchLeetCode(batchId: string, user: { userId: string;
     studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
   }
 
-  // Run student syncing concurrently (5 parallel workers)
-  const results = await runConcurrentTasks(studentList, 5, async (st) => {
-    try {
-      const res = await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
-      return { studentId: st.id, success: true, stats: res.stats };
-    } catch (err: any) {
-      return { studentId: st.id, success: false, error: err.message };
-    }
-  });
+  const batchLabel = batchInfo?.batch_name || `Batch ${batchId}`;
+  const stopTask = diagnosticLogService.startSyncTask(`batch_${batchId}`, `Sync Batch: ${batchLabel}`);
 
-  // Trigger Google Sheet sync once for the batch
-  await syncGoogleSheetsForBatchIds([batchId], user);
+  let results: any[] = [];
+  try {
+    // Run student syncing concurrently (5 parallel workers)
+    results = await runConcurrentTasks(studentList, 5, async (st) => {
+      try {
+        const res = await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
+        return { studentId: st.id, success: true, stats: res.stats };
+      } catch (err: any) {
+        return { studentId: st.id, success: false, error: err.message };
+      }
+    });
+
+    // Trigger Google Sheet sync once for the batch
+    await syncGoogleSheetsForBatchIds([batchId], user);
+  } finally {
+    stopTask();
+  }
 
   const durationMs = Date.now() - startTime;
   const successfulCount = results.filter((r) => r.success).length;
+  const failedCount = results.filter((r) => !r.success).length;
   console.log(`[LeetCode Sync] Batch ${batchId} synced: ${successfulCount}/${studentList.length} succeeded in ${(durationMs / 1000).toFixed(2)}s`);
+
+  diagnosticLogService.recordLog({
+    targetType: 'LEETCODE_BATCH',
+    targetId: batchId,
+    targetName: batchLabel,
+    batchId,
+    batchName: batchLabel,
+    department: batchInfo?.department,
+    latencyMs: durationMs,
+    status: failedCount > 0 ? (successfulCount === 0 ? 'FAILED' : 'WARNING') : 'SUCCESS',
+    details: `Synchronized ${successfulCount}/${studentList.length} students in ${(durationMs / 1000).toFixed(2)}s. Average student latency: ${studentList.length > 0 ? Math.round(durationMs / studentList.length) : 0}ms.`,
+    source: 'batch_worker_pool',
+  });
 
   return {
     batchId,
     totalAttempted: studentList.length,
     successful: successfulCount,
-    failed: results.filter((r) => !r.success).length,
+    failed: failedCount,
     durationSeconds: Number((durationMs / 1000).toFixed(2)),
     results,
   };
@@ -613,6 +699,80 @@ export async function syncFilteredStudentsLeetCode(
   };
 }
 
+/**
+ * Force refresh an entire section immediately, bypassing the global auto-sync queue.
+ */
+export async function syncSectionLeetCode(
+  sectionId: string,
+  user: { userId: string; role: UserRole }
+) {
+  const startTime = Date.now();
+  let section: any = null;
+  let batch: any = null;
+
+  if (!process.env.DATABASE_URL) {
+    section = inMemoryStore.sections.find((s) => s.id === sectionId);
+    if (section) {
+      batch = inMemoryStore.batches.find((b) => b.id === section.batch_id);
+    }
+  } else {
+    section = await prisma.section.findUnique({
+      where: { id: sectionId },
+      include: { batch: true },
+    });
+    if (section) {
+      batch = section.batch;
+    }
+  }
+
+  if (!section) {
+    const err: any = new Error('Section not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const sectionLabel = section.name || sectionId;
+  const batchLabel = batch?.batch_name || 'Batch';
+  const stopTask = diagnosticLogService.startSyncTask(
+    `sec_${sectionId}`,
+    `Force Refresh: Section ${sectionLabel} (${batchLabel})`
+  );
+
+  try {
+    const result = await syncFilteredStudentsLeetCode(
+      { batchId: section.batch_id, sectionId },
+      user
+    );
+
+    const latencyMs = Date.now() - startTime;
+    diagnosticLogService.recordLog({
+      targetType: 'LEETCODE_SECTION',
+      targetId: sectionId,
+      targetName: `Section ${sectionLabel} (Immediate Refresh)`,
+      batchId: section.batch_id,
+      batchName: batchLabel,
+      sectionId,
+      sectionName: sectionLabel,
+      department: batch?.department,
+      latencyMs,
+      status: result.failed > 0 ? (result.successful === 0 ? 'FAILED' : 'WARNING') : 'SUCCESS',
+      details: `⚡ Immediate force-refresh bypassed global queue: ${result.successful}/${result.totalAttempted} students synchronized in ${(latencyMs / 1000).toFixed(2)}s.`,
+      source: 'manual_force_refresh',
+    });
+
+    return {
+      sectionId,
+      sectionName: sectionLabel,
+      batchId: section.batch_id,
+      batchName: batchLabel,
+      department: batch?.department,
+      ...result,
+    };
+  } finally {
+    stopTask();
+  }
+}
+
 export async function getStudentSnapshots(studentId: string, user: { userId: string; role: UserRole }) {
   if (user.role === 'STAFF') {
     const isAuth = await isStaffAuthorizedForStudent(user.userId, studentId);
@@ -632,40 +792,56 @@ export async function getStudentSnapshots(studentId: string, user: { userId: str
         orderBy: { snapshot_date: 'desc' },
       });
 
-  // Auto-Snapshot check:
-  // 1. If student has 0 snapshots, automatically fetch initial stats on the fly
-  // 2. If student has snapshots, but the latest snapshot is NOT from today (missing today's snapshot),
-  //    or was updated more than 10 minutes ago, automatically refresh from LeetCode so solves appear on time!
+  // If student has 0 snapshots recorded, create an instant baseline snapshot in-memory or DB
+  // so that the frontend always has an initial snapshot record instantly without waiting
+  if (snapshots.length === 0) {
+    const today = getISTDate();
+    let student: any = null;
+    if (!process.env.DATABASE_URL) {
+      student = inMemoryStore.students.find((s) => s.id === studentId);
+      if (student) {
+        const baselineSnapshot = {
+          id: `snap_${Date.now()}_init`,
+          student_id: studentId,
+          snapshot_date: today,
+          easy_solved: 0,
+          medium_solved: 0,
+          hard_solved: 0,
+          total_solved: 0,
+          created_at: new Date(),
+        };
+        inMemoryStore.snapshots.push(baselineSnapshot);
+        snapshots = [baselineSnapshot];
+      }
+    }
+  }
+
+  // Non-blocking Auto-Snapshot trigger:
+  // If snapshots were missing or stale, trigger background sync without blocking the HTTP response!
   const todayISTStr = getISTDateString();
   const latest = snapshots[0];
   const latestDateStr = latest ? new Date(latest.snapshot_date).toISOString().split('T')[0] : '';
   const isMissingToday = !latest || latestDateStr !== todayISTStr;
   const isStale = isMissingToday || (Date.now() - new Date(latest.created_at || (latest as any).updated_at || 0).getTime() > 10 * 60 * 1000);
 
-  if (snapshots.length === 0 || isStale) {
-    let student: any = null;
-    if (!process.env.DATABASE_URL) {
-      student = inMemoryStore.students.find((s) => s.id === studentId);
-    } else {
-      student = await prisma.student.findUnique({ where: { id: studentId } });
-    }
-
-    if (student?.leetcode_username) {
+  if (isStale) {
+    // Fire-and-forget background worker: Never block user navigation on slow external networks
+    setImmediate(async () => {
       try {
-        console.log(`[Auto-Snapshot] Student ${student.name} (@${student.leetcode_username}) auto-refreshing stats on the fly...`);
-        await syncStudentLeetCode(studentId, user);
-        snapshots = !process.env.DATABASE_URL
-          ? inMemoryStore.snapshots
-              .filter((s) => s.student_id === studentId)
-              .sort((a, b) => new Date(b.snapshot_date).getTime() - new Date(a.snapshot_date).getTime())
-          : await prisma.dailyCodingSnapshot.findMany({
-              where: { student_id: studentId },
-              orderBy: { snapshot_date: 'desc' },
-            });
+        let student: any = null;
+        if (!process.env.DATABASE_URL) {
+          student = inMemoryStore.students.find((s) => s.id === studentId);
+        } else {
+          student = await prisma.student.findUnique({ where: { id: studentId } });
+        }
+        if (student?.leetcode_username) {
+          console.log(`[Auto-Snapshot Background] Asynchronously updating stats for ${student.name} (@${student.leetcode_username})...`);
+          await syncStudentLeetCode(studentId, user, { skipGoogleSheetSync: true });
+        }
       } catch (err: any) {
-        console.warn(`[Auto-Snapshot] Automatic snapshot fetch warning for ${student.name}:`, err?.message || err);
+        console.warn(`[Auto-Snapshot Background] Note for student ${studentId}:`, err?.message || err);
       }
-    }
+    });
   }
 
   return snapshots;
@@ -679,37 +855,53 @@ export async function runPeriodicAutoSync(): Promise<{
   timestamp: string;
 }> {
   const startTime = Date.now();
+  const stopTask = diagnosticLogService.startSyncTask('auto_sync_global', 'Global Auto-Sync (15-min cadence)');
   const adminContext = { userId: 'system-auto-sync', role: 'ADMIN' as const };
   let studentList: Array<{ id: string; batch_id: string }> = [];
 
-  if (!process.env.DATABASE_URL) {
-    studentList = inMemoryStore.students.filter((s) => s.leetcode_username).map((s) => ({ id: s.id, batch_id: s.batch_id }));
-  } else {
-    const students = await prisma.student.findMany({
-      where: { leetcode_username: { not: null } },
-      select: { id: true, batch_id: true },
-    });
-    studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
-  }
-
-  // Concurrent execution with pool of 10 workers for rapid execution
-  const results = await runConcurrentTasks(studentList, 10, async (st) => {
-    try {
-      await syncStudentLeetCode(st.id, adminContext, { skipGoogleSheetSync: true });
-      return { studentId: st.id, success: true };
-    } catch (err: any) {
-      return { studentId: st.id, success: false, error: err?.message };
+  let results: any[] = [];
+  try {
+    if (!process.env.DATABASE_URL) {
+      studentList = inMemoryStore.students.filter((s) => s.leetcode_username).map((s) => ({ id: s.id, batch_id: s.batch_id }));
+    } else {
+      const students = await prisma.student.findMany({
+        where: { leetcode_username: { not: null } },
+        select: { id: true, batch_id: true },
+      });
+      studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
     }
-  });
 
-  const batchIds = studentList.map((s) => s.batch_id);
-  await syncGoogleSheetsForBatchIds(batchIds, adminContext);
+    // Concurrent execution with pool of 10 workers for rapid execution
+    results = await runConcurrentTasks(studentList, 10, async (st) => {
+      try {
+        await syncStudentLeetCode(st.id, adminContext, { skipGoogleSheetSync: true });
+        return { studentId: st.id, success: true };
+      } catch (err: any) {
+        return { studentId: st.id, success: false, error: err?.message };
+      }
+    });
+
+    const batchIds = studentList.map((s) => s.batch_id);
+    await syncGoogleSheetsForBatchIds(batchIds, adminContext);
+  } finally {
+    stopTask();
+  }
 
   const durationMs = Date.now() - startTime;
   const successCount = results.filter((r) => r.success).length;
   const failCount = results.filter((r) => !r.success).length;
 
   console.log(`[LeetCode AutoSync] Periodic auto-sync completed: ${successCount}/${studentList.length} in ${(durationMs / 1000).toFixed(2)}s`);
+
+  diagnosticLogService.recordLog({
+    targetType: 'LEETCODE_BATCH',
+    targetId: 'global_auto_sync',
+    targetName: 'Global Automated Sync',
+    latencyMs: durationMs,
+    status: failCount > 0 ? (successCount === 0 ? 'FAILED' : 'WARNING') : 'SUCCESS',
+    details: `Automated cycle finished: ${successCount}/${studentList.length} students synchronized across all batches in ${(durationMs / 1000).toFixed(2)}s.`,
+    source: 'periodic_auto_sync',
+  });
 
   return {
     totalAttempted: studentList.length,

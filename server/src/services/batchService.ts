@@ -73,8 +73,8 @@ export async function getBatchesForStaff(staffId: string) {
       return inMemoryStore.batches
         .filter((b) => allBatchIds.includes(b.id))
         .map((b) => {
-          const isEntireBatch = batchIds.includes(b.id);
-          const bSecs = inMemoryStore.sections.filter((s) => s.batch_id === b.id && (isEntireBatch || allSecIds.includes(s.id)));
+          const isEntireBatch = directBatchIds.includes(b.id);
+          const bSecs = inMemoryStore.sections.filter((s) => s.batch_id === b.id && (isEntireBatch || secAssignedIds.includes(s.id)));
           const bStus = inMemoryStore.students.filter((st) => st.batch_id === b.id);
           return {
             ...b,

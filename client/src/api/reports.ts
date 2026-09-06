@@ -92,6 +92,7 @@ export async function getReportData(params?: {
   sortBy?: 'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name';
   sortOrder?: 'asc' | 'desc';
   activityStatus?: 'all' | 'active' | 'no_activity';
+  minProblems?: number | string;
 }): Promise<ReportDataResponse> {
   const response = await api.get('/reports/data', { params });
   return response.data;
@@ -173,6 +174,7 @@ export async function exportExcelReport(data: {
   sortBy?: 'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name';
   sortOrder?: 'asc' | 'desc';
   activityStatus?: 'all' | 'active' | 'no_activity';
+  minProblems?: number | string;
 }) {
   const response = await api.post('/reports/export-excel', data, {
     responseType: 'blob',
@@ -200,6 +202,7 @@ export async function exportCsvReport(data: {
   sortBy?: 'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name';
   sortOrder?: 'asc' | 'desc';
   activityStatus?: 'all' | 'active' | 'no_activity';
+  minProblems?: number | string;
 }) {
   const response = await api.post('/reports/export-csv', data, {
     responseType: 'blob',

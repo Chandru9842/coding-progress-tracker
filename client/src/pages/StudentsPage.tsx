@@ -429,26 +429,67 @@ export const StudentsPage: React.FC = () => {
       return;
     }
 
+    const selectedBatch = batches.find((b) => b.id === studentForm.batch_id);
+    const selectedSection = selectedBatch?.sections?.find((s) => s.id === studentForm.section_id);
+    const selectedAllocBatch = selectedSection?.allocation_batches?.find((ab) => ab.id === studentForm.allocation_batch_id);
+    const selectedMentor = staffList.find((m) => m.id === studentForm.mentor_id);
+
+    // Optimistic student representation for 0ms perceptual delay
+    const tempId = editingStudentId || `temp_student_${Date.now()}`;
+    const optimisticStudent: Student = {
+      id: tempId,
+      register_number: studentForm.register_number.trim(),
+      name: studentForm.name.trim(),
+      department: studentForm.department,
+      batch_id: studentForm.batch_id,
+      section_id: studentForm.section_id,
+      allocation_batch_id: studentForm.allocation_batch_id || null,
+      sub_batch: studentForm.sub_batch || null,
+      current_year: studentForm.current_year || null,
+      leetcode_username: studentForm.leetcode_username.trim(),
+      mentor_id: studentForm.mentor_id || null,
+      mentor: selectedMentor ? { id: selectedMentor.id, name: selectedMentor.name, email: selectedMentor.email } : null,
+      allocation_batch: selectedAllocBatch ? { id: selectedAllocBatch.id, name: selectedAllocBatch.name } : null,
+      created_at: new Date().toISOString(),
+      batch: selectedBatch ? { id: selectedBatch.id, batch_name: selectedBatch.batch_name, start_year: selectedBatch.start_year, end_year: selectedBatch.end_year } : undefined,
+      section: selectedSection ? { name: selectedSection.name } : undefined,
+    };
+
+    // 1. Immediately apply optimistic update to local state & close modal instantly
+    if (editingStudentId) {
+      setStudents((prev) => prev.map((s) => (s.id === editingStudentId ? { ...s, ...optimisticStudent } : s)));
+      setSyncNotice('Student updated! Syncing LeetCode stats & Google Sheets in background...');
+    } else {
+      setStudents((prev) => [optimisticStudent, ...prev]);
+      setSyncNotice('Student added! Fetching initial LeetCode stats & syncing in background...');
+    }
+
+    setShowStudentModal(false);
+
     try {
       setSubmitting(true);
       if (editingStudentId) {
         const updated = await studentApi.updateStudent(editingStudentId, studentForm);
         if (updated && updated.id) {
-          setStudents((prev) => prev.map((s) => s.id === editingStudentId ? { ...s, ...updated } : s));
+          setStudents((prev) => prev.map((s) => (s.id === editingStudentId ? { ...s, ...updated } : s)));
         }
         setSyncNotice('Student updated successfully! LeetCode details & Google Sheets automatically synced.');
       } else {
         const created = await studentApi.createStudent(studentForm);
         if (created && created.id) {
-          setStudents((prev) => [created, ...prev]);
+          // Replace optimistic temporary student with server-confirmed record
+          setStudents((prev) => prev.map((s) => (s.id === tempId ? { ...created, ...s, id: created.id } : s)));
         }
         setSyncNotice('Student added successfully! Initial LeetCode snapshot & Google Sheets automatically synced.');
       }
-      setShowStudentModal(false);
       fetchStudents(false);
       window.dispatchEvent(new CustomEvent('student-synced'));
       window.dispatchEvent(new CustomEvent('sheets-synced'));
     } catch (err: any) {
+      // Revert optimistic addition if error occurs
+      if (!editingStudentId) {
+        setStudents((prev) => prev.filter((s) => s.id !== tempId));
+      }
       alert(err.response?.data?.error || 'Failed to save student record');
     } finally {
       setSubmitting(false);

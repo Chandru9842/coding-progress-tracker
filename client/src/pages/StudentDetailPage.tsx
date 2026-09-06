@@ -16,6 +16,7 @@ export const StudentDetailPage: React.FC = () => {
   const [snapshots, setSnapshots] = useState<DailySnapshot[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [syncing, setSyncing] = useState<boolean>(false);
+  const [backgroundSyncing, setBackgroundSyncing] = useState<boolean>(false);
   const [deleting, setDeleting] = useState<boolean>(false);
   const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -28,14 +29,16 @@ export const StudentDetailPage: React.FC = () => {
     if (!studentId) return;
     try {
       setLoading(true);
+      setError(null);
       const [data, snapData] = await Promise.all([
         studentApi.getStudentById(studentId),
         syncApi.getSnapshots(studentId),
       ]);
       setStudent(data);
-      setSnapshots(snapData);
+      setSnapshots(snapData || []);
+      setLoading(false);
 
-      // Check if student has a LeetCode username and needs an auto-sync:
+      // Check if student has a LeetCode username and needs an auto-sync in background:
       // (1) Has 0 snapshots
       // (2) Or latest snapshot is not from today (YYYY-MM-DD IST)
       const latestSnap = snapData && snapData.length > 0 ? snapData[0] : null;
@@ -44,19 +47,22 @@ export const StudentDetailPage: React.FC = () => {
       const needsDailySync = data?.leetcode_username && (!latestSnap || latestDateStr !== todayIST);
 
       if (needsDailySync) {
+        setBackgroundSyncing(true);
         try {
-          console.log(`[Auto-Snapshot] Auto-updating live LeetCode stats for ${data.name} (@${data.leetcode_username})...`);
+          console.log(`[Auto-Snapshot] Asynchronously updating live LeetCode stats for ${data.name} (@${data.leetcode_username})...`);
           await syncApi.syncStudent(studentId);
           const [refreshedData, refreshedSnaps] = await Promise.all([
             studentApi.getStudentById(studentId),
             syncApi.getSnapshots(studentId),
           ]);
           setStudent(refreshedData);
-          setSnapshots(refreshedSnaps);
+          setSnapshots(refreshedSnaps || []);
           window.dispatchEvent(new CustomEvent('student-synced'));
           window.dispatchEvent(new CustomEvent('sheets-synced'));
         } catch (autoErr: any) {
-          console.warn('[Auto-Snapshot] Auto snapshot fetch note:', autoErr?.message || autoErr);
+          console.warn('[Auto-Snapshot] Background sync note:', autoErr?.message || autoErr);
+        } finally {
+          setBackgroundSyncing(false);
         }
       }
     } catch (err: any) {
@@ -65,7 +71,6 @@ export const StudentDetailPage: React.FC = () => {
       } else {
         setError(err.response?.data?.error || 'Failed to load student details.');
       }
-    } finally {
       setLoading(false);
     }
   };
@@ -139,13 +144,48 @@ export const StudentDetailPage: React.FC = () => {
             padding: '2.5rem', textAlign: 'center', backgroundColor: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171'
           }}>
             <ShieldAlert size={42} style={{ margin: '0 auto 1rem auto' }} />
-            <h3 style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>Access Restricted</h3>
-            <p style={{ fontSize: '0.9rem', color: '#fca5a5' }}>{error}</p>
+            <h3 style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>Unable to Load Student Profile</h3>
+            <p style={{ fontSize: '0.9rem', color: '#fca5a5', marginBottom: '1.5rem' }}>{error}</p>
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
+              <button
+                className="btn-primary"
+                onClick={() => fetchDetailAndSnapshots()}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}
+              >
+                <RefreshCw size={14} />
+                <span>Retry Loading</span>
+              </button>
+              <button
+                className="btn-secondary"
+                onClick={() => navigate('/students')}
+                style={{ fontSize: '0.85rem' }}
+              >
+                Back to Students Directory
+              </button>
+            </div>
           </div>
         )}
 
         {!loading && student && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            {/* Background Syncing Notice */}
+            {backgroundSyncing && (
+              <div style={{
+                padding: '0.6rem 1rem',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'rgba(99, 102, 241, 0.12)',
+                border: '1px solid rgba(99, 102, 241, 0.3)',
+                color: '#818cf8',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.6rem',
+                fontSize: '0.85rem',
+              }}>
+                <Loader2 className="animate-spin" size={16} />
+                <span>Synchronizing today's live LeetCode stats for @{student.leetcode_username} in the background...</span>
+              </div>
+            )}
+
             {/* Metadata Header Card */}
             <div className="glass-panel" style={{ padding: '2rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '1.5rem', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>

@@ -597,24 +597,135 @@ export const studentApi = {
 
 
 
+export interface DiagnosticLog {
+  id: string;
+  timestamp: string;
+  targetType: 'LEETCODE_STUDENT' | 'LEETCODE_BATCH' | 'LEETCODE_SECTION' | 'GOOGLE_SHEET';
+  targetId: string;
+  targetName: string;
+  identifier?: string;
+  batchId?: string;
+  batchName?: string;
+  sectionId?: string;
+  sectionName?: string;
+  department?: string;
+  latencyMs: number;
+  status: 'SUCCESS' | 'FAILED' | 'WARNING';
+  errorMessage?: string;
+  details?: string;
+  source?: string;
+}
+
+export interface BottleneckStudent {
+  studentId: string;
+  studentName: string;
+  username?: string;
+  batchName?: string;
+  avgLatencyMs: number;
+  maxLatencyMs: number;
+  syncCount: number;
+  failCount: number;
+}
+
+export interface BottleneckBatch {
+  batchId: string;
+  batchName: string;
+  department?: string;
+  avgLatencyMs: number;
+  maxLatencyMs: number;
+  syncCount: number;
+}
+
+export interface DiagnosticSummary {
+  totalSyncs: number;
+  avgLatencyMs: number;
+  successRate: number;
+  leetcodeAvgLatencyMs: number;
+  googleSheetsAvgLatencyMs: number;
+  bottleneckStudents: BottleneckStudent[];
+  bottleneckBatches: BottleneckBatch[];
+  activeSyncCount: number;
+  activeSyncTasks: string[];
+}
+
+export interface SyncErrorInfo {
+  studentId: string;
+  studentName: string;
+  registerNumber: string;
+  leetcodeUsername: string;
+  batchId?: string;
+  batchName?: string;
+  department?: string;
+  sectionId?: string;
+  sectionName?: string;
+  errorMessage: string;
+  failedAt: string;
+  retryAttempts: number;
+}
+
+export interface ActiveSyncStatus {
+  isSyncing: boolean;
+  activeCount: number;
+  activeTasks: string[];
+}
+
+export function notifySyncStarted(name?: string) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('app-sync-state', { detail: { isSyncing: true, task: name } }));
+  }
+}
+
+export function notifySyncEnded(name?: string) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('app-sync-state', { detail: { isSyncing: false, task: name } }));
+  }
+}
+
 export const syncApi = {
   syncStudent: async (studentId: string): Promise<any> => {
-    const res = await api.post(`/sync/student/${studentId}`);
-    return res.data;
+    notifySyncStarted('Student Sync');
+    try {
+      const res = await api.post(`/sync/student/${studentId}`);
+      return res.data;
+    } finally {
+      notifySyncEnded('Student Sync');
+    }
   },
 
   syncBatch: async (batchId: string): Promise<any> => {
+    notifySyncStarted('Batch Sync');
     clearClientCache('sheets_');
     clearClientCache('students_');
-    const res = await api.post(`/sync/batch/${batchId}`);
-    return res.data;
+    try {
+      const res = await api.post(`/sync/batch/${batchId}`);
+      return res.data;
+    } finally {
+      notifySyncEnded('Batch Sync');
+    }
+  },
+
+  syncSection: async (sectionId: string): Promise<any> => {
+    notifySyncStarted('Section Immediate Sync');
+    clearClientCache('sheets_');
+    clearClientCache('students_');
+    try {
+      const res = await api.post(`/sync/section/${sectionId}`);
+      return res.data;
+    } finally {
+      notifySyncEnded('Section Immediate Sync');
+    }
   },
 
   syncAll: async (): Promise<any> => {
+    notifySyncStarted('Global Sync');
     clearClientCache('sheets_');
     clearClientCache('students_');
-    const res = await api.post('/sync/all');
-    return res.data;
+    try {
+      const res = await api.post('/sync/all');
+      return res.data;
+    } finally {
+      notifySyncEnded('Global Sync');
+    }
   },
 
   getSnapshots: async (studentId: string): Promise<DailySnapshot[]> => {
@@ -627,14 +738,83 @@ export const syncApi = {
     return res.data;
   },
 
-  triggerPeriodicAutoSync: async (): Promise<any> => {
-    const res = await api.post('/cron/periodic-sync');
+  getActiveStatus: async (): Promise<ActiveSyncStatus> => {
+    const res = await api.get<ActiveSyncStatus>('/sync/active-status');
     return res.data;
   },
 
-  triggerDailyMidnightReconciliation: async (): Promise<any> => {
-    const res = await api.post('/cron/daily-sync');
+  getDiagnosticLogs: async (params?: {
+    targetType?: string;
+    status?: string;
+    search?: string;
+    limit?: number;
+  }): Promise<{ logs: DiagnosticLog[]; summary: DiagnosticSummary; total: number }> => {
+    const res = await api.get('/sync/diagnostic-logs', { params });
+    const data = res.data || {};
+    const rawLogs = data.logs;
+    const logs: DiagnosticLog[] = Array.isArray(rawLogs)
+      ? rawLogs
+      : (Array.isArray(rawLogs?.logs) ? rawLogs.logs : []);
+    const total = typeof data.total === 'number'
+      ? data.total
+      : (typeof rawLogs?.total === 'number' ? rawLogs.total : logs.length);
+    return {
+      logs,
+      summary: data.summary || null,
+      total,
+    };
+  },
+
+  clearDiagnosticLogs: async (): Promise<any> => {
+    const res = await api.delete('/sync/diagnostic-logs');
     return res.data;
+  },
+
+  getSyncErrors: async (): Promise<{ errors: SyncErrorInfo[]; count: number }> => {
+    const res = await api.get('/sync/errors');
+    return res.data;
+  },
+
+  retryFailedStudent: async (studentId: string): Promise<any> => {
+    notifySyncStarted('Retry Student Sync');
+    clearClientCache('students_');
+    try {
+      const res = await api.post(`/sync/errors/retry/${studentId}`);
+      return res.data;
+    } finally {
+      notifySyncEnded('Retry Student Sync');
+    }
+  },
+
+  retryAllFailedStudents: async (): Promise<any> => {
+    notifySyncStarted('Retry All Failed Students');
+    clearClientCache('students_');
+    try {
+      const res = await api.post('/sync/errors/retry-all');
+      return res.data;
+    } finally {
+      notifySyncEnded('Retry All Failed Students');
+    }
+  },
+
+  triggerPeriodicAutoSync: async (): Promise<any> => {
+    notifySyncStarted('Periodic Auto-Sync');
+    try {
+      const res = await api.post('/cron/periodic-sync');
+      return res.data;
+    } finally {
+      notifySyncEnded('Periodic Auto-Sync');
+    }
+  },
+
+  triggerDailyMidnightReconciliation: async (): Promise<any> => {
+    notifySyncStarted('Daily Reconciliation');
+    try {
+      const res = await api.post('/cron/daily-sync');
+      return res.data;
+    } finally {
+      notifySyncEnded('Daily Reconciliation');
+    }
   },
 };
 

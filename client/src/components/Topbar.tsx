@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext.js';
 import { LogOut, User as UserIcon, Menu } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { SyncStatus } from './SyncStatus.js';
+import { GlobalSyncIndicator } from './GlobalSyncIndicator.js';
 
 interface TopbarProps {
   title: string;
@@ -58,8 +59,9 @@ export const Topbar: React.FC<TopbarProps> = ({ title, onToggleMobileMenu }) => 
         </h2>
       </div>
 
-      {/* Sync Status Badge & User Controls */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+      {/* Sync Status Badge, Global Sync Indicator & User Controls */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        {user && <GlobalSyncIndicator />}
         {user && <SyncStatus variant="badge" />}
 
         {user && (

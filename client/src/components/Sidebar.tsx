@@ -9,6 +9,7 @@ import {
   Settings,
   UserCheck,
   Code2,
+  Activity,
 } from 'lucide-react';
 
 import { X } from 'lucide-react';
@@ -32,6 +33,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onClose }) => {
 
   const adminNavItems = [
     { name: 'Staff Management', path: '/staff-management', icon: UserCheck, enabled: true },
+    { name: 'Sync Diagnostics', path: '/diagnostics', icon: Activity, enabled: true },
   ];
 
   return (
