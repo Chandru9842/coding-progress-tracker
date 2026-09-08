@@ -125,7 +125,112 @@ export const StudentDetailPage: React.FC = () => {
     }
   };
 
-  const latestSnapshot = snapshots.length > 0 ? snapshots[0] : null;
+  const [datePreset, setDatePreset] = useState<'all' | 'today' | 'yesterday' | 'last_7' | 'custom'>('all');
+  const [customFromDate, setCustomFromDate] = useState<string>('');
+  const [customToDate, setCustomToDate] = useState<string>('');
+
+  const formatIST = (d: any) => {
+    if (!d) return '';
+    if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.trim())) return d.trim();
+    const obj = typeof d === 'string' ? new Date(d) : d;
+    return isNaN(obj.getTime()) ? String(d) : new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(obj);
+  };
+
+  const getRelativeIST = (offsetDays: number = 0) => {
+    const now = new Date();
+    const d = new Date(now.getTime() + offsetDays * 24 * 60 * 60 * 1000);
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d);
+  };
+
+  // Determine active start and end date based on datePreset
+  let filterStart = '';
+  let filterEnd = '';
+  if (datePreset === 'today') {
+    filterStart = getRelativeIST(0);
+    filterEnd = getRelativeIST(0);
+  } else if (datePreset === 'yesterday') {
+    filterStart = getRelativeIST(-1);
+    filterEnd = getRelativeIST(-1);
+  } else if (datePreset === 'last_7') {
+    filterStart = getRelativeIST(-7);
+    filterEnd = getRelativeIST(0);
+  } else if (datePreset === 'custom') {
+    filterStart = customFromDate;
+    filterEnd = customToDate;
+  }
+
+  const isPeriod = Boolean(filterStart || filterEnd);
+  // Sort snapshots chronological (oldest to newest)
+  const sortedAsc = [...snapshots].sort((a, b) => new Date(a.snapshot_date).getTime() - new Date(b.snapshot_date).getTime());
+  const latestSnapshot = sortedAsc.length > 0 ? sortedAsc[sortedAsc.length - 1] : null;
+
+  let displayEasy = latestSnapshot ? latestSnapshot.easy_solved + Math.max(0, latestSnapshot.total_solved - (latestSnapshot.easy_solved + latestSnapshot.medium_solved + latestSnapshot.hard_solved)) : 0;
+  let displayMedium = latestSnapshot ? latestSnapshot.medium_solved : 0;
+  let displayHard = latestSnapshot ? latestSnapshot.hard_solved : 0;
+  let displayTotal = latestSnapshot ? latestSnapshot.total_solved : 0;
+  let periodDeltaTotal = 0;
+
+  if (isPeriod && sortedAsc.length > 0) {
+    const periodSnaps = sortedAsc.filter((s) => {
+      const dStr = formatIST(s.snapshot_date);
+      if (filterStart && dStr < filterStart) return false;
+      if (filterEnd && dStr > filterEnd) return false;
+      return true;
+    });
+
+    const priorBaseline = filterStart
+      ? [...sortedAsc].reverse().find((s) => formatIST(s.snapshot_date) < filterStart)
+      : null;
+
+    if (priorBaseline) {
+      const endSnap = periodSnaps.length > 0 ? periodSnaps[periodSnaps.length - 1] : null;
+      if (endSnap) {
+        displayEasy = Math.max(0, (endSnap.easy_solved || 0) - (priorBaseline.easy_solved || 0));
+        displayMedium = Math.max(0, (endSnap.medium_solved || 0) - (priorBaseline.medium_solved || 0));
+        displayHard = Math.max(0, (endSnap.hard_solved || 0) - (priorBaseline.hard_solved || 0));
+        periodDeltaTotal = Math.max(0, (endSnap.total_solved || 0) - (priorBaseline.total_solved || 0));
+        displayTotal = periodDeltaTotal;
+
+        const sumDiff = displayEasy + displayMedium + displayHard;
+        if (displayTotal > sumDiff) {
+          displayEasy += (displayTotal - sumDiff);
+        }
+      } else {
+        displayEasy = 0;
+        displayMedium = 0;
+        displayHard = 0;
+        displayTotal = 0;
+      }
+    } else if (periodSnaps.length >= 2) {
+      const firstSnap = periodSnaps[0];
+      const lastSnap = periodSnaps[periodSnaps.length - 1];
+      displayEasy = Math.max(0, (lastSnap.easy_solved || 0) - (firstSnap.easy_solved || 0));
+      displayMedium = Math.max(0, (lastSnap.medium_solved || 0) - (firstSnap.medium_solved || 0));
+      displayHard = Math.max(0, (lastSnap.hard_solved || 0) - (firstSnap.hard_solved || 0));
+      periodDeltaTotal = Math.max(0, (lastSnap.total_solved || 0) - (firstSnap.total_solved || 0));
+      displayTotal = periodDeltaTotal;
+
+      const sumDiff = displayEasy + displayMedium + displayHard;
+      if (displayTotal > sumDiff) {
+        displayEasy += (displayTotal - sumDiff);
+      }
+    } else {
+      displayEasy = 0;
+      displayMedium = 0;
+      displayHard = 0;
+      displayTotal = 0;
+    }
+  }
+
+  // If a period is active, optionally filter the snapshot history list or show all
+  const displayedSnapshots = isPeriod
+    ? snapshots.filter((s) => {
+        const dStr = formatIST(s.snapshot_date);
+        if (filterStart && dStr < filterStart) return false;
+        if (filterEnd && dStr > filterEnd) return false;
+        return true;
+      })
+    : snapshots;
 
   return (
     <Layout title="Student Profile">
@@ -321,31 +426,139 @@ export const StudentDetailPage: React.FC = () => {
               </div>
             </div>
 
-            {/* LeetCode Solved Cards */}
-            {latestSnapshot ? (
-              (() => {
-                const latestEasy = latestSnapshot.easy_solved + Math.max(0, latestSnapshot.total_solved - (latestSnapshot.easy_solved + latestSnapshot.medium_solved + latestSnapshot.hard_solved));
-                return (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
-                    <div className="glass-panel" style={{ padding: '1.25rem', textAlign: 'center' }}>
-                      <span style={{ fontSize: '0.75rem', color: '#4ade80', fontWeight: 700, textTransform: 'uppercase' }}>Easy</span>
-                      <h4 style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '0.25rem' }}>{latestEasy}</h4>
+            {/* Date Range Mode Selector for Student Profile */}
+            {latestSnapshot && (
+              <div className="glass-panel" style={{ padding: '1rem 1.25rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    📅 Date Range Mode
+                  </label>
+                  <span style={{ fontSize: '0.78rem', color: isPeriod ? '#34d399' : 'var(--text-muted)', fontWeight: 600 }}>
+                    {datePreset === 'today'
+                      ? `⚡ Showing Progress Solved Today (${filterStart})`
+                      : datePreset === 'yesterday'
+                      ? `⚡ Showing Progress Solved Yesterday (${filterStart})`
+                      : datePreset === 'last_7'
+                      ? `⚡ Showing Progress in Last 7 Days (${filterStart} to ${filterEnd})`
+                      : datePreset === 'custom' && (filterStart || filterEnd)
+                      ? `⚡ Showing Custom Range Progress (${filterStart || 'Start'} to ${filterEnd || 'Today'})`
+                      : '🏆 Showing All-Time Cumulative Totals'}
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                  {[
+                    { key: 'all', label: 'All Time (Cumulative)' },
+                    { key: 'today', label: 'Today (New Solved)' },
+                    { key: 'yesterday', label: 'Yesterday (New Solved)' },
+                    { key: 'last_7', label: 'Last 7 Days (Progress)' },
+                    { key: 'custom', label: 'Custom Range' },
+                  ].map((p) => (
+                    <button
+                      key={p.key}
+                      type="button"
+                      className={datePreset === p.key ? 'btn-primary' : 'btn-secondary'}
+                      style={{ fontSize: '0.8rem', padding: '0.35rem 0.8rem' }}
+                      onClick={() => {
+                        setDatePreset(p.key as any);
+                        if (p.key === 'custom' && !customFromDate && !customToDate) {
+                          const today = getRelativeIST(0);
+                          setCustomFromDate(today);
+                          setCustomToDate(today);
+                        }
+                      }}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+
+                {datePreset === 'custom' && (
+                  <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border-subtle)' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.25rem' }}>From Date</label>
+                      <input
+                        type="date"
+                        className="form-input"
+                        value={customFromDate}
+                        onChange={(e) => setCustomFromDate(e.target.value)}
+                        style={{ fontSize: '0.85rem', padding: '0.4rem 0.6rem' }}
+                      />
                     </div>
-                    <div className="glass-panel" style={{ padding: '1.25rem', textAlign: 'center' }}>
-                      <span style={{ fontSize: '0.75rem', color: '#facc15', fontWeight: 700, textTransform: 'uppercase' }}>Medium</span>
-                      <h4 style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '0.25rem' }}>{latestSnapshot.medium_solved}</h4>
-                    </div>
-                    <div className="glass-panel" style={{ padding: '1.25rem', textAlign: 'center' }}>
-                      <span style={{ fontSize: '0.75rem', color: '#f87171', fontWeight: 700, textTransform: 'uppercase' }}>Hard</span>
-                      <h4 style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '0.25rem' }}>{latestSnapshot.hard_solved}</h4>
-                    </div>
-                    <div className="glass-panel" style={{ padding: '1.25rem', textAlign: 'center', backgroundColor: 'rgba(99, 102, 241, 0.15)' }}>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--primary)', fontWeight: 700, textTransform: 'uppercase' }}>Total Solved</span>
-                      <h4 style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '0.25rem', color: 'var(--primary)' }}>{latestSnapshot.total_solved}</h4>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.25rem' }}>To Date</label>
+                      <input
+                        type="date"
+                        className="form-input"
+                        value={customToDate}
+                        onChange={(e) => setCustomToDate(e.target.value)}
+                        style={{ fontSize: '0.85rem', padding: '0.4rem 0.6rem' }}
+                      />
                     </div>
                   </div>
-                );
-              })()
+                )}
+              </div>
+            )}
+
+            {/* LeetCode Solved Cards */}
+            {latestSnapshot ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
+                <div className="glass-panel" style={{ padding: '1.25rem', textAlign: 'center' }}>
+                  <span style={{ fontSize: '0.75rem', color: '#4ade80', fontWeight: 700, textTransform: 'uppercase' }}>
+                    {isPeriod ? 'Period Easy' : 'Easy'}
+                  </span>
+                  <h4 style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '0.25rem', color: '#4ade80' }}>
+                    {isPeriod && displayEasy > 0 ? `+${displayEasy}` : displayEasy}
+                  </h4>
+                  {isPeriod && (
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.2rem' }}>
+                      Overall: {latestSnapshot.easy_solved}
+                    </span>
+                  )}
+                </div>
+
+                <div className="glass-panel" style={{ padding: '1.25rem', textAlign: 'center' }}>
+                  <span style={{ fontSize: '0.75rem', color: '#facc15', fontWeight: 700, textTransform: 'uppercase' }}>
+                    {isPeriod ? 'Period Med' : 'Medium'}
+                  </span>
+                  <h4 style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '0.25rem', color: '#facc15' }}>
+                    {isPeriod && displayMedium > 0 ? `+${displayMedium}` : displayMedium}
+                  </h4>
+                  {isPeriod && (
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.2rem' }}>
+                      Overall: {latestSnapshot.medium_solved}
+                    </span>
+                  )}
+                </div>
+
+                <div className="glass-panel" style={{ padding: '1.25rem', textAlign: 'center' }}>
+                  <span style={{ fontSize: '0.75rem', color: '#f87171', fontWeight: 700, textTransform: 'uppercase' }}>
+                    {isPeriod ? 'Period Hard' : 'Hard'}
+                  </span>
+                  <h4 style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '0.25rem', color: '#f87171' }}>
+                    {isPeriod && displayHard > 0 ? `+${displayHard}` : displayHard}
+                  </h4>
+                  {isPeriod && (
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.2rem' }}>
+                      Overall: {latestSnapshot.hard_solved}
+                    </span>
+                  )}
+                </div>
+
+                <div className="glass-panel" style={{ padding: '1.25rem', textAlign: 'center', backgroundColor: isPeriod && displayTotal > 0 ? 'rgba(52, 211, 153, 0.15)' : 'rgba(99, 102, 241, 0.15)' }}>
+                  <span style={{ fontSize: '0.75rem', color: isPeriod && displayTotal > 0 ? '#34d399' : 'var(--primary)', fontWeight: 700, textTransform: 'uppercase' }}>
+                    {isPeriod ? (datePreset === 'today' ? "Today's Solved" : datePreset === 'yesterday' ? "Yesterday's Solved" : "Period Solved") : 'Total Solved'}
+                  </span>
+                  <h4 style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '0.25rem', color: isPeriod && displayTotal > 0 ? '#34d399' : 'var(--primary)' }}>
+                    {isPeriod && displayTotal > 0 ? `+${displayTotal}` : displayTotal}
+                  </h4>
+                  {isPeriod && (
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.2rem' }}>
+                      Overall Total: {latestSnapshot.total_solved}
+                    </span>
+                  )}
+                </div>
+              </div>
             ) : (
               <div className="glass-panel" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
                 <Activity size={32} style={{ margin: '0 auto 0.75rem auto', color: 'var(--primary)' }} />
