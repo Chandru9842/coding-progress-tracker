@@ -25,6 +25,42 @@ export const StudentDetailPage: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const PAGE_SIZE = 10;
 
+  const ensureContinuousTimeline = (rawSnaps: DailySnapshot[]): DailySnapshot[] => {
+    if (!rawSnaps || rawSnaps.length === 0) return [];
+    const sorted = [...rawSnaps].sort((a, b) => new Date(a.snapshot_date).getTime() - new Date(b.snapshot_date).getTime());
+    const toDateStr = (d: any) => {
+      if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.trim())) return d.trim();
+      const parsed = new Date(d);
+      return isNaN(parsed.getTime()) ? String(d) : new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(parsed);
+    };
+    const minDateStr = toDateStr(sorted[0].snapshot_date);
+    const todayIST = toDateStr(new Date());
+    const lastDateStr = toDateStr(sorted[sorted.length - 1].snapshot_date);
+    const maxDateStr = lastDateStr > todayIST ? lastDateStr : todayIST;
+
+    const mapByDate = new Map<string, DailySnapshot>();
+    sorted.forEach((s) => mapByDate.set(toDateStr(s.snapshot_date), s));
+
+    const filled: DailySnapshot[] = [];
+    const curr = new Date(`${minDateStr}T00:00:00.000Z`);
+    const end = new Date(`${maxDateStr}T00:00:00.000Z`);
+    let lastKnown = sorted[0];
+
+    while (curr <= end) {
+      const dStr = toDateStr(curr);
+      if (mapByDate.has(dStr)) {
+        lastKnown = mapByDate.get(dStr)!;
+      }
+      filled.push({
+        ...lastKnown,
+        id: lastKnown.id ? `${lastKnown.id}_${dStr}` : `snap_${dStr}`,
+        snapshot_date: dStr,
+      });
+      curr.setUTCDate(curr.getUTCDate() + 1);
+    }
+    return filled.sort((a, b) => new Date(b.snapshot_date).getTime() - new Date(a.snapshot_date).getTime());
+  };
+
   const fetchDetailAndSnapshots = async () => {
     if (!studentId) return;
     try {
@@ -35,7 +71,7 @@ export const StudentDetailPage: React.FC = () => {
         syncApi.getSnapshots(studentId),
       ]);
       setStudent(data);
-      setSnapshots(snapData || []);
+      setSnapshots(ensureContinuousTimeline(snapData || []));
       setLoading(false);
 
       const formatIST = (d: any) => {
@@ -63,7 +99,7 @@ export const StudentDetailPage: React.FC = () => {
             syncApi.getSnapshots(studentId),
           ]);
           setStudent(refreshedData);
-          setSnapshots(refreshedSnaps || []);
+          setSnapshots(ensureContinuousTimeline(refreshedSnaps || []));
           window.dispatchEvent(new CustomEvent('student-synced'));
           window.dispatchEvent(new CustomEvent('sheets-synced'));
         } catch (autoErr: any) {
@@ -101,7 +137,7 @@ export const StudentDetailPage: React.FC = () => {
         syncApi.getSnapshots(studentId),
       ]);
       setStudent(data);
-      setSnapshots(snapData);
+      setSnapshots(ensureContinuousTimeline(snapData || []));
       window.dispatchEvent(new CustomEvent('student-synced'));
       window.dispatchEvent(new CustomEvent('sheets-synced'));
     } catch (err: any) {

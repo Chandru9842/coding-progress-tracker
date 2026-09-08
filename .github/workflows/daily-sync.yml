@@ -1,0 +1,66 @@
+name: Autonomous Daily Snapshot & Google Sheets Sync
+
+on:
+  schedule:
+    # 18:30 UTC = 00:00 IST (Midnight rollover)
+    - cron: '30 18 * * *'
+    # 19:00 UTC = 00:30 IST (Daily reconciliation run)
+    - cron: '0 19 * * *'
+    # 06:30 UTC = 12:00 PM IST (Midday progress refresh)
+    - cron: '30 6 * * *'
+  workflow_dispatch: # Allows manual run anytime from GitHub Actions UI
+
+jobs:
+  daily-sync:
+    name: Execute Daily Snapshot Reconciliation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Production Daily Snapshot Reconciliation
+        env:
+          TARGET_URL: ${{ vars.PRODUCTION_URL || 'https://coding-progress-tracker-navy.vercel.app' }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET || 'coding_tracker_cron_secret' }}
+        run: |
+          echo "=========================================================="
+          echo "Starting Autonomous Daily Snapshot Sync via GitHub Actions"
+          echo "Target URL: ${TARGET_URL}"
+          echo "Execution Time (UTC): $(date -u)"
+          echo "=========================================================="
+
+          # 1. Trigger Daily Midnight Snapshot Reconciliation
+          HTTP_RESPONSE=$(curl -s -o /tmp/cron_response.json -w "%{http_code}" \
+            -X POST "${TARGET_URL}/api/v1/cron/daily-sync?secret=${CRON_SECRET}" \
+            -H "User-Agent: vercel-cron/1.0 (GitHub-Actions-Autonomous-Scheduler)" \
+            -H "x-vercel-cron: 1" \
+            -H "x-cron-secret: ${CRON_SECRET}" \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            --max-time 120 \
+            --retry 2 \
+            --retry-delay 3)
+
+          echo "Daily Snapshot HTTP Code: ${HTTP_RESPONSE}"
+          if [ -f /tmp/cron_response.json ]; then
+            cat /tmp/cron_response.json
+            echo ""
+          fi
+
+          # 2. Ping Google Sheets Daily Sync Automation Hub
+          SHEET_HTTP=$(curl -s -o /tmp/sheet_response.json -w "%{http_code}" \
+            -X GET "${TARGET_URL}/api/v1/google-sheets/daily-sync-ping?secret=${CRON_SECRET}" \
+            -H "User-Agent: vercel-cron/1.0 (GitHub-Actions-Autonomous-Scheduler)" \
+            -H "x-vercel-cron: 1" \
+            -H "x-cron-secret: ${CRON_SECRET}" \
+            --max-time 60 \
+            --retry 2 \
+            --retry-delay 3)
+
+          echo "Google Sheets Automation HTTP Code: ${SHEET_HTTP}"
+          if [ -f /tmp/sheet_response.json ]; then
+            cat /tmp/sheet_response.json
+            echo ""
+          fi
+
+          if [ "${HTTP_RESPONSE}" -ge 200 ] && [ "${HTTP_RESPONSE}" -lt 400 ]; then
+            echo "✅ Autonomous daily snapshot synchronization succeeded!"
+          else
+            echo "⚠️ Notice: Non-200 HTTP code received (${HTTP_RESPONSE}). Please check target server status."
+          fi

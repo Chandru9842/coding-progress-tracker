@@ -12,6 +12,7 @@ import syncRoutes from './routes/syncRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
 import googleSheetsRoutes from './routes/googleSheetsRoutes.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { checkAndTriggerLazyCatchUpSync } from './services/cronService.js';
 
 const app = express();
 
@@ -31,6 +32,17 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+
+// Autonomous Background Catch-Up: Checks if today's snapshot needs reconciliation (throttled to once every 10 mins)
+let lastCatchUpCheckMs = 0;
+app.use((req, res, next) => {
+  const now = Date.now();
+  if (now - lastCatchUpCheckMs > 10 * 60 * 1000) {
+    lastCatchUpCheckMs = now;
+    checkAndTriggerLazyCatchUpSync().catch(() => {});
+  }
+  next();
+});
 
 // Versioned API routes (mounted on both /api/v1 and /v1 for Vercel serverless compatibility)
 ['/api/v1', '/v1'].forEach((prefix) => {

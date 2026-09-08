@@ -6,6 +6,7 @@ import { syncGoogleSheetLink } from './googleSheetsService.js';
 import { runMidnightAutoSync } from './cronService.js';
 import { diagnosticLogService } from './diagnosticLogService.js';
 import { syncErrorService } from './syncErrorService.js';
+import { fillContinuousSnapshotTimeline, toISTDateString } from './reportService.js';
 
 import { UserRole } from '../types/index.js';
 
@@ -502,6 +503,58 @@ export async function syncStudentLeetCode(
     });
   }
 
+  // Autonomous Timeline Healing: If there are any missing calendar days between earlier snapshots and today,
+  // backfill and persist them so that daily history never exhibits missing dates.
+  try {
+    if (process.env.DATABASE_URL) {
+      const allStudentSnaps = await prisma.dailyCodingSnapshot.findMany({
+        where: { student_id: studentId },
+        orderBy: { snapshot_date: 'asc' },
+      });
+      if (allStudentSnaps.length >= 2) {
+        const filled = fillContinuousSnapshotTimeline(allStudentSnaps);
+        const existingDates = new Set(allStudentSnaps.map((s) => toISTDateString(s.snapshot_date)));
+        const missing = filled.filter((s) => !existingDates.has(toISTDateString(s.snapshot_date)));
+        if (missing.length > 0) {
+          await prisma.dailyCodingSnapshot.createMany({
+            data: missing.map((m) => ({
+              student_id: studentId,
+              snapshot_date: new Date(`${toISTDateString(m.snapshot_date)}T00:00:00.000Z`),
+              easy_solved: m.easy_solved,
+              medium_solved: m.medium_solved,
+              hard_solved: m.hard_solved,
+              total_solved: m.total_solved,
+            })),
+            skipDuplicates: true,
+          }).catch(() => {});
+        }
+      }
+    } else {
+      const allStudentSnaps = inMemoryStore.snapshots
+        .filter((s) => s.student_id === studentId)
+        .sort((a, b) => new Date(a.snapshot_date).getTime() - new Date(b.snapshot_date).getTime());
+      if (allStudentSnaps.length >= 2) {
+        const filled = fillContinuousSnapshotTimeline(allStudentSnaps);
+        const existingDates = new Set(allStudentSnaps.map((s) => toISTDateString(s.snapshot_date)));
+        const missing = filled.filter((s) => !existingDates.has(toISTDateString(s.snapshot_date)));
+        for (const m of missing) {
+          inMemoryStore.snapshots.push({
+            id: `snap_${Date.now()}_backfill_${toISTDateString(m.snapshot_date)}`,
+            student_id: studentId,
+            snapshot_date: new Date(`${toISTDateString(m.snapshot_date)}T00:00:00.000Z`),
+            easy_solved: m.easy_solved,
+            medium_solved: m.medium_solved,
+            hard_solved: m.hard_solved,
+            total_solved: m.total_solved,
+            created_at: new Date(),
+          });
+        }
+      }
+    }
+  } catch (gapErr: any) {
+    console.warn(`[Snapshot Backfill Warning for ${student.name}]:`, gapErr?.message || gapErr);
+  }
+
   // Trigger Google Sheet update for active links covering this student's batch with Failure Isolation (only if not deferred)
   if (!options?.skipGoogleSheetSync) {
     try {
@@ -616,13 +669,15 @@ async function syncGoogleSheetsForBatchIds(batchIds: string[], user: { userId: s
           },
         });
 
-    for (const link of activeLinks) {
-      try {
-        await syncGoogleSheetLink(link.id, user);
-      } catch (sheetErr: any) {
-        console.warn(`[Google Sheets Isolation Warning] Active link ${link.id} sync error:`, sheetErr?.message || sheetErr);
-      }
-    }
+    await Promise.all(
+      activeLinks.map(async (link) => {
+        try {
+          await syncGoogleSheetLink(link.id, user);
+        } catch (sheetErr: any) {
+          console.warn(`[Google Sheets Isolation Warning] Active link ${link.id} sync error:`, sheetErr?.message || sheetErr);
+        }
+      })
+    );
   } catch (err: any) {
     console.warn('[Google Sheets Isolation Warning] Batch sheet sync skipped:', err?.message || err);
   }
@@ -898,11 +953,49 @@ export async function getStudentSnapshots(studentId: string, user: { userId: str
     }
   }
 
+  // Autonomous Timeline Healing: Always guarantee a continuous timeline without gaps
+  const filledSnapshots = fillContinuousSnapshotTimeline(snapshots);
+
+  // If gap days were discovered, backfill them into persistent storage in background
+  if (filledSnapshots.length > snapshots.length) {
+    const existingDateSet = new Set(snapshots.map((s) => toISTDateString(s.snapshot_date)));
+    const missingSnaps = filledSnapshots.filter((s) => !existingDateSet.has(toISTDateString(s.snapshot_date)));
+
+    if (process.env.DATABASE_URL && missingSnaps.length > 0) {
+      prisma.dailyCodingSnapshot
+        .createMany({
+          data: missingSnaps.map((s) => ({
+            student_id: studentId,
+            snapshot_date: new Date(`${toISTDateString(s.snapshot_date)}T00:00:00.000Z`),
+            easy_solved: s.easy_solved,
+            medium_solved: s.medium_solved,
+            hard_solved: s.hard_solved,
+            total_solved: s.total_solved,
+          })),
+          skipDuplicates: true,
+        })
+        .catch((e) => console.warn('[Auto-Backfill Error]:', e?.message || e));
+    } else if (!process.env.DATABASE_URL && missingSnaps.length > 0) {
+      for (const m of missingSnaps) {
+        inMemoryStore.snapshots.push({
+          id: `snap_${Date.now()}_backfill_${toISTDateString(m.snapshot_date)}`,
+          student_id: studentId,
+          snapshot_date: new Date(`${toISTDateString(m.snapshot_date)}T00:00:00.000Z`),
+          easy_solved: m.easy_solved,
+          medium_solved: m.medium_solved,
+          hard_solved: m.hard_solved,
+          total_solved: m.total_solved,
+          created_at: new Date(),
+        });
+      }
+    }
+  }
+
   // Non-blocking Auto-Snapshot trigger:
   // If snapshots were missing or stale, trigger background sync without blocking the HTTP response!
   const todayISTStr = getISTDateString();
-  const latest = snapshots[0];
-  const latestDateStr = latest ? new Date(latest.snapshot_date).toISOString().split('T')[0] : '';
+  const latest = filledSnapshots[0] || snapshots[0];
+  const latestDateStr = latest ? toISTDateString(latest.snapshot_date) : '';
   const isMissingToday = !latest || latestDateStr !== todayISTStr;
   const isStale = isMissingToday || (Date.now() - new Date(latest.created_at || (latest as any).updated_at || 0).getTime() > 10 * 60 * 1000);
 
@@ -926,7 +1019,7 @@ export async function getStudentSnapshots(studentId: string, user: { userId: str
     });
   }
 
-  return snapshots;
+  return filledSnapshots;
 }
 
 export async function runPeriodicAutoSync(): Promise<{
@@ -953,8 +1046,8 @@ export async function runPeriodicAutoSync(): Promise<{
       studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
     }
 
-    // Concurrent execution with pool of 10 workers for rapid execution
-    results = await runConcurrentTasks(studentList, 10, async (st) => {
+    // Concurrent execution with pool of 15 workers for lightning execution
+    results = await runConcurrentTasks(studentList, 15, async (st) => {
       try {
         await syncStudentLeetCode(st.id, adminContext, { skipGoogleSheetSync: true });
         return { studentId: st.id, success: true };

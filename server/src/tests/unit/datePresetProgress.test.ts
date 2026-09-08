@@ -115,6 +115,76 @@ export async function runDatePresetProgressTests(): Promise<{
     assert.strictEqual(todaySnap.daily_hard, 1);
     details.push('Pass: getStudentDailyProgress attaches accurate daily_solved and category deltas for modal inspection.');
 
+    // Test 4: Pic-1 Missing Day Auto-Healing & Backfill Test (2026-09-07 gap)
+    const gapStudentId = 'test_gap_student_pic1';
+    inMemoryStore.students.push({
+      id: gapStudentId,
+      register_number: 'TEST_GAP_01',
+      name: 'Pic 1 Gap Student',
+      department: 'CSE',
+      batch_id: 'batch_test_gap',
+      section_id: 'sec_test_gap',
+      leetcode_username: 'pic1_gap_coder',
+      sub_batch: 'Batch 1',
+      created_at: new Date(),
+    } as any);
+
+    // Provide snapshots exactly matching user screenshot: 2026-09-05, 2026-09-06, 2026-09-08 (2026-09-07 missing!)
+    inMemoryStore.snapshots.push(
+      {
+        id: 'snap_gap_05',
+        student_id: gapStudentId,
+        snapshot_date: new Date('2026-09-05T00:00:00.000Z'),
+        easy_solved: 112,
+        medium_solved: 149,
+        hard_solved: 15,
+        total_solved: 276,
+        created_at: new Date('2026-09-05T01:00:00.000Z'),
+      } as any,
+      {
+        id: 'snap_gap_06',
+        student_id: gapStudentId,
+        snapshot_date: new Date('2026-09-06T00:00:00.000Z'),
+        easy_solved: 112,
+        medium_solved: 149,
+        hard_solved: 15,
+        total_solved: 276,
+        created_at: new Date('2026-09-06T01:00:00.000Z'),
+      } as any,
+      {
+        id: 'snap_gap_08',
+        student_id: gapStudentId,
+        snapshot_date: new Date('2026-09-08T00:00:00.000Z'),
+        easy_solved: 112,
+        medium_solved: 150,
+        hard_solved: 15,
+        total_solved: 277,
+        created_at: new Date('2026-09-08T01:00:00.000Z'),
+      } as any
+    );
+
+    const { getStudentSnapshots } = await import('../../services/leetcodeService.js');
+    const studentSnaps = await getStudentSnapshots(gapStudentId, { userId: 'admin_1', role: 'ADMIN' });
+
+    // Verify 2026-09-07 now exists in the returned snapshots!
+    const snapDates = studentSnaps.map((s) => toISTDateString(s.snapshot_date));
+    assert(snapDates.includes('2026-09-07'), 'Returned snapshots must contain healed 2026-09-07 entry');
+    assert(snapDates.includes('2026-09-08'), 'Must contain 2026-09-08 entry');
+    assert(snapDates.includes('2026-09-06'), 'Must contain 2026-09-06 entry');
+
+    // Verify 2026-09-07 has correct baseline carried forward (276 total solved)
+    const healedSnap = studentSnaps.find((s) => toISTDateString(s.snapshot_date) === '2026-09-07');
+    assert(healedSnap, 'Healed snap must exist');
+    assert.strictEqual(healedSnap.total_solved, 276, '2026-09-07 carried total must be 276');
+    assert.strictEqual(healedSnap.medium_solved, 149, '2026-09-07 medium solved must be 149');
+
+    // Verify gap was also persisted in inMemoryStore
+    const inStoreSnap = inMemoryStore.snapshots.find(
+      (s) => s.student_id === gapStudentId && toISTDateString(s.snapshot_date) === '2026-09-07'
+    );
+    assert(inStoreSnap, '2026-09-07 snapshot must be automatically persisted to storage');
+    details.push('Pass: Gap auto-healing verified for Pic 1 scenario (2026-09-07 gap healed and persisted seamlessly).');
+
     return {
       name: 'Date Preset & Period Progress Calculation',
       passed: true,
