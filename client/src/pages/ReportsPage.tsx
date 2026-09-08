@@ -58,6 +58,7 @@ export default function ReportsPage() {
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
   const [datePreset, setDatePreset] = useState<'all' | 'today' | 'yesterday' | 'last_7' | 'last_30' | 'custom'>('all');
+  const [autoSyncOnSection, setAutoSyncOnSection] = useState<boolean>(true);
 
   const getISTDateString = (offsetDays: number = 0): string => {
     const now = new Date();
@@ -66,24 +67,47 @@ export default function ReportsPage() {
   };
 
   const fetchWithParams = async (
-    overrideFrom?: string,
+    overrideFrom?: string | {
+      from?: string;
+      to?: string;
+      preset?: 'all' | 'today' | 'yesterday' | 'last_7' | 'last_30' | 'custom';
+      sectionId?: string;
+      batchId?: string;
+      academicYear?: string;
+      department?: string;
+      allocationBatchId?: string;
+      staffId?: string;
+    },
     overrideTo?: string,
     overridePreset?: 'all' | 'today' | 'yesterday' | 'last_7' | 'last_30' | 'custom'
   ) => {
     setLoading(true);
     setError(null);
     try {
-      const activeFrom = overrideFrom !== undefined ? overrideFrom : fromDate;
-      const activeTo = overrideTo !== undefined ? overrideTo : toDate;
+      let opts: any = {};
+      if (typeof overrideFrom === 'object' && overrideFrom !== null) {
+        opts = overrideFrom;
+      } else {
+        opts = { from: overrideFrom, to: overrideTo, preset: overridePreset };
+      }
+
+      const activeFrom = opts.from !== undefined ? opts.from : fromDate;
+      const activeTo = opts.to !== undefined ? opts.to : toDate;
+      const activeSec = opts.sectionId !== undefined ? opts.sectionId : sectionId;
+      const activeBatch = opts.batchId !== undefined ? opts.batchId : batchId;
+      const activeAY = opts.academicYear !== undefined ? opts.academicYear : academicYear;
+      const activeDept = opts.department !== undefined ? opts.department : department;
+      const activeAlloc = opts.allocationBatchId !== undefined ? opts.allocationBatchId : allocationBatchId;
+      const activeStaff = opts.staffId !== undefined ? opts.staffId : staffId;
       const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
 
       const data = await getReportData({
-        academicYear: academicYear || undefined,
-        department: department || undefined,
-        batchId: batchId || undefined,
-        sectionId: sectionId || undefined,
-        allocationBatchId: allocationBatchId || undefined,
-        staffId: staffId || undefined,
+        academicYear: activeAY || undefined,
+        department: activeDept || undefined,
+        batchId: activeBatch || undefined,
+        sectionId: activeSec || undefined,
+        allocationBatchId: activeAlloc || undefined,
+        staffId: activeStaff || undefined,
         fromDate: activeFrom || undefined,
         toDate: activeTo || undefined,
         sortBy,
@@ -298,29 +322,35 @@ export default function ReportsPage() {
     }
   };
 
-  const handleSyncFilteredLeetCode = async () => {
+  const handleSyncFilteredLeetCode = async (overrideSecId?: string | React.MouseEvent, overrideBatchId?: string) => {
     setSyncingLeetcode(true);
     setSuccessMsg(null);
     setError(null);
+    const targetSecId = typeof overrideSecId === 'string' ? overrideSecId : sectionId;
+    const targetBatchId = typeof overrideBatchId === 'string' ? overrideBatchId : batchId;
     const startTime = Date.now();
     try {
       const res = await syncReportStudents({
-        batchId: batchId || undefined,
-        sectionId: sectionId || undefined,
+        batchId: targetBatchId || undefined,
+        sectionId: targetSecId || undefined,
         department: department || undefined,
         allocationBatchId: allocationBatchId || undefined,
         staffId: staffId || undefined,
       });
 
       const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
-      setSuccessMsg(res.message ? `${res.message} (completed in ${res.durationSeconds || elapsedSec}s)` : `⚡ Successfully synchronized LeetCode data for ${res.successful || 0} student(s) in ${elapsedSec}s`);
+      setSuccessMsg(
+        res.message
+          ? `${res.message} (completed in ${res.durationSeconds || elapsedSec}s)`
+          : `⚡ Successfully synchronized live LeetCode data for ${res.successful || 0} student(s) in ${elapsedSec}s. Solves submitted after 12:00 AM midnight are now updated.`
+      );
 
       const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
       const refreshedData = await getReportData({
         academicYear: academicYear || undefined,
         department: department || undefined,
-        batchId: batchId || undefined,
-        sectionId: sectionId || undefined,
+        batchId: targetBatchId || undefined,
+        sectionId: targetSecId || undefined,
         allocationBatchId: allocationBatchId || undefined,
         staffId: staffId || undefined,
         fromDate: fromDate || undefined,
@@ -717,11 +747,13 @@ export default function ReportsPage() {
                 id="filter-academic-year"
                 value={academicYear}
                 onChange={(e) => {
-                  setAcademicYear(e.target.value);
+                  const v = e.target.value;
+                  setAcademicYear(v);
                   setDepartment('');
                   setBatchId('');
                   setSectionId('');
                   setAllocationBatchId('');
+                  fetchWithParams({ academicYear: v, department: '', batchId: '', sectionId: '', allocationBatchId: '' });
                 }}
                 style={{
                   width: '100%',
@@ -749,10 +781,12 @@ export default function ReportsPage() {
                 id="filter-department"
                 value={department}
                 onChange={(e) => {
-                  setDepartment(e.target.value);
+                  const v = e.target.value;
+                  setDepartment(v);
                   setBatchId('');
                   setSectionId('');
                   setAllocationBatchId('');
+                  fetchWithParams({ department: v, batchId: '', sectionId: '', allocationBatchId: '' });
                 }}
                 style={{
                   width: '100%',
@@ -784,10 +818,11 @@ export default function ReportsPage() {
                   setSectionId(selectedSecId);
                   setAllocationBatchId('');
                   const secMatch = availableSections.find((s) => s.id === selectedSecId);
-                  if (secMatch) {
-                    setBatchId(secMatch.batchId);
-                  } else {
-                    setBatchId('');
+                  const targetBatchId = secMatch ? secMatch.batchId : '';
+                  setBatchId(targetBatchId);
+                  fetchWithParams({ sectionId: selectedSecId, batchId: targetBatchId, allocationBatchId: '' });
+                  if (selectedSecId && autoSyncOnSection) {
+                    handleSyncFilteredLeetCode(selectedSecId, targetBatchId);
                   }
                 }}
                 style={{
@@ -805,6 +840,45 @@ export default function ReportsPage() {
                   <option key={sec.id} value={sec.id}>Section {sec.name} ({sec.department})</option>
                 ))}
               </select>
+
+              <div style={{ marginTop: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.725rem', color: 'var(--text-muted)', cursor: 'pointer', userSelect: 'none' }}>
+                  <input
+                    type="checkbox"
+                    checked={autoSyncOnSection}
+                    onChange={(e) => setAutoSyncOnSection(e.target.checked)}
+                    style={{ cursor: 'pointer', accentColor: '#34d399' }}
+                  />
+                  <span>Auto-fetch live LeetCode on section select</span>
+                </label>
+
+                {sectionId && (
+                  <button
+                    type="button"
+                    onClick={() => handleSyncFilteredLeetCode(sectionId, batchId)}
+                    disabled={syncingLeetcode}
+                    style={{
+                      width: '100%',
+                      padding: '0.38rem 0.65rem',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      backgroundColor: 'rgba(52, 211, 153, 0.15)',
+                      color: '#34d399',
+                      border: '1px solid rgba(52, 211, 153, 0.4)',
+                      borderRadius: 'var(--radius-sm)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '0.35rem',
+                      cursor: syncingLeetcode ? 'not-allowed' : 'pointer',
+                    }}
+                    title="Fetch live LeetCode stats for this section right now (picks up solves submitted after 12:00 AM midnight)"
+                  >
+                    <RefreshCw size={12} className={syncingLeetcode ? 'spin' : ''} />
+                    <span>{syncingLeetcode ? 'Fetching Live Solves...' : '⚡ Sync Section LeetCode (12 AM+ Solves)'}</span>
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Allocation Batch Filter */}
@@ -815,7 +889,11 @@ export default function ReportsPage() {
               <select
                 id="filter-allocation-batch"
                 value={allocationBatchId}
-                onChange={(e) => setAllocationBatchId(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setAllocationBatchId(v);
+                  fetchWithParams({ allocationBatchId: v });
+                }}
                 disabled={!sectionId}
                 style={{
                   width: '100%',
@@ -1163,15 +1241,42 @@ export default function ReportsPage() {
           borderRadius: 'var(--radius-md)',
           padding: '1.5rem',
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+          {syncingLeetcode && (
+            <div style={{
+              backgroundColor: 'rgba(52, 211, 153, 0.12)',
+              border: '1px solid rgba(52, 211, 153, 0.35)',
+              borderRadius: '8px',
+              padding: '0.65rem 1rem',
+              marginBottom: '1rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.6rem',
+              color: '#34d399',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+            }}>
+              <RefreshCw size={16} className="spin" />
+              <span>⚡ Fetching live LeetCode submissions for section (capturing all problems solved past 12:00 AM midnight)...</span>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
             <div>
-              <h3 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)' }}>
+              <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-main)' }}>
                 Student Coding Leaderboard & Report Data ({reportData?.students.length || 0})
               </h3>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
-                <span style={{ fontSize: '0.825rem', color: (fromDate || toDate) ? '#4ade80' : 'var(--primary)', fontWeight: 600 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.35rem' }}>
+                <span style={{
+                  fontSize: '0.825rem',
+                  color: datePreset === 'today' ? '#34d399' : datePreset === 'yesterday' ? '#60a5fa' : (fromDate || toDate) ? '#4ade80' : 'var(--primary)',
+                  fontWeight: 600,
+                  backgroundColor: datePreset === 'today' ? 'rgba(52, 211, 153, 0.12)' : datePreset === 'yesterday' ? 'rgba(59, 130, 246, 0.12)' : 'transparent',
+                  padding: (datePreset === 'today' || datePreset === 'yesterday') ? '0.2rem 0.6rem' : '0',
+                  borderRadius: '4px',
+                  border: (datePreset === 'today' || datePreset === 'yesterday') ? '1px solid currentColor' : 'none',
+                }}>
                   {datePreset === 'today'
-                    ? `⚡ Showing Progress Solved Today (${fromDate || getISTDateString(0)})`
+                    ? `⚡ Showing Progress Solved Today (${fromDate || getISTDateString(0)}) since 12:00 AM midnight`
                     : datePreset === 'yesterday'
                     ? `⚡ Showing Progress Solved Yesterday (${fromDate || getISTDateString(-1)})`
                     : datePreset === 'last_7'
@@ -1189,8 +1294,33 @@ export default function ReportsPage() {
                 )}
               </div>
             </div>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Click any student row to inspect date-wise daily progress history
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={handleSyncFilteredLeetCode}
+                disabled={syncingLeetcode}
+                style={{
+                  padding: '0.4rem 0.85rem',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  backgroundColor: 'rgba(52, 211, 153, 0.15)',
+                  color: '#34d399',
+                  border: '1px solid rgba(52, 211, 153, 0.35)',
+                  borderRadius: '6px',
+                  cursor: syncingLeetcode ? 'not-allowed' : 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                }}
+                title="Query LeetCode right now for any newly solved problems (e.g. past 12:00 AM midnight)"
+              >
+                <RefreshCw size={13} className={syncingLeetcode ? 'spin' : ''} />
+                <span>{syncingLeetcode ? 'Syncing...' : 'Fetch Live LeetCode Submissions'}</span>
+              </button>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                Click row for daily history
+              </div>
             </div>
           </div>
 
@@ -1217,16 +1347,16 @@ export default function ReportsPage() {
                     <th style={{ padding: '0.75rem 1rem' }}>Batch & Section</th>
                     <th style={{ padding: '0.75rem 1rem' }}>Allocation Batch</th>
                     <th style={{ padding: '0.75rem 1rem', cursor: 'pointer' }} onClick={() => handleSortChange('easy')}>
-                      {(fromDate || toDate) ? 'Period Easy' : 'Easy'} {sortBy === 'easy' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
+                      {datePreset === 'today' ? "Today's Easy" : datePreset === 'yesterday' ? "Yesterday's Easy" : (fromDate || toDate) ? 'Period Easy' : 'Easy'} {sortBy === 'easy' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
                     </th>
                     <th style={{ padding: '0.75rem 1rem', cursor: 'pointer' }} onClick={() => handleSortChange('medium')}>
-                      {(fromDate || toDate) ? 'Period Med' : 'Medium'} {sortBy === 'medium' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
+                      {datePreset === 'today' ? "Today's Med" : datePreset === 'yesterday' ? "Yesterday's Med" : (fromDate || toDate) ? 'Period Med' : 'Medium'} {sortBy === 'medium' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
                     </th>
                     <th style={{ padding: '0.75rem 1rem', cursor: 'pointer' }} onClick={() => handleSortChange('hard')}>
-                      {(fromDate || toDate) ? 'Period Hard' : 'Hard'} {sortBy === 'hard' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
+                      {datePreset === 'today' ? "Today's Hard" : datePreset === 'yesterday' ? "Yesterday's Hard" : (fromDate || toDate) ? 'Period Hard' : 'Hard'} {sortBy === 'hard' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
                     </th>
                     <th style={{ padding: '0.75rem 1rem', cursor: 'pointer' }} onClick={() => handleSortChange('total')}>
-                      {(fromDate || toDate) ? 'Period Solved' : 'Total Solved'} {sortBy === 'total' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
+                      {datePreset === 'today' ? "Today's Solved" : datePreset === 'yesterday' ? "Yesterday's Solved" : datePreset === 'last_7' ? "Last 7 Days Solved" : (fromDate || toDate) ? 'Period Solved' : 'Total Solved'} {sortBy === 'total' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
                     </th>
                     <th style={{ padding: '0.75rem 1rem' }}>Status</th>
                   </tr>

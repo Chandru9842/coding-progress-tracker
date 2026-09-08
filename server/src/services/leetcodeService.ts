@@ -16,16 +16,23 @@ export interface LeetCodeStats {
   hardSolved: number;
   totalSolved: number;
   ranking?: number;
+  recentSubmissions?: {
+    id: string;
+    title: string;
+    titleSlug: string;
+    timestamp: number;
+  }[];
 }
 
-export function getISTDateString(): string {
+export function getISTDateString(offsetDays: number = 0): string {
   const now = new Date();
+  const d = new Date(now.getTime() + offsetDays * 24 * 60 * 60 * 1000);
   const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' });
-  return formatter.format(now);
+  return formatter.format(d);
 }
 
-export function getISTDate(): Date {
-  const istDateStr = getISTDateString();
+export function getISTDate(offsetDays: number = 0): Date {
+  const istDateStr = getISTDateString(offsetDays);
   return new Date(`${istDateStr}T00:00:00.000Z`);
 }
 
@@ -55,6 +62,12 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
             profile {
               ranking
             }
+          }
+          recentAcSubmissionList(username: $username, limit: 20) {
+            id
+            title
+            titleSlug
+            timestamp
           }
         }
       `,
@@ -108,6 +121,15 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
           easy += (total - (easy + medium + hard));
         }
 
+        const recentSubmissions = Array.isArray(gqlRes.data?.data?.recentAcSubmissionList)
+          ? gqlRes.data.data.recentAcSubmissionList.map((item: any) => ({
+              id: String(item.id || ''),
+              title: String(item.title || ''),
+              titleSlug: String(item.titleSlug || ''),
+              timestamp: Number(item.timestamp || 0),
+            }))
+          : undefined;
+
         const ranking = user.profile?.ranking || 0;
         return {
           username: cleanUsername,
@@ -116,6 +138,7 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
           hardSolved: hard,
           totalSolved: total,
           ranking,
+          recentSubmissions,
         };
       }
     }
@@ -370,6 +393,65 @@ export async function syncStudentLeetCode(
     stats.easySolved += (stats.totalSolved - sumDiff);
   } else if (stats.totalSolved < sumDiff) {
     stats.totalSolved = sumDiff;
+  }
+
+  // Baseline preservation for midnight boundary (12:00 AM IST)
+  const todayISTStr = getISTDateString(0);
+  const todayMidnightMs = new Date(`${todayISTStr}T00:00:00+05:30`).getTime();
+  const yesterdayDate = getISTDate(-1);
+
+  if (stats.recentSubmissions && stats.recentSubmissions.length > 0) {
+    const todaySolvedSlugs = new Set(
+      stats.recentSubmissions
+        .filter((s) => s.timestamp * 1000 >= todayMidnightMs)
+        .map((s) => s.titleSlug)
+    );
+    const todaySolvedCount = todaySolvedSlugs.size;
+
+    // If student solved problems today past 12:00 AM midnight, ensure yesterday's baseline snapshot exists
+    if (todaySolvedCount > 0) {
+      const midnightTotal = Math.max(0, stats.totalSolved - todaySolvedCount);
+      if (process.env.DATABASE_URL) {
+        try {
+          const yestSnap = await prisma.dailyCodingSnapshot.findUnique({
+            where: {
+              student_id_snapshot_date: {
+                student_id: studentId,
+                snapshot_date: yesterdayDate,
+              },
+            },
+          });
+          if (!yestSnap) {
+            await prisma.dailyCodingSnapshot.create({
+              data: {
+                student_id: studentId,
+                snapshot_date: yesterdayDate,
+                easy_solved: Math.max(0, stats.easySolved - todaySolvedCount),
+                medium_solved: stats.mediumSolved,
+                hard_solved: stats.hardSolved,
+                total_solved: midnightTotal,
+              },
+            }).catch(() => {});
+          }
+        } catch (_) {}
+      } else {
+        const yestIndex = inMemoryStore.snapshots.findIndex(
+          (s) => s.student_id === studentId && new Date(s.snapshot_date).toDateString() === yesterdayDate.toDateString()
+        );
+        if (yestIndex === -1) {
+          inMemoryStore.snapshots.push({
+            id: `snap_${Date.now()}_yest_${Math.random().toString(36).substring(2,6)}`,
+            student_id: studentId,
+            snapshot_date: yesterdayDate,
+            easy_solved: Math.max(0, stats.easySolved - todaySolvedCount),
+            medium_solved: stats.mediumSolved,
+            hard_solved: stats.hardSolved,
+            total_solved: midnightTotal,
+            created_at: new Date(),
+          });
+        }
+      }
+    }
   }
 
   let snapshot: any = null;

@@ -159,7 +159,12 @@ export function fillContinuousSnapshotTimeline<T extends { snapshot_date: Date |
   const sorted = [...rawSnapshots].sort((a, b) => new Date(a.snapshot_date).getTime() - new Date(b.snapshot_date).getTime());
   
   const minDateStr = toISTDateString(sorted[0].snapshot_date);
-  const maxDateStr = toISTDateString(new Date());
+  const todayIST = toISTDateString(new Date());
+  const lastSnapIST = sorted.length > 0 ? toISTDateString(sorted[sorted.length - 1].snapshot_date) : '';
+  let maxDateStr = lastSnapIST && lastSnapIST > todayIST ? lastSnapIST : todayIST;
+  if (minDateStr > maxDateStr) {
+    maxDateStr = minDateStr;
+  }
   
   const mapByDate = new Map<string, T>();
   sorted.forEach((s) => {
