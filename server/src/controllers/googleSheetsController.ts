@@ -177,8 +177,23 @@ export async function testWebhook(req: AuthenticatedRequest, res: Response): Pro
 
 export async function runDailyAutomationNow(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    if (!req.user) {
-      res.status(401).json({ error: 'Unauthorized' });
+    const isVercelCron =
+      req.headers['x-vercel-cron'] === '1' ||
+      (typeof req.headers['user-agent'] === 'string' && req.headers['user-agent'].includes('vercel-cron'));
+
+    const cronSecretHeader = req.headers['authorization'] || req.headers['x-cron-secret'];
+    const querySecret = req.query.secret;
+    const expectedSecret = process.env.CRON_SECRET || 'coding_tracker_cron_secret';
+
+    const isCronAuth =
+      isVercelCron ||
+      !process.env.CRON_SECRET ||
+      cronSecretHeader === `Bearer ${expectedSecret}` ||
+      cronSecretHeader === expectedSecret ||
+      querySecret === expectedSecret;
+
+    if (!req.user && !isCronAuth) {
+      res.status(401).json({ error: 'Unauthorized: Admin login or valid cron secret required' });
       return;
     }
     const { executeFullDailyReconciliation } = await import('../services/cronService.js');

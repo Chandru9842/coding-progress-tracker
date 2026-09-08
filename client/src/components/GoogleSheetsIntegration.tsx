@@ -1279,6 +1279,44 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
                       }}>
                         <span>👤 {link.owner?.name || 'Admin'} ({link.owner?.role || 'ADMIN'})</span>
                       </span>
+
+                      {link.webhook_url ? (
+                        <span style={{
+                          fontSize: '0.7rem',
+                          padding: '0.18rem 0.55rem',
+                          borderRadius: '4px',
+                          backgroundColor: 'rgba(16, 185, 129, 0.18)',
+                          color: '#34d399',
+                          border: '1px solid rgba(16, 185, 129, 0.35)',
+                          fontWeight: 600,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.3rem',
+                        }}>
+                          <Zap size={12} />
+                          <span>Auto-Webhook Connected</span>
+                        </span>
+                      ) : (
+                        <span
+                          title="Click Edit Link (pencil icon) to paste your Apps Script Web App URL for automatic background sync"
+                          style={{
+                            fontSize: '0.7rem',
+                            padding: '0.18rem 0.55rem',
+                            borderRadius: '4px',
+                            backgroundColor: 'rgba(245, 158, 11, 0.18)',
+                            color: '#fbbf24',
+                            border: '1px solid rgba(245, 158, 11, 0.4)',
+                            fontWeight: 600,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.3rem',
+                            cursor: 'help',
+                          }}
+                        >
+                          <AlertCircle size={12} />
+                          <span>No Webhook (Auto-Sync Disabled)</span>
+                        </span>
+                      )}
                     </div>
 
                     <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1313,6 +1351,20 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
                     {link.last_sync_at && (
                       <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
                         Last Synced: {new Date(link.last_sync_at).toLocaleString()} ({link.last_sync_status || 'OK'})
+                      </div>
+                    )}
+
+                    {link.last_sync_error && (
+                      <div style={{
+                        fontSize: '0.78rem',
+                        color: '#f87171',
+                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        padding: '0.25rem 0.5rem',
+                        borderRadius: '4px',
+                        marginTop: '0.35rem',
+                        display: 'inline-block',
+                      }}>
+                        ⚠️ {link.last_sync_error}
                       </div>
                     )}
                   </div>

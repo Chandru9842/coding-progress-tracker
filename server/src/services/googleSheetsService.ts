@@ -943,6 +943,10 @@ export async function syncGoogleSheetLink(
         }
       }
     }
+  } else {
+    webhookSuccess = false;
+    webhookResponseText = 'No Google Apps Script Webhook URL attached. Data matrix was generated locally, but Google Sheet cannot receive updates without an Apps Script Web App URL.';
+    details += ' [Warning: No Webhook URL attached - Google Sheet cannot receive updates automatically without Apps Script deployment]';
   }
 
   const syncStatus = webhookSuccess ? 'SUCCESS' : 'PARTIAL_WARNING';
