@@ -38,12 +38,19 @@ export const StudentDetailPage: React.FC = () => {
       setSnapshots(snapData || []);
       setLoading(false);
 
+      const formatIST = (d: any) => {
+        if (!d) return '';
+        if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.trim())) return d.trim();
+        const obj = typeof d === 'string' ? new Date(d) : d;
+        return isNaN(obj.getTime()) ? String(d) : new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(obj);
+      };
+
       // Check if student has a LeetCode username and needs an auto-sync in background:
       // (1) Has 0 snapshots
       // (2) Or latest snapshot is not from today (YYYY-MM-DD IST)
       const latestSnap = snapData && snapData.length > 0 ? snapData[0] : null;
-      const todayIST = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
-      const latestDateStr = latestSnap ? new Date(latestSnap.snapshot_date).toISOString().split('T')[0] : '';
+      const todayIST = formatIST(new Date());
+      const latestDateStr = latestSnap ? formatIST(latestSnap.snapshot_date) : '';
       const needsDailySync = data?.leetcode_username && (!latestSnap || latestDateStr !== todayIST);
 
       if (needsDailySync) {
@@ -418,9 +425,13 @@ export const StudentDetailPage: React.FC = () => {
                             <tr key={snap.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                               <td style={{ padding: '0.75rem', fontWeight: 600 }}>
                                 {(() => {
-                                  const dStr = typeof snap.snapshot_date === 'string' ? snap.snapshot_date : new Date(snap.snapshot_date).toISOString();
-                                  const parts = dStr.split('T')[0].split('-');
-                                  return parts.length === 3 ? `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}/${parts[0]}` : new Date(snap.snapshot_date).toLocaleDateString();
+                                  if (typeof snap.snapshot_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(snap.snapshot_date)) {
+                                    return snap.snapshot_date;
+                                  }
+                                  const d = new Date(snap.snapshot_date);
+                                  return isNaN(d.getTime())
+                                    ? String(snap.snapshot_date)
+                                    : new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d);
                                 })()}
                               </td>
                               <td style={{ padding: '0.75rem' }}>

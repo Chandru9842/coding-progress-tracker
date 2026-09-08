@@ -289,7 +289,7 @@ export async function syncStudentLeetCode(
       department: studentBatch?.department,
       sectionId: student.section_id,
       sectionName: studentSection?.name,
-      errorMessage: fetchError,
+      errorMessage: fetchError || 'Unknown fetch error',
     });
 
     let latestSnapshot: any = null;

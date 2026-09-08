@@ -59,39 +59,82 @@ export default function ReportsPage() {
   const [toDate, setToDate] = useState<string>('');
   const [datePreset, setDatePreset] = useState<'all' | 'today' | 'yesterday' | 'last_7' | 'last_30' | 'custom'>('all');
 
+  const getISTDateString = (offsetDays: number = 0): string => {
+    const now = new Date();
+    const d = new Date(now.getTime() + offsetDays * 24 * 60 * 60 * 1000);
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d);
+  };
+
+  const fetchWithParams = async (
+    overrideFrom?: string,
+    overrideTo?: string,
+    overridePreset?: 'all' | 'today' | 'yesterday' | 'last_7' | 'last_30' | 'custom'
+  ) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const activeFrom = overrideFrom !== undefined ? overrideFrom : fromDate;
+      const activeTo = overrideTo !== undefined ? overrideTo : toDate;
+      const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
+
+      const data = await getReportData({
+        academicYear: academicYear || undefined,
+        department: department || undefined,
+        batchId: batchId || undefined,
+        sectionId: sectionId || undefined,
+        allocationBatchId: allocationBatchId || undefined,
+        staffId: staffId || undefined,
+        fromDate: activeFrom || undefined,
+        toDate: activeTo || undefined,
+        sortBy,
+        sortOrder,
+        activityStatus,
+        minProblems: (parsedMin !== undefined && !isNaN(parsedMin)) ? parsedMin : undefined,
+      });
+      setReportData(data);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to load report data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleDatePresetChange = (preset: 'all' | 'today' | 'yesterday' | 'last_7' | 'last_30' | 'custom') => {
     setDatePreset(preset);
-    const now = new Date();
-    const formatDate = (d: Date) => {
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
-    };
 
     if (preset === 'all') {
       setFromDate('');
       setToDate('');
+      fetchWithParams('', '', 'all');
     } else if (preset === 'today') {
-      const todayStr = formatDate(now);
+      const todayStr = getISTDateString(0);
       setFromDate(todayStr);
       setToDate(todayStr);
+      fetchWithParams(todayStr, todayStr, 'today');
     } else if (preset === 'yesterday') {
-      const yest = new Date(now);
-      yest.setDate(yest.getDate() - 1);
-      const yestStr = formatDate(yest);
+      const yestStr = getISTDateString(-1);
       setFromDate(yestStr);
       setToDate(yestStr);
+      fetchWithParams(yestStr, yestStr, 'yesterday');
     } else if (preset === 'last_7') {
-      const d7 = new Date(now);
-      d7.setDate(d7.getDate() - 7);
-      setFromDate(formatDate(d7));
-      setToDate(formatDate(now));
+      const d7Str = getISTDateString(-7);
+      const todayStr = getISTDateString(0);
+      setFromDate(d7Str);
+      setToDate(todayStr);
+      fetchWithParams(d7Str, todayStr, 'last_7');
     } else if (preset === 'last_30') {
-      const d30 = new Date(now);
-      d30.setDate(d30.getDate() - 30);
-      setFromDate(formatDate(d30));
-      setToDate(formatDate(now));
+      const d30Str = getISTDateString(-30);
+      const todayStr = getISTDateString(0);
+      setFromDate(d30Str);
+      setToDate(todayStr);
+      fetchWithParams(d30Str, todayStr, 'last_30');
+    } else if (preset === 'custom') {
+      // Keep existing fromDate/toDate or default to today for user customization
+      if (!fromDate && !toDate) {
+        const todayStr = getISTDateString(0);
+        setFromDate(todayStr);
+        setToDate(todayStr);
+      }
     }
   };
   const [sortBy, setSortBy] = useState<'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name'>('total');
@@ -1126,8 +1169,18 @@ export default function ReportsPage() {
                 Student Coding Leaderboard & Report Data ({reportData?.students.length || 0})
               </h3>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
-                <span style={{ fontSize: '0.8rem', color: (fromDate || toDate) ? '#4ade80' : 'var(--primary)', fontWeight: 600 }}>
-                  {(fromDate || toDate) ? `⚡ Showing New Solved Progress (${fromDate || 'Start'} to ${toDate || 'Today'})` : '🏆 Showing All-Time Cumulative Totals'}
+                <span style={{ fontSize: '0.825rem', color: (fromDate || toDate) ? '#4ade80' : 'var(--primary)', fontWeight: 600 }}>
+                  {datePreset === 'today'
+                    ? `⚡ Showing Progress Solved Today (${fromDate || getISTDateString(0)})`
+                    : datePreset === 'yesterday'
+                    ? `⚡ Showing Progress Solved Yesterday (${fromDate || getISTDateString(-1)})`
+                    : datePreset === 'last_7'
+                    ? `⚡ Showing Progress in Last 7 Days (${fromDate} to ${toDate})`
+                    : datePreset === 'last_30'
+                    ? `⚡ Showing Progress in Last 30 Days (${fromDate} to ${toDate})`
+                    : (fromDate || toDate)
+                    ? `⚡ Showing Progress in Custom Range (${fromDate || 'Start'} to ${toDate || 'Today'})`
+                    : '🏆 Showing All-Time Cumulative Totals'}
                 </span>
                 {minProblems && (
                   <span style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', padding: '0.15rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
@@ -1164,16 +1217,16 @@ export default function ReportsPage() {
                     <th style={{ padding: '0.75rem 1rem' }}>Batch & Section</th>
                     <th style={{ padding: '0.75rem 1rem' }}>Allocation Batch</th>
                     <th style={{ padding: '0.75rem 1rem', cursor: 'pointer' }} onClick={() => handleSortChange('easy')}>
-                      Easy {sortBy === 'easy' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
+                      {(fromDate || toDate) ? 'Period Easy' : 'Easy'} {sortBy === 'easy' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
                     </th>
                     <th style={{ padding: '0.75rem 1rem', cursor: 'pointer' }} onClick={() => handleSortChange('medium')}>
-                      Medium {sortBy === 'medium' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
+                      {(fromDate || toDate) ? 'Period Med' : 'Medium'} {sortBy === 'medium' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
                     </th>
                     <th style={{ padding: '0.75rem 1rem', cursor: 'pointer' }} onClick={() => handleSortChange('hard')}>
-                      Hard {sortBy === 'hard' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
+                      {(fromDate || toDate) ? 'Period Hard' : 'Hard'} {sortBy === 'hard' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
                     </th>
                     <th style={{ padding: '0.75rem 1rem', cursor: 'pointer' }} onClick={() => handleSortChange('total')}>
-                      Total {sortBy === 'total' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
+                      {(fromDate || toDate) ? 'Period Solved' : 'Total Solved'} {sortBy === 'total' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
                     </th>
                     <th style={{ padding: '0.75rem 1rem' }}>Status</th>
                   </tr>
@@ -1211,10 +1264,40 @@ export default function ReportsPage() {
                       <td style={{ padding: '0.85rem 1rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
                         {st.allocation_batch ? st.allocation_batch.name : '-'}
                       </td>
-                      <td style={{ padding: '0.85rem 1rem', color: '#4ade80', fontWeight: 600 }}>{st.easy_solved}</td>
-                      <td style={{ padding: '0.85rem 1rem', color: '#fbbf24', fontWeight: 600 }}>{st.medium_solved}</td>
-                      <td style={{ padding: '0.85rem 1rem', color: '#f87171', fontWeight: 600 }}>{st.hard_solved}</td>
-                      <td style={{ padding: '0.85rem 1rem', fontWeight: 800, fontSize: '1rem', color: '#60a5fa' }}>{st.total_solved}</td>
+                      <td style={{ padding: '0.85rem 1rem', color: '#4ade80', fontWeight: 600 }}>
+                        {(fromDate || toDate) && st.easy_solved > 0 ? `+${st.easy_solved}` : st.easy_solved}
+                      </td>
+                      <td style={{ padding: '0.85rem 1rem', color: '#fbbf24', fontWeight: 600 }}>
+                        {(fromDate || toDate) && st.medium_solved > 0 ? `+${st.medium_solved}` : st.medium_solved}
+                      </td>
+                      <td style={{ padding: '0.85rem 1rem', color: '#f87171', fontWeight: 600 }}>
+                        {(fromDate || toDate) && st.hard_solved > 0 ? `+${st.hard_solved}` : st.hard_solved}
+                      </td>
+                      <td style={{ padding: '0.85rem 1rem' }}>
+                        {(fromDate || toDate) ? (
+                          <div>
+                            <span style={{
+                              display: 'inline-block',
+                              padding: '0.2rem 0.55rem',
+                              borderRadius: '6px',
+                              fontSize: '0.9rem',
+                              fontWeight: 800,
+                              backgroundColor: st.total_solved > 0 ? 'rgba(52, 211, 153, 0.15)' : 'rgba(148, 163, 184, 0.1)',
+                              color: st.total_solved > 0 ? '#34d399' : '#94a3b8',
+                              border: st.total_solved > 0 ? '1px solid rgba(52, 211, 153, 0.3)' : '1px solid rgba(148, 163, 184, 0.2)',
+                            }}>
+                              {st.total_solved > 0 ? `+${st.total_solved}` : '0'}
+                            </span>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                              Overall: {st.overall_total}
+                            </div>
+                          </div>
+                        ) : (
+                          <span style={{ fontWeight: 800, fontSize: '1rem', color: '#60a5fa' }}>
+                            {st.total_solved}
+                          </span>
+                        )}
+                      </td>
                       <td style={{ padding: '0.85rem 1rem' }}>
                         {st.has_activity ? (
                           <span style={{ padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600, backgroundColor: 'rgba(52, 211, 153, 0.1)', color: '#34d399' }}>
@@ -1506,25 +1589,71 @@ export default function ReportsPage() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase' }}>
-                      <th style={{ padding: '0.6rem 0.75rem' }}>Date</th>
-                      <th style={{ padding: '0.6rem 0.75rem' }}>Easy</th>
-                      <th style={{ padding: '0.6rem 0.75rem' }}>Medium</th>
-                      <th style={{ padding: '0.6rem 0.75rem' }}>Hard</th>
-                      <th style={{ padding: '0.6rem 0.75rem' }}>Total</th>
+                      <th style={{ padding: '0.6rem 0.75rem' }}>Date (IST)</th>
+                      <th style={{ padding: '0.6rem 0.75rem' }}>Day's Solved</th>
+                      <th style={{ padding: '0.6rem 0.75rem' }}>Day's Breakdown</th>
+                      <th style={{ padding: '0.6rem 0.75rem' }}>Cumul. Easy</th>
+                      <th style={{ padding: '0.6rem 0.75rem' }}>Cumul. Med</th>
+                      <th style={{ padding: '0.6rem 0.75rem' }}>Cumul. Hard</th>
+                      <th style={{ padding: '0.6rem 0.75rem' }}>Total Solved</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {dailySnapshots.map((snap) => (
-                      <tr key={snap.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                        <td style={{ padding: '0.65rem 0.75rem', fontWeight: 600, color: 'var(--text-main)' }}>
-                          {new Date(snap.snapshot_date).toLocaleDateString()}
-                        </td>
-                        <td style={{ padding: '0.65rem 0.75rem', color: '#4ade80' }}>{snap.easy_solved}</td>
-                        <td style={{ padding: '0.65rem 0.75rem', color: '#fbbf24' }}>{snap.medium_solved}</td>
-                        <td style={{ padding: '0.65rem 0.75rem', color: '#f87171' }}>{snap.hard_solved}</td>
-                        <td style={{ padding: '0.65rem 0.75rem', fontWeight: 800, color: '#60a5fa' }}>{snap.total_solved}</td>
-                      </tr>
-                    ))}
+                    {dailySnapshots.map((snap, idx) => {
+                      const prevSnap = dailySnapshots[idx + 1];
+                      const dailyTotal = typeof snap.daily_solved === 'number'
+                        ? snap.daily_solved
+                        : (prevSnap ? Math.max(0, snap.total_solved - prevSnap.total_solved) : 0);
+                      const dailyEasy = typeof snap.daily_easy === 'number'
+                        ? snap.daily_easy
+                        : (prevSnap ? Math.max(0, snap.easy_solved - prevSnap.easy_solved) : 0);
+                      const dailyMed = typeof snap.daily_medium === 'number'
+                        ? snap.daily_medium
+                        : (prevSnap ? Math.max(0, snap.medium_solved - prevSnap.medium_solved) : 0);
+                      const dailyHrd = typeof snap.daily_hard === 'number'
+                        ? snap.daily_hard
+                        : (prevSnap ? Math.max(0, snap.hard_solved - prevSnap.hard_solved) : 0);
+
+                      const dateDisplay = typeof snap.snapshot_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(snap.snapshot_date)
+                        ? snap.snapshot_date
+                        : (() => {
+                            const d = new Date(snap.snapshot_date);
+                            return isNaN(d.getTime())
+                              ? String(snap.snapshot_date)
+                              : new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d);
+                          })();
+
+                      return (
+                        <tr key={snap.id || idx} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                          <td style={{ padding: '0.65rem 0.75rem', fontWeight: 600, color: 'var(--text-main)' }}>
+                            {dateDisplay}
+                          </td>
+                          <td style={{ padding: '0.65rem 0.75rem' }}>
+                            <span style={{
+                              display: 'inline-block',
+                              padding: '0.15rem 0.45rem',
+                              borderRadius: '4px',
+                              fontSize: '0.78rem',
+                              fontWeight: 700,
+                              backgroundColor: dailyTotal > 0 ? 'rgba(52, 211, 153, 0.15)' : 'rgba(148, 163, 184, 0.1)',
+                              color: dailyTotal > 0 ? '#34d399' : '#94a3b8',
+                              border: dailyTotal > 0 ? '1px solid rgba(52, 211, 153, 0.3)' : '1px solid rgba(148, 163, 184, 0.2)',
+                            }}>
+                              {dailyTotal > 0 ? `+${dailyTotal}` : '0'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '0.65rem 0.75rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                            <span style={{ color: '#4ade80', fontWeight: dailyEasy > 0 ? 700 : 400 }}>+{dailyEasy} E</span> &bull;{' '}
+                            <span style={{ color: '#fbbf24', fontWeight: dailyMed > 0 ? 700 : 400 }}>+{dailyMed} M</span> &bull;{' '}
+                            <span style={{ color: '#f87171', fontWeight: dailyHrd > 0 ? 700 : 400 }}>+{dailyHrd} H</span>
+                          </td>
+                          <td style={{ padding: '0.65rem 0.75rem', color: '#4ade80' }}>{snap.easy_solved}</td>
+                          <td style={{ padding: '0.65rem 0.75rem', color: '#fbbf24' }}>{snap.medium_solved}</td>
+                          <td style={{ padding: '0.65rem 0.75rem', color: '#f87171' }}>{snap.hard_solved}</td>
+                          <td style={{ padding: '0.65rem 0.75rem', fontWeight: 800, color: '#60a5fa' }}>{snap.total_solved}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

@@ -137,8 +137,11 @@ export async function getReportFilterOptions(user: { userId: string; role: UserR
 export function toISTDateString(d: Date | string): string {
   if (!d) return '';
   if (typeof d === 'string') {
-    if (d.includes('T')) {
-      const parsed = new Date(d);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d.trim())) {
+      return d.trim();
+    }
+    const parsed = new Date(d);
+    if (!isNaN(parsed.getTime())) {
       const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' });
       return formatter.format(parsed);
     }
@@ -247,53 +250,44 @@ export function calculateStudentPeriodStats(
   let periodEasy = 0;
   let periodMedium = 0;
   let periodHard = 0;
+  let periodTotal = 0;
 
   if (priorBaselineSnap) {
+    // We have a known baseline recorded before the filter period start
     const endSnap = periodSnaps.length > 0 ? periodSnaps[periodSnaps.length - 1] : null;
     if (endSnap) {
       periodEasy = Math.max(0, (endSnap.easy_solved || 0) - (priorBaselineSnap.easy_solved || 0));
       periodMedium = Math.max(0, (endSnap.medium_solved || 0) - (priorBaselineSnap.medium_solved || 0));
       periodHard = Math.max(0, (endSnap.hard_solved || 0) - (priorBaselineSnap.hard_solved || 0));
-    }
-  } else if (periodSnaps.length > 0) {
-    const firstSnap = periodSnaps[0];
-    const lastSnap = periodSnaps[periodSnaps.length - 1];
-    if (periodSnaps.length >= 2) {
-      periodEasy = Math.max(0, (lastSnap.easy_solved || 0) - (firstSnap.easy_solved || 0));
-      periodMedium = Math.max(0, (lastSnap.medium_solved || 0) - (firstSnap.medium_solved || 0));
-      periodHard = Math.max(0, (lastSnap.hard_solved || 0) - (firstSnap.hard_solved || 0));
-    } else {
-      // If student was first created/synced during or after this period and only has 1 snapshot,
-      // their starting baseline when entering the system was that snapshot (0 new solves in this period).
-      periodEasy = 0;
-      periodMedium = 0;
-      periodHard = 0;
-    }
-  } else {
-    periodEasy = 0;
-    periodMedium = 0;
-    periodHard = 0;
-  }
-
-  let periodTotal = periodEasy + periodMedium + periodHard;
-
-  if (priorBaselineSnap) {
-    const endSnap = periodSnaps.length > 0 ? periodSnaps[periodSnaps.length - 1] : null;
-    if (endSnap) {
       const rawTotalDelta = Math.max(0, (endSnap.total_solved || 0) - (priorBaselineSnap.total_solved || 0));
-      if (rawTotalDelta > periodTotal) {
-        periodEasy += (rawTotalDelta - periodTotal);
-        periodTotal = rawTotalDelta;
+      periodTotal = rawTotalDelta;
+
+      // Balance category sum with total delta
+      const sumDiff = periodEasy + periodMedium + periodHard;
+      if (periodTotal > sumDiff) {
+        periodEasy += (periodTotal - sumDiff);
       }
     }
   } else if (periodSnaps.length >= 2) {
+    // Multiple snapshots inside period without prior baseline -> delta between first and last in window
     const firstSnap = periodSnaps[0];
     const lastSnap = periodSnaps[periodSnaps.length - 1];
+    periodEasy = Math.max(0, (lastSnap.easy_solved || 0) - (firstSnap.easy_solved || 0));
+    periodMedium = Math.max(0, (lastSnap.medium_solved || 0) - (firstSnap.medium_solved || 0));
+    periodHard = Math.max(0, (lastSnap.hard_solved || 0) - (firstSnap.hard_solved || 0));
     const rawTotalDelta = Math.max(0, (lastSnap.total_solved || 0) - (firstSnap.total_solved || 0));
-    if (rawTotalDelta > periodTotal) {
-      periodEasy += (rawTotalDelta - periodTotal);
-      periodTotal = rawTotalDelta;
+    periodTotal = rawTotalDelta;
+
+    const sumDiff = periodEasy + periodMedium + periodHard;
+    if (periodTotal > sumDiff) {
+      periodEasy += (periodTotal - sumDiff);
     }
+  } else {
+    // Single snapshot inside the period and no earlier baseline
+    periodEasy = 0;
+    periodMedium = 0;
+    periodHard = 0;
+    periodTotal = 0;
   }
 
   return {
@@ -674,51 +668,64 @@ export async function getStudentDailyProgress(
     }
   }
 
+  let rawSnaps: any[] = [];
+  let studentObj: any = null;
+
   if (!process.env.DATABASE_URL) {
     const st = inMemoryStore.students.find((s) => s.id === studentId);
-    let snaps = inMemoryStore.snapshots.filter((s) => s.student_id === studentId);
-    if (filters?.fromDate) {
-      snaps = snaps.filter((s) => new Date(s.snapshot_date) >= new Date(filters.fromDate!));
+    studentObj = st ? { id: st.id, register_number: st.register_number, name: st.name } : null;
+    rawSnaps = inMemoryStore.snapshots.filter((s) => s.student_id === studentId);
+  } else {
+    const st = await prisma.student.findUnique({
+      where: { id: studentId },
+      select: { id: true, register_number: true, name: true },
+    });
+    studentObj = st;
+    rawSnaps = await prisma.dailyCodingSnapshot.findMany({
+      where: { student_id: studentId },
+      orderBy: { snapshot_date: 'desc' },
+    });
+  }
+
+  let filledSnapshots = fillContinuousSnapshotTimeline(rawSnaps);
+
+  // Compute daily deltas on the filled timeline (ordered DESC: newest first)
+  const snapshotsWithDeltas = filledSnapshots.map((snap, idx) => {
+    const prevSnap = filledSnapshots[idx + 1];
+    const dailyTotal = prevSnap ? Math.max(0, snap.total_solved - prevSnap.total_solved) : 0;
+    let dailyEasy = prevSnap ? Math.max(0, snap.easy_solved - prevSnap.easy_solved) : 0;
+    let dailyMedium = prevSnap ? Math.max(0, snap.medium_solved - prevSnap.medium_solved) : 0;
+    let dailyHard = prevSnap ? Math.max(0, snap.hard_solved - prevSnap.hard_solved) : 0;
+
+    const sumDaily = dailyEasy + dailyMedium + dailyHard;
+    if (dailyTotal > sumDaily) {
+      dailyEasy += (dailyTotal - sumDaily);
     }
-    if (filters?.toDate) {
-      snaps = snaps.filter((s) => new Date(s.snapshot_date) <= new Date(filters.toDate!));
-    }
-    snaps.sort((a, b) => new Date(b.snapshot_date).getTime() - new Date(a.snapshot_date).getTime());
+
+    const dIST = toISTDateString(snap.snapshot_date);
+
     return {
-      student: st ? { id: st.id, register_number: st.register_number, name: st.name } : null,
-      snapshots: snaps,
+      ...snap,
+      snapshot_date: dIST,
+      formatted_date: dIST,
+      daily_solved: dailyTotal,
+      daily_easy: dailyEasy,
+      daily_medium: dailyMedium,
+      daily_hard: dailyHard,
     };
-  }
-
-  const st = await prisma.student.findUnique({
-    where: { id: studentId },
-    select: { id: true, register_number: true, name: true },
   });
 
-  const where: any = { student_id: studentId };
-  if (filters?.fromDate) {
-    where.snapshot_date = { gte: new Date(filters.fromDate) };
-  }
-  if (filters?.toDate) {
-    where.snapshot_date = { ...where.snapshot_date, lte: new Date(filters.toDate) };
-  }
-
-  const rawSnapshots = await prisma.dailyCodingSnapshot.findMany({
-    where: { student_id: studentId },
-    orderBy: { snapshot_date: 'desc' },
-  });
-
-  let snapshots = fillContinuousSnapshotTimeline(rawSnapshots);
+  let filteredSnapshots = snapshotsWithDeltas;
   if (filters?.fromDate) {
     const fStr = toISTDateString(filters.fromDate);
-    snapshots = snapshots.filter((s) => toISTDateString(s.snapshot_date) >= fStr);
+    filteredSnapshots = filteredSnapshots.filter((s) => toISTDateString(s.snapshot_date) >= fStr);
   }
   if (filters?.toDate) {
     const tStr = toISTDateString(filters.toDate);
-    snapshots = snapshots.filter((s) => toISTDateString(s.snapshot_date) <= tStr);
+    filteredSnapshots = filteredSnapshots.filter((s) => toISTDateString(s.snapshot_date) <= tStr);
   }
 
-  return { student: st, snapshots };
+  return { student: studentObj, snapshots: filteredSnapshots };
 }
 
 export function buildReportFileName(filters: ReportFilterParams, ext: 'csv' | 'xlsx' = 'csv'): string {
