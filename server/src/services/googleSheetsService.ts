@@ -5,7 +5,7 @@ import { inMemoryStore, InMemoryGoogleSheetLink } from '../db/inMemoryStore.js';
 import { getBatchesForStaff } from './batchService.js';
 import { getStaffAssignedScopes } from './staffService.js';
 import { getAuthorizedStudentIdsForStaff } from './studentAuthorizationService.js';
-import { toISTDateString } from './reportService.js';
+import { toISTDateString, fillContinuousSnapshotTimeline } from './reportService.js';
 import { diagnosticLogService } from './diagnosticLogService.js';
 
 export interface GoogleSheetLinkDTO {
@@ -147,7 +147,27 @@ export function buildGoogleSheetMatrix(
     }
   });
 
-  const sortedDates = Array.from(dateSet).sort();
+  // Always include today's date in IST if snapshots exist
+  const todayIST = toISTDateString(new Date());
+  if (dateSet.size > 0 && (!startDate || todayIST >= startDate)) {
+    dateSet.add(todayIST);
+  }
+
+  const rawSorted = Array.from(dateSet).sort();
+  let sortedDates: string[] = [];
+
+  if (rawSorted.length > 0) {
+    const minDateStr = startDate && startDate > rawSorted[0] ? startDate : rawSorted[0];
+    const latestRawDate = rawSorted[rawSorted.length - 1];
+    const maxDateStr = latestRawDate > todayIST ? latestRawDate : todayIST;
+
+    let curr = new Date(`${minDateStr}T00:00:00.000Z`);
+    const end = new Date(`${maxDateStr}T00:00:00.000Z`);
+    while (curr <= end) {
+      sortedDates.push(toISTDateString(curr));
+      curr.setUTCDate(curr.getUTCDate() + 1);
+    }
+  }
 
   const formatDateHeader = (isoDate: string) => {
     const d = new Date(isoDate + 'T00:00:00.000Z');
@@ -174,10 +194,6 @@ export function buildGoogleSheetMatrix(
     const list = studentSnapshotsMap.get(snap.student_id) || [];
     list.push(snap);
     studentSnapshotsMap.set(snap.student_id, list);
-  });
-
-  studentSnapshotsMap.forEach((snaps) => {
-    snaps.sort((a, b) => new Date(a.snapshot_date).getTime() - new Date(b.snapshot_date).getTime());
   });
 
   // Sort students strictly by Academic Year -> Department -> Section -> Allocation Batch -> Register Number
@@ -226,48 +242,63 @@ export function buildGoogleSheetMatrix(
       leetcodeId,
     ];
 
+    const rawStudentSnaps = studentSnapshotsMap.get(st.id) || [];
+    // Continuous healing: ensure timeline from student's first snapshot is complete without missing days
+    const studentSnaps = rawStudentSnaps.length > 0 ? fillContinuousSnapshotTimeline(rawStudentSnaps) : [];
+    // fillContinuousSnapshotTimeline returns descending; sort ascending for chronological step-by-step delta
+    const studentSnapsAsc = [...studentSnaps].sort(
+      (a, b) => new Date(a.snapshot_date).getTime() - new Date(b.snapshot_date).getTime()
+    );
 
-    const studentSnaps = studentSnapshotsMap.get(st.id) || [];
+    const snapByDate = new Map<string, any>();
+    studentSnapsAsc.forEach((s) => snapByDate.set(toISTDateString(s.snapshot_date), s));
+    const earliestStudentDate = studentSnapsAsc.length > 0 ? toISTDateString(studentSnapsAsc[0].snapshot_date) : null;
 
     sortedDates.forEach((isoDate) => {
-      const snapIndex = studentSnaps.findIndex(
-        (s) => toISTDateString(s.snapshot_date) === isoDate
-      );
-
-      if (snapIndex === -1) {
+      // If date is prior to the student's first ever snapshot, show '-'
+      if (!earliestStudentDate || isoDate < earliestStudentDate) {
         baseRow.push('-');
-      } else {
-        const currSnap = studentSnaps[snapIndex];
-        const prevSnap = snapIndex > 0 ? studentSnaps[snapIndex - 1] : null;
-
-        let easyToday = 0;
-        let medToday = 0;
-        let hardToday = 0;
-        let totalToday = 0;
-
-        if (prevSnap) {
-          easyToday = Math.max(0, currSnap.easy_solved - prevSnap.easy_solved);
-          medToday = Math.max(0, currSnap.medium_solved - prevSnap.medium_solved);
-          hardToday = Math.max(0, currSnap.hard_solved - prevSnap.hard_solved);
-          const rawTotalDelta = Math.max(0, currSnap.total_solved - prevSnap.total_solved);
-          totalToday = easyToday + medToday + hardToday;
-          if (rawTotalDelta > totalToday) {
-            easyToday += (rawTotalDelta - totalToday);
-            totalToday = rawTotalDelta;
-          }
-        } else {
-          easyToday = 0;
-          medToday = 0;
-          hardToday = 0;
-          totalToday = 0;
-        }
-
-        const cellContent = `Overall: ${currSnap.easy_solved}E | ${currSnap.medium_solved}M | ${currSnap.hard_solved}H | ${currSnap.total_solved}T\nToday: +${easyToday}E | +${medToday}M | +${hardToday}H | +${totalToday}T`;
-
-
-
-        baseRow.push(cellContent);
+        return;
       }
+
+      let currSnap = snapByDate.get(isoDate);
+      if (!currSnap) {
+        // Carry forward the latest known snapshot before or on this date
+        const prior = studentSnapsAsc.filter((s) => toISTDateString(s.snapshot_date) <= isoDate);
+        if (prior.length > 0) {
+          currSnap = prior[prior.length - 1];
+        }
+      }
+
+      if (!currSnap) {
+        baseRow.push('-');
+        return;
+      }
+
+      const snapIndex = studentSnapsAsc.findIndex(
+        (s) => toISTDateString(s.snapshot_date) === toISTDateString(currSnap.snapshot_date)
+      );
+      const prevSnap = snapIndex > 0 ? studentSnapsAsc[snapIndex - 1] : null;
+
+      let easyToday = 0;
+      let medToday = 0;
+      let hardToday = 0;
+      let totalToday = 0;
+
+      if (prevSnap) {
+        easyToday = Math.max(0, currSnap.easy_solved - prevSnap.easy_solved);
+        medToday = Math.max(0, currSnap.medium_solved - prevSnap.medium_solved);
+        hardToday = Math.max(0, currSnap.hard_solved - prevSnap.hard_solved);
+        const rawTotalDelta = Math.max(0, currSnap.total_solved - prevSnap.total_solved);
+        totalToday = easyToday + medToday + hardToday;
+        if (rawTotalDelta > totalToday) {
+          easyToday += (rawTotalDelta - totalToday);
+          totalToday = rawTotalDelta;
+        }
+      }
+
+      const cellContent = `Overall: ${currSnap.easy_solved}E | ${currSnap.medium_solved}M | ${currSnap.hard_solved}H | ${currSnap.total_solved}T\nToday: +${easyToday}E | +${medToday}M | +${hardToday}H | +${totalToday}T`;
+      baseRow.push(cellContent);
     });
 
     return baseRow;
@@ -731,6 +762,29 @@ export async function syncAllGoogleSheetLinks(
   };
 }
 
+async function runConcurrentTasks<T, R>(
+  items: T[],
+  concurrency: number,
+  taskFn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results: R[] = new Array(items.length);
+  let currentIndex = 0;
+
+  async function worker() {
+    while (true) {
+      const index = currentIndex++;
+      if (index >= items.length) break;
+      results[index] = await taskFn(items[index], index);
+    }
+  }
+
+  const workerCount = Math.min(concurrency, items.length);
+  const workers = Array.from({ length: workerCount }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 export async function syncGoogleSheetLink(
   linkId: string,
   user: { userId: string; role: 'ADMIN' | 'STAFF' }
@@ -870,6 +924,38 @@ export async function syncGoogleSheetLink(
     snapshotRows = await prisma.dailyCodingSnapshot.findMany({
       where: { student_id: { in: stIds } },
     });
+  }
+
+  // Ensure live LeetCode stats for students in this sheet who are missing today's snapshot
+  try {
+    const todayIST = toISTDateString(new Date());
+    const studentsMissingToday = studentRows.filter((st) => {
+      if (!st.leetcode_username) return false;
+      const snaps = snapshotRows.filter((s) => s.student_id === st.id);
+      return !snaps.some((s) => toISTDateString(s.snapshot_date) === todayIST);
+    });
+
+    if (studentsMissingToday.length > 0) {
+      console.log(`[Google Sheets Auto-Sync] Syncing ${studentsMissingToday.length} students missing today's (${todayIST}) snapshot...`);
+      const { syncStudentLeetCode } = await import('./leetcodeService.js');
+      await runConcurrentTasks(studentsMissingToday, 15, async (st) => {
+        try {
+          await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
+        } catch (_) {}
+      });
+
+      if (!process.env.DATABASE_URL) {
+        const studentIds = new Set(studentRows.map((s) => s.id));
+        snapshotRows = inMemoryStore.snapshots.filter((snap) => studentIds.has(snap.student_id));
+      } else {
+        const stIds = studentRows.map((s) => s.id);
+        snapshotRows = await prisma.dailyCodingSnapshot.findMany({
+          where: { student_id: { in: stIds } },
+        });
+      }
+    }
+  } catch (syncLiveErr: any) {
+    console.warn('[Google Sheets Auto-Sync Warning] Live student sync note:', syncLiveErr?.message || syncLiveErr);
   }
 
   // Extract Start Date
