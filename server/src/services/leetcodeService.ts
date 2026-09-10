@@ -64,7 +64,7 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
               ranking
             }
           }
-          recentAcSubmissionList(username: $username, limit: 20) {
+          recentAcSubmissionList(username: $username, limit: 50) {
             id
             title
             titleSlug
@@ -391,70 +391,159 @@ export async function syncStudentLeetCode(
   // Reconcile total and sum so they always mathematically match
   const sumDiff = stats.easySolved + stats.mediumSolved + stats.hardSolved;
   if (stats.totalSolved > sumDiff) {
-    stats.easySolved += (stats.totalSolved - sumDiff);
+stats.easySolved += (stats.totalSolved - sumDiff);
   } else if (stats.totalSolved < sumDiff) {
     stats.totalSolved = sumDiff;
   }
 
-  // Baseline preservation for midnight boundary (12:00 AM IST)
+  // Baseline preservation & midnight boundary reconciliation (12:00 AM IST)
+  // When daily sync runs at midnight (e.g., 10/09/2026 00:00 - 00:30 IST),
+  // yesterday (09/09/2026) is the completed calendar day being finalized.
   const todayISTStr = getISTDateString(0);
+  const yesterdayISTStr = getISTDateString(-1);
   const todayMidnightMs = new Date(`${todayISTStr}T00:00:00+05:30`).getTime();
   const yesterdayDate = getISTDate(-1);
 
+  let todaySolvedCount = 0;
   if (stats.recentSubmissions && stats.recentSubmissions.length > 0) {
     const todaySolvedSlugs = new Set(
       stats.recentSubmissions
         .filter((s) => s.timestamp * 1000 >= todayMidnightMs)
         .map((s) => s.titleSlug)
     );
-    const todaySolvedCount = todaySolvedSlugs.size;
+    todaySolvedCount = todaySolvedSlugs.size;
+  }
 
-    // If student solved problems today past 12:00 AM midnight, ensure yesterday's baseline snapshot exists
-    if (todaySolvedCount > 0) {
-      const midnightTotal = Math.max(0, stats.totalSolved - todaySolvedCount);
-      if (process.env.DATABASE_URL) {
-        try {
-          const yestSnap = await prisma.dailyCodingSnapshot.findUnique({
-            where: {
-              student_id_snapshot_date: {
-                student_id: studentId,
-                snapshot_date: yesterdayDate,
-              },
+  // End-of-day total for yesterday (23:59:59 IST):
+  // Any problem solved today was not yet solved at yesterday's midnight boundary.
+  let yestTotal = Math.max(0, stats.totalSolved - todaySolvedCount);
+  let rem = todaySolvedCount;
+  let yestEasy = stats.easySolved;
+  let yestMed = stats.mediumSolved;
+  let yestHard = stats.hardSolved;
+
+  const easyDed = Math.min(yestEasy, rem);
+  yestEasy -= easyDed;
+  rem -= easyDed;
+
+  const medDed = Math.min(yestMed, rem);
+  yestMed -= medDed;
+  rem -= medDed;
+
+  const hardDed = Math.min(yestHard, rem);
+  yestHard -= hardDed;
+  rem -= hardDed;
+
+  yestTotal = yestEasy + yestMed + yestHard;
+
+  // Reconcile and upsert yesterday's completed day snapshot when applicable
+  // (if yesterday snapshot already exists, if student solved problems past midnight today, or has prior history)
+  let hasPriorSnapshots = false;
+  let existingYest: any = null;
+
+  if (process.env.DATABASE_URL) {
+    existingYest = await prisma.dailyCodingSnapshot.findUnique({
+      where: {
+        student_id_snapshot_date: {
+          student_id: studentId,
+          snapshot_date: yesterdayDate,
+        },
+      },
+    });
+    if (!existingYest) {
+      const priorCount = await prisma.dailyCodingSnapshot.count({
+        where: {
+          student_id: studentId,
+          snapshot_date: { lt: yesterdayDate },
+        },
+      });
+      hasPriorSnapshots = priorCount > 0;
+    }
+  } else {
+    const studentSnaps = inMemoryStore.snapshots.filter((s) => s.student_id === studentId);
+    existingYest = studentSnaps.find(
+      (s) => new Date(s.snapshot_date).toDateString() === yesterdayDate.toDateString()
+    );
+    if (!existingYest) {
+      hasPriorSnapshots = studentSnaps.some(
+        (s) => new Date(s.snapshot_date).getTime() < yesterdayDate.getTime()
+      );
+    }
+  }
+
+  const shouldRecordYesterday = Boolean(existingYest) || todaySolvedCount > 0 || hasPriorSnapshots;
+
+  if (shouldRecordYesterday) {
+    if (process.env.DATABASE_URL) {
+      try {
+        // Monotonic guard: never decrease yesterday's snapshot if it was already higher
+        if (existingYest && existingYest.total_solved > yestTotal) {
+          yestTotal = existingYest.total_solved;
+          yestEasy = existingYest.easy_solved;
+          yestMed = existingYest.medium_solved;
+          yestHard = existingYest.hard_solved;
+        }
+
+        await prisma.dailyCodingSnapshot.upsert({
+          where: {
+            student_id_snapshot_date: {
+              student_id: studentId,
+              snapshot_date: yesterdayDate,
             },
-          });
-          if (!yestSnap) {
-            await prisma.dailyCodingSnapshot.create({
-              data: {
-                student_id: studentId,
-                snapshot_date: yesterdayDate,
-                easy_solved: Math.max(0, stats.easySolved - todaySolvedCount),
-                medium_solved: stats.mediumSolved,
-                hard_solved: stats.hardSolved,
-                total_solved: midnightTotal,
-              },
-            }).catch(() => {});
-          }
-        } catch (_) {}
-      } else {
-        const yestIndex = inMemoryStore.snapshots.findIndex(
-          (s) => s.student_id === studentId && new Date(s.snapshot_date).toDateString() === yesterdayDate.toDateString()
-        );
-        if (yestIndex === -1) {
-          inMemoryStore.snapshots.push({
-            id: `snap_${Date.now()}_yest_${Math.random().toString(36).substring(2,6)}`,
+          },
+          update: {
+            easy_solved: yestEasy,
+            medium_solved: yestMed,
+            hard_solved: yestHard,
+            total_solved: yestTotal,
+          },
+          create: {
             student_id: studentId,
             snapshot_date: yesterdayDate,
-            easy_solved: Math.max(0, stats.easySolved - todaySolvedCount),
-            medium_solved: stats.mediumSolved,
-            hard_solved: stats.hardSolved,
-            total_solved: midnightTotal,
-            created_at: new Date(),
-          });
+            easy_solved: yestEasy,
+            medium_solved: yestMed,
+            hard_solved: yestHard,
+            total_solved: yestTotal,
+          },
+        });
+      } catch (yestErr) {
+        console.warn(`[Yesterday Snapshot Upsert Warning for ${student.name}]:`, yestErr);
+      }
+    } else {
+      const yestIndex = inMemoryStore.snapshots.findIndex(
+        (s) => s.student_id === studentId && new Date(s.snapshot_date).toDateString() === yesterdayDate.toDateString()
+      );
+      if (yestIndex >= 0) {
+        const existingRecord = inMemoryStore.snapshots[yestIndex];
+        if (existingRecord && existingRecord.total_solved > yestTotal) {
+          yestTotal = existingRecord.total_solved;
+          yestEasy = existingRecord.easy_solved;
+          yestMed = existingRecord.medium_solved;
+          yestHard = existingRecord.hard_solved;
         }
+        inMemoryStore.snapshots[yestIndex] = {
+          ...existingRecord,
+          easy_solved: yestEasy,
+          medium_solved: yestMed,
+          hard_solved: yestHard,
+          total_solved: yestTotal,
+        };
+      } else {
+        inMemoryStore.snapshots.push({
+          id: `snap_${Date.now()}_yest_${Math.random().toString(36).substring(2, 6)}`,
+          student_id: studentId,
+          snapshot_date: yesterdayDate,
+          easy_solved: yestEasy,
+          medium_solved: yestMed,
+          hard_solved: yestHard,
+          total_solved: yestTotal,
+          created_at: new Date(),
+        });
       }
     }
   }
 
+  // Reconcile and upsert today's snapshot
   let snapshot: any = null;
   if (!process.env.DATABASE_URL) {
     let existingIndex = inMemoryStore.snapshots.findIndex(
@@ -462,7 +551,7 @@ export async function syncStudentLeetCode(
     );
 
     const snapshotObj = {
-      id: existingIndex >= 0 ? inMemoryStore.snapshots[existingIndex].id : `snap_${Date.now()}_${Math.random().toString(36).substring(2,6)}`,
+      id: existingIndex >= 0 ? inMemoryStore.snapshots[existingIndex].id : `snap_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       student_id: studentId,
       snapshot_date: today,
       easy_solved: stats.easySolved,
@@ -1115,19 +1204,26 @@ export async function runDailyMidnightReconciliation(): Promise<{
     console.warn('[Sync] Student LeetCode sync notice during reconciliation:', syncErr?.message || syncErr);
   }
 
-  const istDate = getISTDate().toISOString().split('T')[0];
+  const todayIST = getISTDateString(0);
+  const yesterdayIST = getISTDateString(-1);
+  const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const istHour = new Date(now.getTime() + istOffset).getUTCHours();
+  // When running around midnight (12:00 AM - 2:00 AM IST), the day that just concluded is yesterday
+  const completedISTDate = istHour < 2 ? yesterdayIST : todayIST;
 
   // Guaranteed execution: always sync linked Google Sheets even if individual student fetches had warnings
   try {
     await runMidnightAutoSync();
-    console.log('[Sync] Linked Google Sheets updated during reconciliation.');
+    console.log(`[Sync] Linked Google Sheets updated during reconciliation. Completed day: ${completedISTDate}, Current day: ${todayIST}.`);
   } catch (sheetErr: any) {
     console.warn('[Sync] Google Sheets sync notice during reconciliation:', sheetErr?.message || sheetErr);
   }
 
   return {
     ...result,
-    istDate,
+    istDate: todayIST,
+    completedISTDate,
   };
 }
 

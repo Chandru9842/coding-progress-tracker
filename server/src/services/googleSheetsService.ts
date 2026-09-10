@@ -926,19 +926,24 @@ export async function syncGoogleSheetLink(
     });
   }
 
-  // Ensure live LeetCode stats for students in this sheet who are missing today's snapshot
+  // Ensure live LeetCode stats for students in this sheet who are missing today's or yesterday's snapshot
   try {
     const todayIST = toISTDateString(new Date());
-    const studentsMissingToday = studentRows.filter((st) => {
+    const yesterdayDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const yesterdayIST = toISTDateString(yesterdayDate);
+
+    const studentsMissingSync = studentRows.filter((st) => {
       if (!st.leetcode_username) return false;
       const snaps = snapshotRows.filter((s) => s.student_id === st.id);
-      return !snaps.some((s) => toISTDateString(s.snapshot_date) === todayIST);
+      const hasToday = snaps.some((s) => toISTDateString(s.snapshot_date) === todayIST);
+      const hasYesterday = snaps.some((s) => toISTDateString(s.snapshot_date) === yesterdayIST);
+      return !hasToday || !hasYesterday;
     });
 
-    if (studentsMissingToday.length > 0) {
-      console.log(`[Google Sheets Auto-Sync] Syncing ${studentsMissingToday.length} students missing today's (${todayIST}) snapshot...`);
+    if (studentsMissingSync.length > 0) {
+      console.log(`[Google Sheets Auto-Sync] Syncing ${studentsMissingSync.length} students missing today's (${todayIST}) or yesterday's (${yesterdayIST}) snapshot...`);
       const { syncStudentLeetCode } = await import('./leetcodeService.js');
-      await runConcurrentTasks(studentsMissingToday, 15, async (st) => {
+      await runConcurrentTasks(studentsMissingSync, 15, async (st) => {
         try {
           await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
         } catch (_) {}

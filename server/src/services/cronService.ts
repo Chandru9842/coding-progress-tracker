@@ -67,11 +67,14 @@ export function getDailyAutomationStatus() {
 }
 
 /**
- * Checks if today's snapshot has already been recorded in the database.
+ * Checks if today's and completed yesterday's snapshots have already been recorded in the database.
  * If not, and no reconciliation is currently in flight, triggers a non-blocking background catch-up sync.
  */
 export async function checkAndTriggerLazyCatchUpSync(): Promise<void> {
   const currentIST = getISTDateString();
+  const yesterdayDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' });
+  const yesterdayIST = formatter.format(yesterdayDate);
 
   if (lastSyncedISTDate === currentIST || isReconciliationRunning) {
     return;
@@ -79,25 +82,34 @@ export async function checkAndTriggerLazyCatchUpSync(): Promise<void> {
 
   try {
     let hasTodaySnapshot = false;
+    let hasYesterdaySnapshot = false;
     const todayDateObj = new Date(`${currentIST}T00:00:00.000Z`);
+    const yesterdayDateObj = new Date(`${yesterdayIST}T00:00:00.000Z`);
 
     if (!process.env.DATABASE_URL) {
       hasTodaySnapshot = inMemoryStore.snapshots.some(
         (s) => new Date(s.snapshot_date).toISOString().split('T')[0] === currentIST
       );
+      hasYesterdaySnapshot = inMemoryStore.snapshots.some(
+        (s) => new Date(s.snapshot_date).toISOString().split('T')[0] === yesterdayIST
+      );
     } else {
       const snapCount = await prisma.dailyCodingSnapshot.count({
         where: { snapshot_date: todayDateObj },
       });
+      const snapCountYest = await prisma.dailyCodingSnapshot.count({
+        where: { snapshot_date: yesterdayDateObj },
+      });
       hasTodaySnapshot = snapCount > 0;
+      hasYesterdaySnapshot = snapCountYest > 0;
     }
 
-    if (hasTodaySnapshot) {
+    if (hasTodaySnapshot && hasYesterdaySnapshot) {
       lastSyncedISTDate = currentIST;
       return;
     }
 
-    console.log(`[AutoCatchUp] Missing daily coding snapshot for ${currentIST}. Launching automated background catch-up reconciliation...`);
+    console.log(`[AutoCatchUp] Missing daily coding snapshots for ${yesterdayIST} or ${currentIST}. Launching automated background catch-up reconciliation...`);
     executeFullDailyReconciliation().catch((err) => {
       console.error('[AutoCatchUp] Background catch-up sync encountered error:', err?.message || err);
     });
