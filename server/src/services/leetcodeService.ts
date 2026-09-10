@@ -714,14 +714,19 @@ stats.easySolved += (stats.totalSolved - sumDiff);
 async function runConcurrentTasks<T, R>(
   items: T[],
   concurrency: number,
-  taskFn: (item: T, index: number) => Promise<R>
+  taskFn: (item: T, index: number) => Promise<R>,
+  maxDurationMs?: number
 ): Promise<R[]> {
   if (items.length === 0) return [];
   const results: R[] = new Array(items.length);
   let currentIndex = 0;
+  const start = Date.now();
 
   async function worker() {
     while (true) {
+      if (maxDurationMs && Date.now() - start > maxDurationMs) {
+        break;
+      }
       const index = currentIndex++;
       if (index >= items.length) break;
       results[index] = await taskFn(items[index], index);
@@ -731,7 +736,7 @@ async function runConcurrentTasks<T, R>(
   const workerCount = Math.min(concurrency, items.length);
   const workers = Array.from({ length: workerCount }, () => worker());
   await Promise.all(workers);
-  return results;
+  return results.filter((r) => r !== undefined);
 }
 
 /**
@@ -898,19 +903,28 @@ export async function syncFilteredStudentsLeetCode(
     studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
   }
 
-  // Run student syncing concurrently with a pool of 10 workers for fast processing
-  const results = await runConcurrentTasks(studentList, 10, async (st) => {
-    try {
-      const res = await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
-      return { studentId: st.id, success: true, stats: res.stats };
-    } catch (err: any) {
-      return { studentId: st.id, success: false, error: err.message };
-    }
-  });
+  // Run student syncing concurrently with a pool of 15 workers and an 8.5-second time budget
+  // to guarantee the HTTP response always returns cleanly within Vercel's serverless timeout.
+  const MAX_SAFE_EXECUTION_MS = 8500;
+  const results = await runConcurrentTasks(
+    studentList,
+    15,
+    async (st) => {
+      try {
+        const res = await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
+        return { studentId: st.id, success: true, stats: res.stats };
+      } catch (err: any) {
+        return { studentId: st.id, success: false, error: err.message };
+      }
+    },
+    MAX_SAFE_EXECUTION_MS
+  );
 
-  // Trigger Google Sheet sync once for all affected batches
+  // Trigger Google Sheet sync non-blockingly in the background so it never holds up or times out the live report sync
   const batchIds = studentList.map((s) => s.batch_id);
-  await syncGoogleSheetsForBatchIds(batchIds, user);
+  syncGoogleSheetsForBatchIds(batchIds, user).catch((sheetErr) => {
+    console.warn('[LeetCode Filtered Sync] Background Google Sheet sync notice:', sheetErr);
+  });
 
   const durationMs = Date.now() - startTime;
   const successfulCount = results.filter((r) => r.success).length;

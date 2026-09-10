@@ -60,6 +60,37 @@ export default function ReportsPage() {
   const [datePreset, setDatePreset] = useState<'all' | 'today' | 'yesterday' | 'last_7' | 'last_30' | 'custom'>('all');
   const [autoSyncOnSection, setAutoSyncOnSection] = useState<boolean>(true);
 
+  const extractErrorMessage = (err: any, fallback: string): string => {
+    if (!err) return fallback;
+    if (typeof err === 'string' && err.trim()) return err;
+    if (err.response?.data) {
+      const data = err.response.data;
+      if (typeof data === 'string' && data.trim()) return data;
+      if (typeof data === 'object') {
+        if (typeof data.error === 'string' && data.error.trim()) return data.error;
+        if (data.error && typeof data.error === 'object') {
+          if (typeof data.error.message === 'string' && data.error.message.trim()) {
+            return data.error.message;
+          }
+          if (data.error.code && data.error.message) {
+            return `${data.error.code}: ${data.error.message}`;
+          }
+        }
+        if (typeof data.message === 'string' && data.message.trim()) {
+          if (data.code) return `${data.code}: ${data.message}`;
+          return data.message;
+        }
+        if (data.code && typeof data.code === 'string') {
+          return `Error: ${data.code}`;
+        }
+      }
+    }
+    if (typeof err.message === 'string' && err.message.trim()) {
+      return err.message;
+    }
+    return fallback;
+  };
+
   const getISTDateString = (offsetDays: number = 0): string => {
     const now = new Date();
     const d = new Date(now.getTime() + offsetDays * 24 * 60 * 60 * 1000);
@@ -117,7 +148,7 @@ export default function ReportsPage() {
       });
       setReportData(data);
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to load report data');
+      setError(extractErrorMessage(err, 'Failed to load report data'));
     } finally {
       setLoading(false);
     }
@@ -220,7 +251,7 @@ export default function ReportsPage() {
       });
       setSuccessMsg(`Deleted "${rep.file_name}" from audit history.`);
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to delete report audit entry');
+      setError(extractErrorMessage(err, 'Failed to delete report audit entry'));
     } finally {
       setDeletingReport(false);
     }
@@ -238,7 +269,7 @@ export default function ReportsPage() {
       setSelectedReportIds(new Set());
       setSuccessMsg(`Successfully deleted ${toDelete.length} report audit record(s).`);
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to bulk delete reports');
+      setError(extractErrorMessage(err, 'Failed to bulk delete reports'));
     } finally {
       setDeletingReport(false);
     }
@@ -255,7 +286,7 @@ export default function ReportsPage() {
       setSelectedReportIds(new Set());
       setSuccessMsg('All report export audit history cleared.');
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to clear report history');
+      setError(extractErrorMessage(err, 'Failed to clear report history'));
     } finally {
       setDeletingReport(false);
     }
@@ -287,7 +318,7 @@ export default function ReportsPage() {
       const reps = await getReportsList();
       setReportsList(reps);
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to load reports data');
+      setError(extractErrorMessage(err, 'Failed to load reports data'));
     } finally {
       setLoading(false);
     }
@@ -319,7 +350,7 @@ export default function ReportsPage() {
       });
       setReportData(data);
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to apply report filters');
+      setError(extractErrorMessage(err, 'Failed to apply report filters'));
     } finally {
       setLoading(false);
     }
@@ -372,7 +403,7 @@ export default function ReportsPage() {
       });
       setReportData(refreshedData);
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to sync LeetCode data for filtered students');
+      setError(extractErrorMessage(err, 'Failed to sync LeetCode data for filtered students'));
     } finally {
       setSyncingLeetcode(false);
     }
@@ -439,7 +470,7 @@ export default function ReportsPage() {
       const updatedList = await getReportsList();
       setReportsList(updatedList);
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to export Excel report');
+      setError(extractErrorMessage(err, 'Failed to export Excel report'));
     } finally {
       setExporting(false);
     }
@@ -469,7 +500,7 @@ export default function ReportsPage() {
       const updatedList = await getReportsList();
       setReportsList(updatedList);
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to export CSV report');
+      setError(extractErrorMessage(err, 'Failed to export CSV report'));
     } finally {
       setExporting(false);
     }
@@ -719,27 +750,74 @@ export default function ReportsPage() {
         {/* Banners */}
         {successMsg && (
           <div style={{
-            padding: '1rem',
+            padding: '0.85rem 1.25rem',
             backgroundColor: 'rgba(16, 185, 129, 0.1)',
             border: '1px solid rgba(16, 185, 129, 0.3)',
             color: '#34d399',
             borderRadius: 'var(--radius-sm)',
             fontSize: '0.875rem',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: '1rem',
           }}>
-            {successMsg}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span>{typeof successMsg === 'string' ? successMsg : (successMsg as any)?.message || String(successMsg)}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSuccessMsg(null)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#34d399',
+                cursor: 'pointer',
+                fontWeight: 700,
+                fontSize: '1rem',
+                padding: '0.2rem 0.5rem',
+                lineHeight: 1,
+              }}
+              title="Dismiss message"
+            >
+              ✕
+            </button>
           </div>
         )}
 
         {error && (
           <div style={{
-            padding: '1rem',
+            padding: '0.85rem 1.25rem',
             backgroundColor: 'rgba(239, 68, 68, 0.1)',
             border: '1px solid rgba(239, 68, 68, 0.3)',
             color: '#f87171',
             borderRadius: 'var(--radius-sm)',
             fontSize: '0.875rem',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: '1rem',
           }}>
-            {error}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <AlertTriangle size={16} style={{ flexShrink: 0 }} />
+              <span>{typeof error === 'string' ? error : (error as any)?.message || String(error)}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#f87171',
+                cursor: 'pointer',
+                fontWeight: 700,
+                fontSize: '1rem',
+                padding: '0.2rem 0.5rem',
+                lineHeight: 1,
+              }}
+              title="Dismiss error"
+            >
+              ✕
+            </button>
           </div>
         )}
 
