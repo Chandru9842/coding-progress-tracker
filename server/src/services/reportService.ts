@@ -22,7 +22,7 @@ export interface ReportFilterParams {
   staffId?: string;
   fromDate?: string;
   toDate?: string;
-  sortBy?: 'total' | 'easy' | 'medium' | 'hard';
+  sortBy?: 'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name' | 'overall_total';
   sortOrder?: 'asc' | 'desc';
   activityStatus?: 'all' | 'active' | 'no_activity';
   minProblems?: number;
@@ -615,6 +615,9 @@ export async function getReportData(
     } else if (sortBy === 'hard') {
       keyA = a.hard_solved;
       keyB = b.hard_solved;
+    } else if (sortBy === 'overall_total') {
+      keyA = a.overall_total !== undefined ? a.overall_total : a.total_solved;
+      keyB = b.overall_total !== undefined ? b.overall_total : b.total_solved;
     } else {
       keyA = a.total_solved;
       keyB = b.total_solved;

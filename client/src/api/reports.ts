@@ -89,7 +89,7 @@ export async function getReportData(params?: {
   staffId?: string;
   fromDate?: string;
   toDate?: string;
-  sortBy?: 'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name';
+  sortBy?: 'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name' | 'overall_total';
   sortOrder?: 'asc' | 'desc';
   activityStatus?: 'all' | 'active' | 'no_activity';
   minProblems?: number | string;
@@ -171,7 +171,7 @@ export async function exportExcelReport(data: {
   staffId?: string;
   fromDate?: string;
   toDate?: string;
-  sortBy?: 'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name';
+  sortBy?: 'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name' | 'overall_total';
   sortOrder?: 'asc' | 'desc';
   activityStatus?: 'all' | 'active' | 'no_activity';
   minProblems?: number | string;
@@ -199,7 +199,7 @@ export async function exportCsvReport(data: {
   staffId?: string;
   fromDate?: string;
   toDate?: string;
-  sortBy?: 'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name';
+  sortBy?: 'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name' | 'overall_total';
   sortOrder?: 'asc' | 'desc';
   activityStatus?: 'all' | 'active' | 'no_activity';
   minProblems?: number | string;

@@ -134,24 +134,27 @@ export default function ReportsPage() {
       const todayStr = getISTDateString(0);
       setFromDate(todayStr);
       setToDate(todayStr);
-      fetchWithParams(todayStr, todayStr, 'today');
+      // Immediately switch view to today's date boundary
+      fetchWithParams({ from: todayStr, to: todayStr, preset: 'today' });
+      // Automatically trigger live LeetCode sync for current scope so problems solved since 12:00 AM midnight are fetched live
+      handleSyncFilteredLeetCode(undefined, undefined, todayStr, todayStr);
     } else if (preset === 'yesterday') {
       const yestStr = getISTDateString(-1);
       setFromDate(yestStr);
       setToDate(yestStr);
-      fetchWithParams(yestStr, yestStr, 'yesterday');
+      fetchWithParams({ from: yestStr, to: yestStr, preset: 'yesterday' });
     } else if (preset === 'last_7') {
       const d7Str = getISTDateString(-7);
       const todayStr = getISTDateString(0);
       setFromDate(d7Str);
       setToDate(todayStr);
-      fetchWithParams(d7Str, todayStr, 'last_7');
+      fetchWithParams({ from: d7Str, to: todayStr, preset: 'last_7' });
     } else if (preset === 'last_30') {
       const d30Str = getISTDateString(-30);
       const todayStr = getISTDateString(0);
       setFromDate(d30Str);
       setToDate(todayStr);
-      fetchWithParams(d30Str, todayStr, 'last_30');
+      fetchWithParams({ from: d30Str, to: todayStr, preset: 'last_30' });
     } else if (preset === 'custom') {
       // Keep existing fromDate/toDate or default to today for user customization
       if (!fromDate && !toDate) {
@@ -161,7 +164,7 @@ export default function ReportsPage() {
       }
     }
   };
-  const [sortBy, setSortBy] = useState<'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name'>('total');
+  const [sortBy, setSortBy] = useState<'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name' | 'overall_total'>('total');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [activityStatus, setActivityStatus] = useState<'all' | 'active' | 'no_activity'>('all');
   const [minProblems, setMinProblems] = useState<string>('');
@@ -322,12 +325,19 @@ export default function ReportsPage() {
     }
   };
 
-  const handleSyncFilteredLeetCode = async (overrideSecId?: string | React.MouseEvent, overrideBatchId?: string) => {
+  const handleSyncFilteredLeetCode = async (
+    overrideSecId?: string | React.MouseEvent,
+    overrideBatchId?: string,
+    overrideFromDate?: string,
+    overrideToDate?: string
+  ) => {
     setSyncingLeetcode(true);
     setSuccessMsg(null);
     setError(null);
     const targetSecId = typeof overrideSecId === 'string' ? overrideSecId : sectionId;
     const targetBatchId = typeof overrideBatchId === 'string' ? overrideBatchId : batchId;
+    const activeFrom = overrideFromDate !== undefined ? overrideFromDate : fromDate;
+    const activeTo = overrideToDate !== undefined ? overrideToDate : toDate;
     const startTime = Date.now();
     try {
       const res = await syncReportStudents({
@@ -342,7 +352,7 @@ export default function ReportsPage() {
       setSuccessMsg(
         res.message
           ? `${res.message} (completed in ${res.durationSeconds || elapsedSec}s)`
-          : `⚡ Successfully synchronized live LeetCode data for ${res.successful || 0} student(s) in ${elapsedSec}s. Solves submitted after 12:00 AM midnight are now updated.`
+          : `⚡ Live LeetCode sync completed for ${res.successful || 0} student(s) in ${elapsedSec}s. Solves submitted after 12:00 AM midnight are now updated live.`
       );
 
       const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
@@ -353,8 +363,8 @@ export default function ReportsPage() {
         sectionId: targetSecId || undefined,
         allocationBatchId: allocationBatchId || undefined,
         staffId: staffId || undefined,
-        fromDate: fromDate || undefined,
-        toDate: toDate || undefined,
+        fromDate: activeFrom || undefined,
+        toDate: activeTo || undefined,
         sortBy,
         sortOrder,
         activityStatus,
@@ -368,7 +378,7 @@ export default function ReportsPage() {
     }
   };
 
-  const handleSortChange = (newSortBy: 'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name') => {
+  const handleSortChange = (newSortBy: 'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name' | 'overall_total') => {
     let newOrder: 'asc' | 'desc' = 'desc';
     if (sortBy === newSortBy) {
       newOrder = sortOrder === 'desc' ? 'asc' : 'desc';
@@ -385,6 +395,14 @@ export default function ReportsPage() {
         if (newSortBy === 'name') {
           const cmp = a.name.localeCompare(b.name);
           return newOrder === 'asc' ? cmp : -cmp;
+        }
+        if (newSortBy === 'overall_total') {
+          const valA = a.overall_total ?? 0;
+          const valB = b.overall_total ?? 0;
+          if (valA !== valB) {
+            return newOrder === 'asc' ? valA - valB : valB - valA;
+          }
+          return a.register_number.localeCompare(b.register_number, undefined, { numeric: true });
         }
         const valA = a[`${newSortBy}_solved` as keyof StudentReportItem] as number;
         const valB = b[`${newSortBy}_solved` as keyof StudentReportItem] as number;
@@ -943,17 +961,25 @@ export default function ReportsPage() {
 
             {/* Date Range Mode Selector */}
             <div style={{ gridColumn: '1 / -1', borderTop: '1px solid var(--border-subtle)', paddingTop: '1rem', marginTop: '0.5rem' }}>
-              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--primary)', marginBottom: '0.75rem' }}>
-                📅 Date Range Mode
-              </label>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--primary)' }}>
+                  📅 Date Range Filter Mode
+                </label>
+                {datePreset === 'today' && (
+                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#34d399', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#34d399', display: 'inline-block' }}></span>
+                    Auto Live Sync: Solves since 12:00 AM midnight active
+                  </span>
+                )}
+              </div>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.75rem' }}>
                 {[
-                  { key: 'all', label: 'All Time (Cumulative)' },
-                  { key: 'today', label: 'Today (New Solved)' },
-                  { key: 'yesterday', label: 'Yesterday (New Solved)' },
-                  { key: 'last_7', label: 'Last 7 Days (Progress)' },
-                  { key: 'last_30', label: 'Last 30 Days (Progress)' },
-                  { key: 'custom', label: 'Custom Range' },
+                  { key: 'all', label: '🌐 All Time (Cumulative)' },
+                  { key: 'today', label: '⚡ Today (12:00 AM – Till Now Live)' },
+                  { key: 'yesterday', label: '⏪ Yesterday (Yesterday Only)' },
+                  { key: 'last_7', label: '📅 Last 7 Days (Past 7 Days Only)' },
+                  { key: 'last_30', label: '🗓️ Last 30 Days (Past 30 Days Only)' },
+                  { key: 'custom', label: '🔍 Custom Range (Between Dates)' },
                 ].map((p) => (
                   <button
                     key={p.key}
@@ -965,6 +991,39 @@ export default function ReportsPage() {
                     {p.label}
                   </button>
                 ))}
+              </div>
+
+              {/* Informative helper banner for active date mode */}
+              <div style={{
+                fontSize: '0.75rem',
+                color: 'var(--text-muted)',
+                backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-sm)',
+                padding: '0.45rem 0.75rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                marginBottom: '0.5rem',
+              }}>
+                {datePreset === 'today' && (
+                  <span>⚡ <strong>Today Preset:</strong> Shows problems students solved starting from 12:00 AM midnight till now, alongside their overall cumulative total. Live LeetCode sync is triggered immediately on selection.</span>
+                )}
+                {datePreset === 'yesterday' && (
+                  <span>⏪ <strong>Yesterday Preset:</strong> Isolates strictly yesterday's solves (problems submitted from yesterday's 12:00 AM to 11:59 PM), alongside overall cumulative total.</span>
+                )}
+                {datePreset === 'last_7' && (
+                  <span>📅 <strong>Last 7 Days Preset:</strong> Shows problems solved during the past 7 calendar days only, alongside overall cumulative total.</span>
+                )}
+                {datePreset === 'last_30' && (
+                  <span>🗓️ <strong>Last 30 Days Preset:</strong> Shows problems solved during the past 30 calendar days only, alongside overall cumulative total.</span>
+                )}
+                {datePreset === 'custom' && (
+                  <span>🔍 <strong>Custom Range:</strong> Enter start date and end date below to isolate problems solved strictly between those dates, alongside overall cumulative total.</span>
+                )}
+                {datePreset === 'all' && (
+                  <span>🌐 <strong>All Time:</strong> Displays cumulative all-time problems solved on LeetCode for each student.</span>
+                )}
               </div>
 
               {datePreset === 'custom' && (
@@ -1075,7 +1134,7 @@ export default function ReportsPage() {
                 <select
                   id="filter-sort-by"
                   value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as any)}
+                  onChange={(e) => handleSortChange(e.target.value as any)}
                   style={{
                     flex: 1,
                     backgroundColor: 'var(--bg-input, #0f172a)',
@@ -1086,10 +1145,13 @@ export default function ReportsPage() {
                     fontSize: '0.875rem',
                   }}
                 >
-                  <option value="total">Total Problems</option>
-                  <option value="easy">Easy Solved</option>
-                  <option value="medium">Medium Solved</option>
-                  <option value="hard">Hard Solved</option>
+                  <option value="total">{(fromDate || toDate) ? 'Period Solved (New Solved in Range)' : 'Total Solved (Cumulative)'}</option>
+                  {(fromDate || toDate) && (
+                    <option value="overall_total">Overall Total (Till Now Cumulative)</option>
+                  )}
+                  <option value="easy">{(fromDate || toDate) ? 'Period Easy Solved' : 'Easy Solved'}</option>
+                  <option value="medium">{(fromDate || toDate) ? 'Period Medium Solved' : 'Medium Solved'}</option>
+                  <option value="hard">{(fromDate || toDate) ? 'Period Hard Solved' : 'Hard Solved'}</option>
                   <option value="register_number">Register Number</option>
                   <option value="name">Student Name</option>
                 </select>
@@ -1097,7 +1159,37 @@ export default function ReportsPage() {
                 <select
                   id="filter-sort-order"
                   value={sortOrder}
-                  onChange={(e) => setSortOrder(e.target.value as any)}
+                  onChange={(e) => {
+                    const newOrder = e.target.value as 'asc' | 'desc';
+                    setSortOrder(newOrder);
+                    if (reportData) {
+                      const sorted = [...reportData.students].sort((a, b) => {
+                        if (sortBy === 'register_number') {
+                          const cmp = a.register_number.localeCompare(b.register_number, undefined, { numeric: true });
+                          return newOrder === 'asc' ? cmp : -cmp;
+                        }
+                        if (sortBy === 'name') {
+                          const cmp = a.name.localeCompare(b.name);
+                          return newOrder === 'asc' ? cmp : -cmp;
+                        }
+                        if (sortBy === 'overall_total') {
+                          const valA = a.overall_total ?? 0;
+                          const valB = b.overall_total ?? 0;
+                          if (valA !== valB) {
+                            return newOrder === 'asc' ? valA - valB : valB - valA;
+                          }
+                          return a.register_number.localeCompare(b.register_number, undefined, { numeric: true });
+                        }
+                        const valA = a[`${sortBy}_solved` as keyof StudentReportItem] as number;
+                        const valB = b[`${sortBy}_solved` as keyof StudentReportItem] as number;
+                        if (valA !== valB) {
+                          return newOrder === 'asc' ? valA - valB : valB - valA;
+                        }
+                        return a.register_number.localeCompare(b.register_number, undefined, { numeric: true });
+                      });
+                      setReportData({ ...reportData, students: sorted });
+                    }
+                  }}
                   style={{
                     width: '180px',
                     backgroundColor: 'var(--bg-input, #0f172a)',
@@ -1316,7 +1408,7 @@ export default function ReportsPage() {
                 title="Query LeetCode right now for any newly solved problems (e.g. past 12:00 AM midnight)"
               >
                 <RefreshCw size={13} className={syncingLeetcode ? 'spin' : ''} />
-                <span>{syncingLeetcode ? 'Syncing...' : 'Fetch Live LeetCode Submissions'}</span>
+                <span>{syncingLeetcode ? 'Syncing Live LeetCode (12 AM–Now)...' : '⚡ Sync Live LeetCode (12 AM–Now)'}</span>
               </button>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                 Click row for daily history
@@ -1356,8 +1448,28 @@ export default function ReportsPage() {
                       {datePreset === 'today' ? "Today's Hard" : datePreset === 'yesterday' ? "Yesterday's Hard" : (fromDate || toDate) ? 'Period Hard' : 'Hard'} {sortBy === 'hard' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
                     </th>
                     <th style={{ padding: '0.75rem 1rem', cursor: 'pointer' }} onClick={() => handleSortChange('total')}>
-                      {datePreset === 'today' ? "Today's Solved" : datePreset === 'yesterday' ? "Yesterday's Solved" : datePreset === 'last_7' ? "Last 7 Days Solved" : (fromDate || toDate) ? 'Period Solved' : 'Total Solved'} {sortBy === 'total' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
+                      {datePreset === 'today'
+                        ? "Today's Solved (12 AM–Now Live)"
+                        : datePreset === 'yesterday'
+                        ? "Yesterday's Solved (Yesterday Only)"
+                        : datePreset === 'last_7'
+                        ? "Last 7 Days Solved"
+                        : datePreset === 'last_30'
+                        ? "Last 30 Days Solved"
+                        : (fromDate || toDate)
+                        ? 'Period Solved'
+                        : 'Total Solved'}{' '}
+                      {sortBy === 'total' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
                     </th>
+                    {(fromDate || toDate) && (
+                      <th
+                        style={{ padding: '0.75rem 1rem', cursor: 'pointer', color: '#60a5fa' }}
+                        onClick={() => handleSortChange('overall_total')}
+                        title="Cumulative total problems solved on LeetCode till now"
+                      >
+                        Overall Total (Till Now) {sortBy === 'overall_total' ? (sortOrder === 'desc' ? '↓' : '↑') : ''}
+                      </th>
+                    )}
                     <th style={{ padding: '0.75rem 1rem' }}>Status</th>
                   </tr>
                 </thead>
@@ -1408,26 +1520,53 @@ export default function ReportsPage() {
                           <div>
                             <span style={{
                               display: 'inline-block',
-                              padding: '0.2rem 0.55rem',
+                              padding: '0.22rem 0.6rem',
                               borderRadius: '6px',
                               fontSize: '0.9rem',
                               fontWeight: 800,
-                              backgroundColor: st.total_solved > 0 ? 'rgba(52, 211, 153, 0.15)' : 'rgba(148, 163, 184, 0.1)',
+                              backgroundColor: st.total_solved > 0 ? 'rgba(52, 211, 153, 0.18)' : 'rgba(148, 163, 184, 0.1)',
                               color: st.total_solved > 0 ? '#34d399' : '#94a3b8',
-                              border: st.total_solved > 0 ? '1px solid rgba(52, 211, 153, 0.3)' : '1px solid rgba(148, 163, 184, 0.2)',
+                              border: st.total_solved > 0 ? '1px solid rgba(52, 211, 153, 0.35)' : '1px solid rgba(148, 163, 184, 0.2)',
                             }}>
                               {st.total_solved > 0 ? `+${st.total_solved}` : '0'}
                             </span>
-                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
-                              Overall: {st.overall_total}
+                            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                              {datePreset === 'today'
+                                ? '12:00 AM – Now'
+                                : datePreset === 'yesterday'
+                                ? 'Yesterday only'
+                                : datePreset === 'last_7'
+                                ? 'Past 7 days'
+                                : datePreset === 'last_30'
+                                ? 'Past 30 days'
+                                : 'Period delta'}
                             </div>
                           </div>
                         ) : (
-                          <span style={{ fontWeight: 800, fontSize: '1rem', color: '#60a5fa' }}>
+                          <span style={{ fontWeight: 800, fontSize: '1.05rem', color: '#60a5fa' }}>
                             {st.total_solved}
                           </span>
                         )}
                       </td>
+                      {(fromDate || toDate) && (
+                        <td style={{ padding: '0.85rem 1rem' }}>
+                          <span style={{
+                            display: 'inline-block',
+                            padding: '0.22rem 0.6rem',
+                            borderRadius: '6px',
+                            fontSize: '0.95rem',
+                            fontWeight: 800,
+                            backgroundColor: 'rgba(96, 165, 250, 0.12)',
+                            color: '#60a5fa',
+                            border: '1px solid rgba(96, 165, 250, 0.28)',
+                          }}>
+                            {st.overall_total}
+                          </span>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                            Cumulative till now
+                          </div>
+                        </td>
+                      )}
                       <td style={{ padding: '0.85rem 1rem' }}>
                         {st.has_activity ? (
                           <span style={{ padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600, backgroundColor: 'rgba(52, 211, 153, 0.1)', color: '#34d399' }}>
