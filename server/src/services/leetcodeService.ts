@@ -1108,7 +1108,7 @@ export async function getStudentSnapshots(studentId: string, user: { userId: str
   const latest = filledSnapshots[0] || snapshots[0];
   const latestDateStr = latest ? toISTDateString(latest.snapshot_date) : '';
   const isMissingToday = !latest || latestDateStr !== todayISTStr;
-  const isStale = isMissingToday || (Date.now() - new Date(latest.created_at || (latest as any).updated_at || 0).getTime() > 10 * 60 * 1000);
+  const isStale = isMissingToday || (Date.now() - new Date((latest as any)?.created_at || (latest as any)?.updated_at || 0).getTime() > 10 * 60 * 1000);
 
   if (isStale) {
     // Fire-and-forget background worker: Never block user navigation on slow external networks
@@ -1213,6 +1213,7 @@ export async function runDailyMidnightReconciliation(): Promise<{
   durationSeconds?: number;
   istDate: string;
   timestamp: string;
+  completedISTDate?: string;
 }> {
   let result: {
     totalAttempted: number;
@@ -1220,6 +1221,7 @@ export async function runDailyMidnightReconciliation(): Promise<{
     failed: number;
     durationSeconds?: number;
     timestamp: string;
+    completedISTDate?: string;
   } = {
     totalAttempted: 0,
     successful: 0,
