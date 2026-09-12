@@ -2,7 +2,17 @@ name: Autonomous Daily Snapshot & Google Sheets Sync
 
 on:
   schedule:
-    # 19:00 UTC = 00:30 IST (Daily reconciliation run at 12:30 AM IST)
+    # Daytime background auto-sync every 2 hours:
+    # 02:30 UTC = 08:00 AM IST
+    # 04:30 UTC = 10:00 AM IST
+    # 06:30 UTC = 12:00 PM IST
+    # 08:30 UTC = 02:00 PM IST
+    # 10:30 UTC = 04:00 PM IST
+    # 12:30 UTC = 06:00 PM IST
+    # 14:30 UTC = 08:00 PM IST
+    # 16:30 UTC = 10:00 PM IST
+    - cron: '30 2,4,6,8,10,12,14,16 * * *'
+    # Nightly reconciliation and daily rollover at 12:30 AM IST (19:00 UTC)
     - cron: '0 19 * * *'
   workflow_dispatch: # Allows manual run anytime from GitHub Actions UI
 
