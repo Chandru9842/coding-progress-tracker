@@ -50,7 +50,9 @@ export class ErrorBoundary extends Component<Props, State> {
 
             {this.state.error && (
               <div className="mb-6 p-3 rounded-lg bg-slate-950/80 border border-slate-800 text-left font-mono text-[11px] text-red-300 max-h-28 overflow-y-auto">
-                {this.state.error.message || 'Unknown error'}
+                {typeof this.state.error === 'string'
+                  ? this.state.error
+                  : this.state.error?.message || String(this.state.error || 'Unknown error')}
               </div>
             )}
 

@@ -744,15 +744,19 @@ export async function syncAllGoogleSheetLinks(
   const links = await getGoogleSheetLinksForUser(user);
   const activeLinks = links.filter((l) => l.is_active);
 
-  const results: any[] = [];
-  for (const link of activeLinks) {
-    try {
-      const res = await syncGoogleSheetLink(link.id, user);
-      results.push({ linkId: link.id, name: link.name, success: true, rowsSynced: res.rowsSynced });
-    } catch (err: any) {
-      results.push({ linkId: link.id, name: link.name, success: false, error: err.message });
-    }
-  }
+  const results = await runConcurrentTasks(
+    activeLinks,
+    5,
+    async (link) => {
+      try {
+        const res = await syncGoogleSheetLink(link.id, user);
+        return { linkId: link.id, name: link.name, success: true, rowsSynced: res.rowsSynced };
+      } catch (err: any) {
+        return { linkId: link.id, name: link.name, success: false, error: err.message };
+      }
+    },
+    8500
+  );
 
   return {
     totalAttempted: activeLinks.length,
@@ -765,14 +769,19 @@ export async function syncAllGoogleSheetLinks(
 async function runConcurrentTasks<T, R>(
   items: T[],
   concurrency: number,
-  taskFn: (item: T, index: number) => Promise<R>
+  taskFn: (item: T, index: number) => Promise<R>,
+  maxDurationMs?: number
 ): Promise<R[]> {
   if (items.length === 0) return [];
   const results: R[] = new Array(items.length);
   let currentIndex = 0;
+  const start = Date.now();
 
   async function worker() {
     while (true) {
+      if (maxDurationMs && Date.now() - start > maxDurationMs) {
+        break;
+      }
       const index = currentIndex++;
       if (index >= items.length) break;
       results[index] = await taskFn(items[index], index);
@@ -782,7 +791,7 @@ async function runConcurrentTasks<T, R>(
   const workerCount = Math.min(concurrency, items.length);
   const workers = Array.from({ length: workerCount }, () => worker());
   await Promise.all(workers);
-  return results;
+  return results.filter((r) => r !== undefined);
 }
 
 export async function syncGoogleSheetLink(
@@ -943,11 +952,16 @@ export async function syncGoogleSheetLink(
     if (studentsMissingSync.length > 0) {
       console.log(`[Google Sheets Auto-Sync] Syncing ${studentsMissingSync.length} students missing today's (${todayIST}) or yesterday's (${yesterdayIST}) snapshot...`);
       const { syncStudentLeetCode } = await import('./leetcodeService.js');
-      await runConcurrentTasks(studentsMissingSync, 15, async (st) => {
-        try {
-          await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
-        } catch (_) {}
-      });
+      await runConcurrentTasks(
+        studentsMissingSync,
+        15,
+        async (st) => {
+          try {
+            await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
+          } catch (_) {}
+        },
+        3500
+      );
 
       if (!process.env.DATABASE_URL) {
         const studentIds = new Set(studentRows.map((s) => s.id));
@@ -996,7 +1010,7 @@ export async function syncGoogleSheetLink(
       updatedAt: now.toISOString(),
     });
 
-    const maxRetries = 3;
+    const maxRetries = 2;
     let attempt = 0;
     let lastErrorMsg = '';
 
@@ -1008,7 +1022,7 @@ export async function syncGoogleSheetLink(
             'Content-Type': 'text/plain;charset=utf-8',
           },
           maxRedirects: 5,
-          timeout: 45000,
+          timeout: 7000,
         });
 
         webhookResponseText = String(whRes.data || '').trim();
@@ -1024,8 +1038,7 @@ export async function syncGoogleSheetLink(
         lastErrorMsg = postErr?.message || String(postErr);
         console.warn(`[GOOGLE_SHEETS] Webhook attempt ${attempt}/${maxRetries} failed for link [${linkId}]: ${lastErrorMsg}`);
         if (attempt < maxRetries) {
-          // Wait 2s on 1st retry, 4s on 2nd retry
-          await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         } else {
           webhookSuccess = false;
           webhookResponseText = lastErrorMsg;

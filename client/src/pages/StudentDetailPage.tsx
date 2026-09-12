@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
-import { studentApi, syncApi, Student, DailySnapshot } from '../services/api.js';
+import { studentApi, syncApi, Student, DailySnapshot, extractErrorMessage } from '../services/api.js';
 import { ArrowLeft, User, ShieldAlert, Code2, GraduationCap, Layers, Loader2, Activity, RefreshCw, CheckCircle2, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { SyncStatus } from '../components/SyncStatus.js';
 
@@ -112,7 +112,7 @@ export const StudentDetailPage: React.FC = () => {
       if (err.response?.status === 403) {
         setError('403 Forbidden: You are not authorized to view this student\'s profile.');
       } else {
-        setError(err.response?.data?.error || 'Failed to load student details.');
+        setError(extractErrorMessage(err, 'Failed to load student details.'));
       }
       setLoading(false);
     }
@@ -141,7 +141,7 @@ export const StudentDetailPage: React.FC = () => {
       window.dispatchEvent(new CustomEvent('student-synced'));
       window.dispatchEvent(new CustomEvent('sheets-synced'));
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to sync LeetCode data');
+      alert(extractErrorMessage(err, 'Failed to sync LeetCode data'));
     } finally {
       setSyncing(false);
     }
@@ -155,7 +155,7 @@ export const StudentDetailPage: React.FC = () => {
       await studentApi.deleteStudent(studentId);
       navigate('/students');
     } catch (err: any) {
-      setDeleteError(err.response?.data?.error || 'Failed to delete student');
+      setDeleteError(extractErrorMessage(err, 'Failed to delete student'));
     } finally {
       setDeleting(false);
     }
@@ -293,7 +293,9 @@ export const StudentDetailPage: React.FC = () => {
           }}>
             <ShieldAlert size={42} style={{ margin: '0 auto 1rem auto' }} />
             <h3 style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>Unable to Load Student Profile</h3>
-            <p style={{ fontSize: '0.9rem', color: '#fca5a5', marginBottom: '1.5rem' }}>{error}</p>
+            <p style={{ fontSize: '0.9rem', color: '#fca5a5', marginBottom: '1.5rem' }}>
+              {typeof error === 'string' ? error : (error as any)?.message || String(error)}
+            </p>
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
               <button
                 className="btn-primary"
@@ -397,7 +399,7 @@ export const StudentDetailPage: React.FC = () => {
                   color: '#4ade80', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem'
                 }}>
                   <CheckCircle2 size={16} />
-                  <span>{syncMessage}</span>
+                  <span>{typeof syncMessage === 'string' ? syncMessage : String(syncMessage || '')}</span>
                 </div>
               )}
 

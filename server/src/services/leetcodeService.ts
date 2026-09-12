@@ -806,18 +806,26 @@ export async function syncBatchLeetCode(batchId: string, user: { userId: string;
 
   let results: any[] = [];
   try {
-    // Run student syncing concurrently (5 parallel workers)
-    results = await runConcurrentTasks(studentList, 5, async (st) => {
-      try {
-        const res = await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
-        return { studentId: st.id, success: true, stats: res.stats };
-      } catch (err: any) {
-        return { studentId: st.id, success: false, error: err.message };
-      }
-    });
+    // Run student syncing concurrently (15 parallel workers with 8.5s time budget)
+    const MAX_SAFE_EXECUTION_MS = 8500;
+    results = await runConcurrentTasks(
+      studentList,
+      15,
+      async (st) => {
+        try {
+          const res = await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
+          return { studentId: st.id, success: true, stats: res.stats };
+        } catch (err: any) {
+          return { studentId: st.id, success: false, error: err.message };
+        }
+      },
+      MAX_SAFE_EXECUTION_MS
+    );
 
-    // Trigger Google Sheet sync once for the batch
-    await syncGoogleSheetsForBatchIds([batchId], user);
+    // Trigger Google Sheet sync non-blockingly in the background so HTTP response never hangs
+    syncGoogleSheetsForBatchIds([batchId], user).catch((sheetErr) => {
+      console.warn('[LeetCode Batch Sync] Background Google Sheet sync notice:', sheetErr);
+    });
   } finally {
     stopTask();
   }
@@ -1149,18 +1157,26 @@ export async function runPeriodicAutoSync(): Promise<{
       studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
     }
 
-    // Concurrent execution with pool of 15 workers for lightning execution
-    results = await runConcurrentTasks(studentList, 15, async (st) => {
-      try {
-        await syncStudentLeetCode(st.id, adminContext, { skipGoogleSheetSync: true });
-        return { studentId: st.id, success: true };
-      } catch (err: any) {
-        return { studentId: st.id, success: false, error: err?.message };
-      }
-    });
+    // Concurrent execution with pool of 15 workers for lightning execution with 8.5s safe time budget
+    const MAX_SAFE_EXECUTION_MS = 8500;
+    results = await runConcurrentTasks(
+      studentList,
+      15,
+      async (st) => {
+        try {
+          await syncStudentLeetCode(st.id, adminContext, { skipGoogleSheetSync: true });
+          return { studentId: st.id, success: true };
+        } catch (err: any) {
+          return { studentId: st.id, success: false, error: err?.message };
+        }
+      },
+      MAX_SAFE_EXECUTION_MS
+    );
 
     const batchIds = studentList.map((s) => s.batch_id);
-    await syncGoogleSheetsForBatchIds(batchIds, adminContext);
+    syncGoogleSheetsForBatchIds(batchIds, adminContext).catch((sheetErr) => {
+      console.warn('[LeetCode AutoSync] Background Google Sheet sync notice:', sheetErr);
+    });
   } finally {
     stopTask();
   }

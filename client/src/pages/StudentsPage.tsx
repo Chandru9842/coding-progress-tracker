@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
-import { studentApi, batchApi, staffApi, syncApi, Student, Batch, StaffUser } from '../services/api.js';
+import { studentApi, batchApi, staffApi, syncApi, Student, Batch, StaffUser, extractErrorMessage } from '../services/api.js';
 import {
   Users,
   UserPlus,
@@ -241,7 +241,7 @@ export const StudentsPage: React.FC = () => {
       });
       setStudents(data);
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to load student roster');
+      setError(extractErrorMessage(err, 'Failed to load student roster'));
     } finally {
       setLoading(false);
     }
@@ -376,7 +376,7 @@ export const StudentsPage: React.FC = () => {
       }
       fetchStudents(false);
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to sync LeetCode data');
+      alert(extractErrorMessage(err, 'Failed to sync LeetCode data'));
     } finally {
       setSyncingAll(false);
     }
@@ -923,7 +923,7 @@ export const StudentsPage: React.FC = () => {
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <CheckCircle2 size={16} />
-              <span>{syncNotice}</span>
+              <span>{typeof syncNotice === 'string' ? syncNotice : String(syncNotice || '')}</span>
             </div>
             <button onClick={() => setSyncNotice(null)} style={{ background: 'none', border: 'none', color: '#34d399', cursor: 'pointer' }}>
               <X size={16} />
@@ -1055,7 +1055,7 @@ export const StudentsPage: React.FC = () => {
 
         {error && (
           <div style={{ padding: '1rem', backgroundColor: 'rgba(239, 68, 68, 0.12)', color: '#f87171', borderRadius: 'var(--radius-sm)' }}>
-            {error}
+            <span>{typeof error === 'string' ? error : (error as any)?.message || String(error)}</span>
           </div>
         )}
 

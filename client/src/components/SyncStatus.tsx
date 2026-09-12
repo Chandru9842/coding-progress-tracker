@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { googleSheetsApi, GoogleSheetsSyncStatus } from '../services/api.js';
+import { googleSheetsApi, GoogleSheetsSyncStatus, extractErrorMessage } from '../services/api.js';
 import { CheckCircle2, AlertCircle, RefreshCw, FileSpreadsheet, ExternalLink, ChevronDown, Clock, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -157,7 +157,7 @@ export const SyncStatus: React.FC<SyncStatusProps> = ({
       if (onSyncComplete) onSyncComplete();
       window.dispatchEvent(new CustomEvent('sheets-synced'));
     } catch (err: any) {
-      setSyncFeedback(err.response?.data?.error || 'Manual sync failed');
+      setSyncFeedback(extractErrorMessage(err, 'Manual sync failed'));
     } finally {
       setSyncing(false);
       setTimeout(() => setSyncFeedback(null), 4000);
@@ -350,14 +350,14 @@ export const SyncStatus: React.FC<SyncStatusProps> = ({
                 style={{
                   padding: '0.5rem 0.75rem',
                   borderRadius: 'var(--radius-sm)',
-                  backgroundColor: syncFeedback.includes('failed') ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)',
-                  color: syncFeedback.includes('failed') ? '#f87171' : '#34d399',
+                  backgroundColor: String(syncFeedback).toLowerCase().includes('failed') || String(syncFeedback).toLowerCase().includes('error') ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                  color: String(syncFeedback).toLowerCase().includes('failed') || String(syncFeedback).toLowerCase().includes('error') ? '#f87171' : '#34d399',
                   fontSize: '0.78rem',
                   fontWeight: 600,
                   marginBottom: '0.75rem',
                 }}
               >
-                {syncFeedback}
+                <span>{typeof syncFeedback === 'string' ? syncFeedback : String(syncFeedback)}</span>
               </div>
             )}
 

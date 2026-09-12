@@ -10,6 +10,39 @@ export const api = axios.create({
   },
 });
 
+// Universal Error Message Extractor (Guarantees a clean, human-readable string and NEVER an object)
+export function extractErrorMessage(error: any, fallback: string = 'An unexpected error occurred'): string {
+  if (!error) return fallback;
+  if (typeof error === 'string') return error;
+
+  // Axios response payload
+  if (error.response?.data) {
+    const data = error.response.data;
+    if (typeof data === 'string') return data;
+    if (typeof data.error === 'string') return data.error;
+    if (typeof data.error?.message === 'string') return data.error.message;
+    if (typeof data.message === 'string') return data.message;
+    if (typeof data.code === 'string') {
+      return `${data.code}: ${data.message || fallback}`;
+    }
+  }
+
+  // Direct error object (e.g. Vercel timeout { code: "FUNCTION_INVOCATION_TIMEOUT", message: "..." })
+  if (typeof error.error === 'string') return error.error;
+  if (typeof error.error?.message === 'string') return error.error.message;
+  if (typeof error.message === 'string') return error.message;
+  if (typeof error.code === 'string') {
+    return `${error.code}: ${error.message || fallback}`;
+  }
+
+  try {
+    const str = JSON.stringify(error);
+    if (str && str !== '{}') return str;
+  } catch (_) {}
+
+  return String(error || fallback);
+}
+
 // Interceptor to attach token from localStorage if available
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('auth_token');
@@ -18,6 +51,24 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
+
+// Response interceptor to normalize all error responses into clean strings
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.data) {
+      const data = error.response.data;
+      const cleanMsg = extractErrorMessage(data, error.message || 'Request failed');
+      if (typeof data === 'object' && data !== null) {
+        data.error = cleanMsg;
+        data.message = cleanMsg;
+      } else {
+        error.response.data = { error: cleanMsg, message: cleanMsg };
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 // Client-side Memory Cache with TTL and In-Flight Request Deduplication
 interface CacheEntry<T> {

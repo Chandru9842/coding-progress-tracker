@@ -33,7 +33,8 @@ import {
   staffApi,
   GoogleSheetLink,
   GoogleSheetLinkLog,
-  Batch
+  Batch,
+  extractErrorMessage
 } from '../services/api.js';
 
 export const APPS_SCRIPT_V320_CODE = `/**
@@ -488,7 +489,7 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
     } catch (err: any) {
       // Revert optimistic addition if failed
       setSheetLinks((prev) => prev.filter((l) => !l.id.startsWith('temp_link_')));
-      setMessage({ type: 'error', text: err.response?.data?.error || 'Failed to link Google Sheet.' });
+      setMessage({ type: 'error', text: extractErrorMessage(err, 'Failed to link Google Sheet.') });
     } finally {
       setSubmitting(false);
     }
@@ -503,7 +504,7 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
       await loadData();
       if (onSyncComplete) onSyncComplete();
     } catch (err: any) {
-      setMessage({ type: 'error', text: err.response?.data?.error || 'Failed to sync sheet.' });
+      setMessage({ type: 'error', text: extractErrorMessage(err, 'Failed to sync sheet.') });
     } finally {
       setSyncingLinkId(null);
     }
@@ -613,7 +614,7 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
       await loadData();
       if (onSyncComplete) onSyncComplete();
     } catch (err: any) {
-      setMessage({ type: 'error', text: err.response?.data?.error || 'Failed to sync all Google Sheets.' });
+      setMessage({ type: 'error', text: extractErrorMessage(err, 'Failed to sync all Google Sheets.') });
     } finally {
       setSyncingAllSheets(false);
     }
@@ -634,7 +635,7 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
     } catch (err: any) {
       setMessage({
         type: 'error',
-        text: err.response?.data?.error || err.message || 'Failed to execute daily automation.',
+        text: extractErrorMessage(err, 'Failed to execute daily automation.'),
       });
     } finally {
       setRunningDailyAutomation(false);
@@ -661,7 +662,7 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
     } catch (err: any) {
       setMessage({
         type: 'error',
-        text: err.response?.data?.error || err.message || 'Failed to ping Google Apps Script webhook.',
+        text: extractErrorMessage(err, 'Failed to ping Google Apps Script webhook.'),
       });
     } finally {
       setTestingWebhookId(null);
@@ -675,7 +676,7 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
       setActiveLogs(logs);
       setShowLogsModal(true);
     } catch (err: any) {
-      setMessage({ type: 'error', text: err.response?.data?.error || 'Failed to fetch sync history.' });
+      setMessage({ type: 'error', text: extractErrorMessage(err, 'Failed to fetch sync history.') });
     }
   };
 
@@ -815,7 +816,7 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
             ) : (
               <AlertCircle size={18} />
             )}
-            <span>{message.text}</span>
+            <span>{typeof message.text === 'string' ? message.text : String(message.text || '')}</span>
           </div>
           <button
             onClick={() => setMessage(null)}
