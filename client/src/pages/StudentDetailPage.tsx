@@ -84,10 +84,13 @@ export const StudentDetailPage: React.FC = () => {
       // Check if student has a LeetCode username and needs an auto-sync in background:
       // (1) Has 0 snapshots
       // (2) Or latest snapshot is not from today (YYYY-MM-DD IST)
+      // (3) Or snapshot has not been refreshed in the last 2 minutes (instant daytime live update)
       const latestSnap = snapData && snapData.length > 0 ? snapData[0] : null;
       const todayIST = formatIST(new Date());
       const latestDateStr = latestSnap ? formatIST(latestSnap.snapshot_date) : '';
-      const needsDailySync = data?.leetcode_username && (!latestSnap || latestDateStr !== todayIST);
+      const lastSnapTime = latestSnap?.created_at ? new Date(latestSnap.created_at).getTime() : 0;
+      const isFresh = (Date.now() - lastSnapTime) < 120000;
+      const needsDailySync = Boolean(data?.leetcode_username && (!latestSnap || latestDateStr !== todayIST || !isFresh));
 
       if (needsDailySync) {
         setBackgroundSyncing(true);
