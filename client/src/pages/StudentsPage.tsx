@@ -227,6 +227,7 @@ export const StudentsPage: React.FC = () => {
 
   const fetchStudents = async (showLoadingSpinner: boolean = true) => {
     try {
+      setError(null);
       if (showLoadingSpinner && students.length === 0) {
         setLoading(true);
       }

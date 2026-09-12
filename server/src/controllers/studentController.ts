@@ -8,7 +8,6 @@ import {
 } from '../services/studentAuthorizationService.js';
 import { syncStudentLeetCode } from '../services/leetcodeService.js';
 import { syncAllActiveGoogleSheets } from '../services/googleSheetsService.js';
-import { checkAndTriggerLazyCatchUpSync } from '../services/cronService.js';
 
 export async function getStudents(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
@@ -16,9 +15,6 @@ export async function getStudents(req: AuthenticatedRequest, res: Response): Pro
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-
-    // Lazy automatic snapshot catch-up check
-    checkAndTriggerLazyCatchUpSync().catch(() => {});
 
     const { batchId, sectionId, department, search, allocationBatchId, subBatch, mentorId, currentYear, year } = req.query;
 
@@ -54,19 +50,6 @@ export async function getStudentDetail(req: AuthenticatedRequest, res: Response)
       { userId: req.user.userId, role: req.user.role },
       studentId
     );
-
-    // If student has leetcode_username and no snapshots, trigger background initialization without blocking GET response
-    if (student && student.leetcode_username && (!student.snapshots || student.snapshots.length === 0)) {
-      const authUser = { userId: req.user.userId, role: req.user.role as UserRole };
-      setImmediate(async () => {
-        try {
-          console.log(`[Auto-Snapshot Background] On-demand snapshot initialization for student ${student.name} (@${student.leetcode_username})`);
-          await syncStudentLeetCode(studentId, authUser, { skipGoogleSheetSync: true });
-        } catch (err: any) {
-          console.warn(`[Auto-Snapshot Background] On-demand snapshot init note:`, err?.message || err);
-        }
-      });
-    }
 
     res.status(200).json({ student });
   } catch (error: any) {

@@ -5,7 +5,6 @@ import { AuthenticatedRequest } from '../types/index.js';
 import { getBatchesForStaff } from '../services/batchService.js';
 import { getAuthorizedStudentIdsForStaff } from '../services/studentAuthorizationService.js';
 import { serverCache } from '../utils/serverCache.js';
-import { checkAndTriggerLazyCatchUpSync } from '../services/cronService.js';
 
 export async function getDashboardStats(
   req: AuthenticatedRequest,
@@ -16,9 +15,6 @@ export async function getDashboardStats(
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-
-    // Trigger lazy automatic catch-up sync if today's snapshot hasn't run yet (fire & forget)
-    checkAndTriggerLazyCatchUpSync().catch(() => {});
 
     const cacheKey = `stats_${req.user.role}_${req.user.userId}`;
     const stats = await serverCache.wrap(cacheKey, 15000, async () => {

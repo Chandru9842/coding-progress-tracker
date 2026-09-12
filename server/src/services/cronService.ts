@@ -4,7 +4,6 @@ import { inMemoryStore } from '../db/inMemoryStore.js';
 import { syncGoogleSheetLink, syncAllActiveGoogleSheets } from './googleSheetsService.js';
 
 let cronTask: any = null;
-let watchdogTask: any = null;
 let lastSyncedISTDate: string | null = null;
 let isReconciliationRunning = false;
 
@@ -40,8 +39,8 @@ export function getISTDateString(): string {
 export function getDailyAutomationStatus() {
   const currentISTDate = getISTDateString();
   return {
-    schedulerActive: Boolean(cronTask || watchdogTask),
-    engine: 'NodeCron (Asia/Kolkata) + Autonomous Multi-Tier Watchdog',
+    schedulerActive: Boolean(cronTask),
+    engine: 'NodeCron (Asia/Kolkata) + Scheduled Automation Workflow',
     targetScheduleIST: '12:30 AM IST Daily (19:00 UTC)',
     timezone: 'Asia/Kolkata (IST)',
     currentISTDate,
@@ -67,55 +66,12 @@ export function getDailyAutomationStatus() {
 }
 
 /**
- * Checks if today's and completed yesterday's snapshots have already been recorded in the database.
- * If not, and no reconciliation is currently in flight, triggers a non-blocking background catch-up sync.
+ * Guarded lazy check - intentionally a no-op to prevent saturating serverless functions
+ * and database connection pools during interactive user browsing and filter changes.
+ * Daily and periodic syncs are executed cleanly by GitHub Actions and the 12:30 AM IST cron.
  */
 export async function checkAndTriggerLazyCatchUpSync(): Promise<void> {
-  const currentIST = getISTDateString();
-  const yesterdayDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' });
-  const yesterdayIST = formatter.format(yesterdayDate);
-
-  if (lastSyncedISTDate === currentIST || isReconciliationRunning) {
-    return;
-  }
-
-  try {
-    let hasTodaySnapshot = false;
-    let hasYesterdaySnapshot = false;
-    const todayDateObj = new Date(`${currentIST}T00:00:00.000Z`);
-    const yesterdayDateObj = new Date(`${yesterdayIST}T00:00:00.000Z`);
-
-    if (!process.env.DATABASE_URL) {
-      hasTodaySnapshot = inMemoryStore.snapshots.some(
-        (s) => new Date(s.snapshot_date).toISOString().split('T')[0] === currentIST
-      );
-      hasYesterdaySnapshot = inMemoryStore.snapshots.some(
-        (s) => new Date(s.snapshot_date).toISOString().split('T')[0] === yesterdayIST
-      );
-    } else {
-      const snapCount = await prisma.dailyCodingSnapshot.count({
-        where: { snapshot_date: todayDateObj },
-      });
-      const snapCountYest = await prisma.dailyCodingSnapshot.count({
-        where: { snapshot_date: yesterdayDateObj },
-      });
-      hasTodaySnapshot = snapCount > 0;
-      hasYesterdaySnapshot = snapCountYest > 0;
-    }
-
-    if (hasTodaySnapshot && hasYesterdaySnapshot) {
-      lastSyncedISTDate = currentIST;
-      return;
-    }
-
-    console.log(`[AutoCatchUp] Missing daily coding snapshots for ${yesterdayIST} or ${currentIST}. Launching automated background catch-up reconciliation...`);
-    executeFullDailyReconciliation().catch((err) => {
-      console.error('[AutoCatchUp] Background catch-up sync encountered error:', err?.message || err);
-    });
-  } catch (err: any) {
-    console.warn('[AutoCatchUp] Check skipped due to error:', err?.message || err);
-  }
+  return;
 }
 
 /**
@@ -242,28 +198,6 @@ export function startMidnightCronScheduler(): void {
       await executeFullDailyReconciliation(true);
     });
   }
-
-  // Tier 2: Autonomous Watchdog every 5 minutes
-  watchdogTask = cron.schedule('*/5 * * * *', async () => {
-    const currentIST = getISTDateString();
-
-    // Calculate current IST hour
-    const now = new Date();
-    const istOffset = 5.5 * 60 * 60 * 1000;
-    const istTime = new Date(now.getTime() + istOffset);
-    const istHour = istTime.getUTCHours();
-    const istMinute = istTime.getUTCMinutes();
-
-    // If it's past 12:30 AM IST and today hasn't been synced yet
-    const isPast1230AM = istHour > 0 || (istHour === 0 && istMinute >= 30);
-
-    if (isPast1230AM && lastSyncedISTDate !== currentIST && !isReconciliationRunning) {
-      console.log(`[Scheduler Watchdog] Catching up unsynced IST date ${currentIST} (${istHour}:${istMinute.toString().padStart(2, '0')} IST)...`);
-      await executeFullDailyReconciliation();
-    }
-  });
-
-  console.log('[Scheduler] Tier 2 Watchdog active: 5-minute schedule monitor enabled.');
 }
 
 export function stopMidnightCronScheduler(): void {
@@ -272,11 +206,5 @@ export function stopMidnightCronScheduler(): void {
       cronTask.stop();
     } catch (e) {}
     cronTask = null;
-  }
-  if (watchdogTask) {
-    try {
-      watchdogTask.stop();
-    } catch (e) {}
-    watchdogTask = null;
   }
 }
