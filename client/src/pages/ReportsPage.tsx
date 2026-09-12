@@ -22,6 +22,8 @@ import {
   ReportItem,
 } from '../api/reports.js';
 
+export type DatePresetType = 'all' | 'today' | 'yesterday' | 'last_7' | 'last_30' | 'this_month' | 'last_month' | 'month' | 'custom';
+
 export default function ReportsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const currentTabParam = searchParams.get('tab');
@@ -57,7 +59,15 @@ export default function ReportsPage() {
   const [staffId, setStaffId] = useState<string>('');
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
-  const [datePreset, setDatePreset] = useState<'all' | 'today' | 'yesterday' | 'last_7' | 'last_30' | 'custom'>('all');
+  const [datePreset, setDatePreset] = useState<DatePresetType>('all');
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const now = new Date();
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const ist = new Date(utc + (3600000 * 5.5));
+    const y = ist.getFullYear();
+    const m = String(ist.getMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  });
   const [autoSyncOnSection, setAutoSyncOnSection] = useState<boolean>(true);
 
   const extractErrorMessage = (err: any, fallback: string): string => {
@@ -97,11 +107,71 @@ export default function ReportsPage() {
     return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d);
   };
 
+  const getISTNow = () => {
+    const now = new Date();
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    return new Date(utc + (3600000 * 5.5));
+  };
+
+  const getThisMonthRange = () => {
+    const ist = getISTNow();
+    const y = ist.getFullYear();
+    const m = String(ist.getMonth() + 1).padStart(2, '0');
+    const d = String(ist.getDate()).padStart(2, '0');
+    return {
+      start: `${y}-${m}-01`,
+      end: `${y}-${m}-${d}`,
+    };
+  };
+
+  const getLastMonthRange = () => {
+    const ist = getISTNow();
+    const year = ist.getMonth() === 0 ? ist.getFullYear() - 1 : ist.getFullYear();
+    const monthIdx = ist.getMonth() === 0 ? 12 : ist.getMonth();
+    const month = String(monthIdx).padStart(2, '0');
+    const lastDay = new Date(year, monthIdx, 0).getDate();
+    return {
+      start: `${year}-${month}-01`,
+      end: `${year}-${month}-${String(lastDay).padStart(2, '0')}`,
+    };
+  };
+
+  const getCustomMonthRange = (ym: string) => {
+    if (!ym || !/^\d{4}-\d{2}$/.test(ym)) return { start: '', end: '' };
+    const [yStr, mStr] = ym.split('-');
+    const y = parseInt(yStr, 10);
+    const m = parseInt(mStr, 10);
+    const lastDay = new Date(y, m, 0).getDate();
+    return {
+      start: `${ym}-01`,
+      end: `${ym}-${String(lastDay).padStart(2, '0')}`,
+    };
+  };
+
+  const formatMonthLabel = (ym: string) => {
+    if (!ym || !/^\d{4}-\d{2}$/.test(ym)) return ym || '';
+    const [y, m] = ym.split('-');
+    const d = new Date(parseInt(y, 10), parseInt(m, 10) - 1, 1);
+    return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  };
+
+  const recentMonthsList = React.useMemo(() => {
+    const list: string[] = [];
+    const ist = getISTNow();
+    for (let i = 0; i < 24; i++) {
+      const d = new Date(ist.getFullYear(), ist.getMonth() - i, 1);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      list.push(`${y}-${m}`);
+    }
+    return list;
+  }, []);
+
   const fetchWithParams = async (
     overrideFrom?: string | {
       from?: string;
       to?: string;
-      preset?: 'all' | 'today' | 'yesterday' | 'last_7' | 'last_30' | 'custom';
+      preset?: DatePresetType;
       sectionId?: string;
       batchId?: string;
       academicYear?: string;
@@ -110,7 +180,7 @@ export default function ReportsPage() {
       staffId?: string;
     },
     overrideTo?: string,
-    overridePreset?: 'all' | 'today' | 'yesterday' | 'last_7' | 'last_30' | 'custom'
+    overridePreset?: DatePresetType
   ) => {
     setLoading(true);
     setError(null);
@@ -154,7 +224,7 @@ export default function ReportsPage() {
     }
   };
 
-  const handleDatePresetChange = (preset: 'all' | 'today' | 'yesterday' | 'last_7' | 'last_30' | 'custom') => {
+  const handleDatePresetChange = (preset: DatePresetType) => {
     setDatePreset(preset);
 
     if (preset === 'all') {
@@ -186,6 +256,23 @@ export default function ReportsPage() {
       setFromDate(d30Str);
       setToDate(todayStr);
       fetchWithParams({ from: d30Str, to: todayStr, preset: 'last_30' });
+    } else if (preset === 'this_month') {
+      const r = getThisMonthRange();
+      setFromDate(r.start);
+      setToDate(r.end);
+      fetchWithParams({ from: r.start, to: r.end, preset: 'this_month' });
+    } else if (preset === 'last_month') {
+      const r = getLastMonthRange();
+      setFromDate(r.start);
+      setToDate(r.end);
+      fetchWithParams({ from: r.start, to: r.end, preset: 'last_month' });
+    } else if (preset === 'month') {
+      const ym = selectedMonth || getThisMonthRange().start.slice(0, 7);
+      if (!selectedMonth) setSelectedMonth(ym);
+      const r = getCustomMonthRange(ym);
+      setFromDate(r.start);
+      setToDate(r.end);
+      fetchWithParams({ from: r.start, to: r.end, preset: 'month' });
     } else if (preset === 'custom') {
       // Keep existing fromDate/toDate or default to today for user customization
       if (!fromDate && !toDate) {
@@ -194,6 +281,14 @@ export default function ReportsPage() {
         setToDate(todayStr);
       }
     }
+  };
+
+  const handleMonthSelectChange = (ym: string) => {
+    setSelectedMonth(ym);
+    const r = getCustomMonthRange(ym);
+    setFromDate(r.start);
+    setToDate(r.end);
+    fetchWithParams({ from: r.start, to: r.end, preset: 'month' });
   };
   const [sortBy, setSortBy] = useState<'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name' | 'overall_total'>('total');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -1057,6 +1152,9 @@ export default function ReportsPage() {
                   { key: 'yesterday', label: '⏪ Yesterday (Yesterday Only)' },
                   { key: 'last_7', label: '📅 Last 7 Days (Past 7 Days Only)' },
                   { key: 'last_30', label: '🗓️ Last 30 Days (Past 30 Days Only)' },
+                  { key: 'this_month', label: '🗓️ This Month (Current Month)' },
+                  { key: 'last_month', label: '⏪ Last Month (Previous Month)' },
+                  { key: 'month', label: '📅 Select Month' },
                   { key: 'custom', label: '🔍 Custom Range (Between Dates)' },
                 ].map((p) => (
                   <button
@@ -1096,6 +1194,15 @@ export default function ReportsPage() {
                 {datePreset === 'last_30' && (
                   <span>🗓️ <strong>Last 30 Days Preset:</strong> Shows problems solved during the past 30 calendar days only, alongside overall cumulative total.</span>
                 )}
+                {datePreset === 'this_month' && (
+                  <span>🗓️ <strong>This Month Preset:</strong> Shows problems students solved starting from the 1st of the current month ({getThisMonthRange().start}) through today, alongside overall cumulative total.</span>
+                )}
+                {datePreset === 'last_month' && (
+                  <span>⏪ <strong>Last Month Preset:</strong> Shows problems solved during the previous calendar month ({getLastMonthRange().start} to {getLastMonthRange().end}), alongside overall cumulative total.</span>
+                )}
+                {datePreset === 'month' && (
+                  <span>📅 <strong>Select Month:</strong> Shows problems solved during {formatMonthLabel(selectedMonth)} ({getCustomMonthRange(selectedMonth).start} to {getCustomMonthRange(selectedMonth).end}), alongside overall cumulative total.</span>
+                )}
                 {datePreset === 'custom' && (
                   <span>🔍 <strong>Custom Range:</strong> Enter start date and end date below to isolate problems solved strictly between those dates, alongside overall cumulative total.</span>
                 )}
@@ -1103,6 +1210,44 @@ export default function ReportsPage() {
                   <span>🌐 <strong>All Time:</strong> Displays cumulative all-time problems solved on LeetCode for each student.</span>
                 )}
               </div>
+
+              {/* Month Picker for 'month' Preset */}
+              {datePreset === 'month' && (
+                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border-subtle)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Historical Month:</label>
+                    <select
+                      id="filter-month-select"
+                      value={selectedMonth}
+                      onChange={(e) => handleMonthSelectChange(e.target.value)}
+                      style={{
+                        backgroundColor: 'var(--bg-input, #0f172a)',
+                        border: '1px solid var(--border-subtle)',
+                        color: 'var(--text-main)',
+                        padding: '0.45rem 0.75rem',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '0.85rem',
+                      }}
+                    >
+                      {recentMonthsList.map((ym) => (
+                        <option key={ym} value={ym}>
+                          {formatMonthLabel(ym)} ({ym})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Or pick specific month:</label>
+                    <input
+                      type="month"
+                      className="form-input"
+                      value={selectedMonth}
+                      onChange={(e) => handleMonthSelectChange(e.target.value)}
+                      style={{ fontSize: '0.85rem', padding: '0.35rem 0.6rem' }}
+                    />
+                  </div>
+                </div>
+              )}
 
               {datePreset === 'custom' && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', maxWidth: '450px', marginTop: '0.75rem' }}>
@@ -1913,6 +2058,11 @@ export default function ReportsPage() {
 
             <h4 style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '0.75rem' }}>
               Date-wise Daily Coding Snapshot History
+              {(fromDate || toDate) && (
+                <span style={{ fontSize: '0.8rem', color: '#818cf8', fontWeight: 500, marginLeft: '0.5rem' }}>
+                  ({datePreset === 'this_month' ? 'This Month' : datePreset === 'last_month' ? 'Last Month' : datePreset === 'month' ? formatMonthLabel(selectedMonth) : `${fromDate || 'Start'} to ${toDate || 'Today'}`})
+                </span>
+              )}
             </h4>
 
             {loadingStudentProgress ? (

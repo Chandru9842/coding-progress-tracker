@@ -770,6 +770,8 @@ export function buildReportFileName(filters: ReportFilterParams, ext: 'csv' | 'x
     periodTag = 'last-7-days';
   } else if (from === last30Str && (to === todayStr || !to)) {
     periodTag = 'last-30-days';
+  } else if (from && to && from.slice(0, 7) === to.slice(0, 7) && from.endsWith('-01')) {
+    periodTag = `month-${from.slice(0, 7)}`;
   } else if (from || to) {
     periodTag = 'custom';
   }

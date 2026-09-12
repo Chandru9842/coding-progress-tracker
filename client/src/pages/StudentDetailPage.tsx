@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
 import { studentApi, syncApi, Student, DailySnapshot, extractErrorMessage } from '../services/api.js';
-import { ArrowLeft, User, ShieldAlert, Code2, GraduationCap, Layers, Loader2, Activity, RefreshCw, CheckCircle2, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, User, ShieldAlert, Code2, GraduationCap, Layers, Loader2, Activity, RefreshCw, CheckCircle2, Trash2, ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
 import { SyncStatus } from '../components/SyncStatus.js';
 
 export const StudentDetailPage: React.FC = () => {
@@ -161,7 +161,15 @@ export const StudentDetailPage: React.FC = () => {
     }
   };
 
-  const [datePreset, setDatePreset] = useState<'all' | 'today' | 'yesterday' | 'last_7' | 'custom'>('all');
+  const [datePreset, setDatePreset] = useState<'all' | 'today' | 'yesterday' | 'last_7' | 'this_month' | 'last_month' | 'month' | 'custom'>('all');
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const now = new Date();
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const ist = new Date(utc + (3600000 * 5.5));
+    const y = ist.getFullYear();
+    const m = String(ist.getMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  });
   const [customFromDate, setCustomFromDate] = useState<string>('');
   const [customToDate, setCustomToDate] = useState<string>('');
 
@@ -178,6 +186,69 @@ export const StudentDetailPage: React.FC = () => {
     return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d);
   };
 
+  const getISTNow = () => {
+    const now = new Date();
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    return new Date(utc + (3600000 * 5.5));
+  };
+
+  const getThisMonthRange = () => {
+    const ist = getISTNow();
+    const y = ist.getFullYear();
+    const m = String(ist.getMonth() + 1).padStart(2, '0');
+    const d = String(ist.getDate()).padStart(2, '0');
+    return {
+      start: `${y}-${m}-01`,
+      end: `${y}-${m}-${d}`,
+    };
+  };
+
+  const getLastMonthRange = () => {
+    const ist = getISTNow();
+    const year = ist.getMonth() === 0 ? ist.getFullYear() - 1 : ist.getFullYear();
+    const monthIdx = ist.getMonth() === 0 ? 12 : ist.getMonth();
+    const month = String(monthIdx).padStart(2, '0');
+    const lastDay = new Date(year, monthIdx, 0).getDate();
+    return {
+      start: `${year}-${month}-01`,
+      end: `${year}-${month}-${String(lastDay).padStart(2, '0')}`,
+    };
+  };
+
+  const getCustomMonthRange = (ym: string) => {
+    if (!ym || !/^\d{4}-\d{2}$/.test(ym)) return { start: '', end: '' };
+    const [yStr, mStr] = ym.split('-');
+    const y = parseInt(yStr, 10);
+    const m = parseInt(mStr, 10);
+    const lastDay = new Date(y, m, 0).getDate();
+    return {
+      start: `${ym}-01`,
+      end: `${ym}-${String(lastDay).padStart(2, '0')}`,
+    };
+  };
+
+  const formatMonthLabel = (ym: string) => {
+    if (!ym || !/^\d{4}-\d{2}$/.test(ym)) return ym || '';
+    const [y, m] = ym.split('-');
+    const d = new Date(parseInt(y, 10), parseInt(m, 10) - 1, 1);
+    return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  };
+
+  const availableMonths = useMemo(() => {
+    const set = new Set<string>();
+    const thisM = getThisMonthRange().start.slice(0, 7);
+    const lastM = getLastMonthRange().start.slice(0, 7);
+    set.add(thisM);
+    set.add(lastM);
+    snapshots.forEach((s) => {
+      const dStr = formatIST(s.snapshot_date);
+      if (dStr && dStr.length >= 7) {
+        set.add(dStr.slice(0, 7));
+      }
+    });
+    return Array.from(set).sort().reverse();
+  }, [snapshots]);
+
   // Determine active start and end date based on datePreset
   let filterStart = '';
   let filterEnd = '';
@@ -190,10 +261,27 @@ export const StudentDetailPage: React.FC = () => {
   } else if (datePreset === 'last_7') {
     filterStart = getRelativeIST(-7);
     filterEnd = getRelativeIST(0);
+  } else if (datePreset === 'this_month') {
+    const r = getThisMonthRange();
+    filterStart = r.start;
+    filterEnd = r.end;
+  } else if (datePreset === 'last_month') {
+    const r = getLastMonthRange();
+    filterStart = r.start;
+    filterEnd = r.end;
+  } else if (datePreset === 'month') {
+    const r = getCustomMonthRange(selectedMonth);
+    filterStart = r.start;
+    filterEnd = r.end;
   } else if (datePreset === 'custom') {
     filterStart = customFromDate;
     filterEnd = customToDate;
   }
+
+  // Reset pagination to page 1 whenever filter parameters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [datePreset, selectedMonth, customFromDate, customToDate]);
 
   const isPeriod = Boolean(filterStart || filterEnd);
   // Sort snapshots chronological (oldest to newest)
@@ -258,7 +346,7 @@ export const StudentDetailPage: React.FC = () => {
     }
   }
 
-  // If a period is active, optionally filter the snapshot history list or show all
+  // Filter snapshot history list for table display
   const displayedSnapshots = isPeriod
     ? snapshots.filter((s) => {
         const dStr = formatIST(s.snapshot_date);
@@ -469,7 +557,8 @@ export const StudentDetailPage: React.FC = () => {
               <div className="glass-panel" style={{ padding: '1rem 1.25rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '0.5rem' }}>
                   <label style={{ fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                    📅 Date Range Mode
+                    <Calendar size={15} />
+                    <span>Date Range Mode</span>
                   </label>
                   <span style={{ fontSize: '0.78rem', color: isPeriod ? '#34d399' : 'var(--text-muted)', fontWeight: 600 }}>
                     {datePreset === 'today'
@@ -478,6 +567,12 @@ export const StudentDetailPage: React.FC = () => {
                       ? `⚡ Showing Progress Solved Yesterday (${filterStart})`
                       : datePreset === 'last_7'
                       ? `⚡ Showing Progress in Last 7 Days (${filterStart} to ${filterEnd})`
+                      : datePreset === 'this_month'
+                      ? `🗓️ Showing Progress Solved This Month (${formatMonthLabel(filterStart.slice(0, 7))}: ${filterStart} to ${filterEnd})`
+                      : datePreset === 'last_month'
+                      ? `⏪ Showing Progress Solved Last Month (${formatMonthLabel(filterStart.slice(0, 7))}: ${filterStart} to ${filterEnd})`
+                      : datePreset === 'month' && selectedMonth
+                      ? `📅 Showing Progress Solved in ${formatMonthLabel(selectedMonth)} (${filterStart} to ${filterEnd})`
                       : datePreset === 'custom' && (filterStart || filterEnd)
                       ? `⚡ Showing Custom Range Progress (${filterStart || 'Start'} to ${filterEnd || 'Today'})`
                       : '🏆 Showing All-Time Cumulative Totals'}
@@ -489,7 +584,10 @@ export const StudentDetailPage: React.FC = () => {
                     { key: 'all', label: 'All Time (Cumulative)' },
                     { key: 'today', label: 'Today (New Solved)' },
                     { key: 'yesterday', label: 'Yesterday (New Solved)' },
-                    { key: 'last_7', label: 'Last 7 Days (Progress)' },
+                    { key: 'last_7', label: 'Last 7 Days' },
+                    { key: 'this_month', label: 'This Month' },
+                    { key: 'last_month', label: 'Last Month' },
+                    { key: 'month', label: 'Select Month 📅' },
                     { key: 'custom', label: 'Custom Range' },
                   ].map((p) => (
                     <button
@@ -499,6 +597,9 @@ export const StudentDetailPage: React.FC = () => {
                       style={{ fontSize: '0.8rem', padding: '0.35rem 0.8rem' }}
                       onClick={() => {
                         setDatePreset(p.key as any);
+                        if (p.key === 'month' && !selectedMonth) {
+                          setSelectedMonth(getThisMonthRange().start.slice(0, 7));
+                        }
                         if (p.key === 'custom' && !customFromDate && !customToDate) {
                           const today = getRelativeIST(0);
                           setCustomFromDate(today);
@@ -511,6 +612,39 @@ export const StudentDetailPage: React.FC = () => {
                   ))}
                 </div>
 
+                {/* Month Picker for 'month' Preset */}
+                {datePreset === 'month' && (
+                  <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border-subtle)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Historical Month:</label>
+                      <select
+                        id="select-history-month"
+                        className="form-input"
+                        value={selectedMonth}
+                        onChange={(e) => setSelectedMonth(e.target.value)}
+                        style={{ fontSize: '0.85rem', padding: '0.4rem 0.75rem', minWidth: '180px' }}
+                      >
+                        {availableMonths.map((ym) => (
+                          <option key={ym} value={ym}>
+                            {formatMonthLabel(ym)} ({ym})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Or pick specific month:</label>
+                      <input
+                        type="month"
+                        className="form-input"
+                        value={selectedMonth}
+                        onChange={(e) => setSelectedMonth(e.target.value)}
+                        style={{ fontSize: '0.85rem', padding: '0.35rem 0.6rem' }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Custom Date Range Picker */}
                 {datePreset === 'custom' && (
                   <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border-subtle)' }}>
                     <div>
@@ -585,7 +719,15 @@ export const StudentDetailPage: React.FC = () => {
 
                 <div className="glass-panel" style={{ padding: '1.25rem', textAlign: 'center', backgroundColor: isPeriod && displayTotal > 0 ? 'rgba(52, 211, 153, 0.15)' : 'rgba(99, 102, 241, 0.15)' }}>
                   <span style={{ fontSize: '0.75rem', color: isPeriod && displayTotal > 0 ? '#34d399' : 'var(--primary)', fontWeight: 700, textTransform: 'uppercase' }}>
-                    {isPeriod ? (datePreset === 'today' ? "Today's Solved" : datePreset === 'yesterday' ? "Yesterday's Solved" : "Period Solved") : 'Total Solved'}
+                    {isPeriod ? (
+                      datePreset === 'today' ? "Today's Solved" :
+                      datePreset === 'yesterday' ? "Yesterday's Solved" :
+                      datePreset === 'last_7' ? "Last 7 Days Solved" :
+                      datePreset === 'this_month' ? "This Month's Solved" :
+                      datePreset === 'last_month' ? "Last Month's Solved" :
+                      datePreset === 'month' ? `${formatMonthLabel(selectedMonth)} Solved` :
+                      "Period Solved"
+                    ) : 'Total Solved'}
                   </span>
                   <h4 style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '0.25rem', color: isPeriod && displayTotal > 0 ? '#34d399' : 'var(--primary)' }}>
                     {isPeriod && displayTotal > 0 ? `+${displayTotal}` : displayTotal}
@@ -611,11 +753,11 @@ export const StudentDetailPage: React.FC = () => {
 
             {/* Daily Snapshots History Table */}
             {snapshots.length > 0 && (() => {
-              const totalPages = Math.max(1, Math.ceil(snapshots.length / PAGE_SIZE));
+              const totalPages = Math.max(1, Math.ceil(displayedSnapshots.length / PAGE_SIZE));
               const validPage = Math.min(Math.max(1, currentPage), totalPages);
               const startIndex = (validPage - 1) * PAGE_SIZE;
-              const endIndex = Math.min(startIndex + PAGE_SIZE, snapshots.length);
-              const currentSnapshots = snapshots.slice(startIndex, endIndex);
+              const endIndex = Math.min(startIndex + PAGE_SIZE, displayedSnapshots.length);
+              const currentSnapshots = displayedSnapshots.slice(startIndex, endIndex);
 
               const getPageNumbers = () => {
                 const pages: number[] = [];
@@ -641,7 +783,9 @@ export const StudentDetailPage: React.FC = () => {
                       <h4 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Daily Snapshot History</h4>
                     </div>
                     <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                      Showing {startIndex + 1}–{endIndex} of {snapshots.length} daily snapshots
+                      {isPeriod
+                        ? `Showing ${displayedSnapshots.length > 0 ? startIndex + 1 : 0}–${endIndex} of ${displayedSnapshots.length} daily snapshots (${datePreset === 'this_month' ? 'This Month' : datePreset === 'last_month' ? 'Last Month' : datePreset === 'month' ? formatMonthLabel(selectedMonth) : `${filterStart} to ${filterEnd}`})`
+                        : `Showing ${startIndex + 1}–${endIndex} of ${snapshots.length} daily snapshots`}
                     </span>
                   </div>
                   <div className="table-responsive-container">
@@ -658,58 +802,58 @@ export const StudentDetailPage: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {currentSnapshots.map((snap, pageIdx) => {
-                          const globalIdx = startIndex + pageIdx;
-                          const prevSnap = snapshots[globalIdx + 1];
-                          const dailyTotal = prevSnap ? Math.max(0, snap.total_solved - prevSnap.total_solved) : 0;
-                          let dailyEasy = prevSnap ? Math.max(0, snap.easy_solved - prevSnap.easy_solved) : 0;
-                          let dailyMedium = prevSnap ? Math.max(0, snap.medium_solved - prevSnap.medium_solved) : 0;
-                          let dailyHard = prevSnap ? Math.max(0, snap.hard_solved - prevSnap.hard_solved) : 0;
+                        {currentSnapshots.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                              No daily snapshots recorded for the selected period ({filterStart || 'Start'} to {filterEnd || 'Today'}).
+                            </td>
+                          </tr>
+                        ) : (
+                          currentSnapshots.map((snap) => {
+                            const snapDateStr = formatIST(snap.snapshot_date);
+                            const prevSnap = snapshots.find((s) => formatIST(s.snapshot_date) < snapDateStr);
+                            const dailyTotal = prevSnap ? Math.max(0, snap.total_solved - prevSnap.total_solved) : 0;
+                            let dailyEasy = prevSnap ? Math.max(0, snap.easy_solved - prevSnap.easy_solved) : 0;
+                            let dailyMedium = prevSnap ? Math.max(0, snap.medium_solved - prevSnap.medium_solved) : 0;
+                            let dailyHard = prevSnap ? Math.max(0, snap.hard_solved - prevSnap.hard_solved) : 0;
 
-                          if (dailyTotal > (dailyEasy + dailyMedium + dailyHard)) {
-                            dailyEasy += (dailyTotal - (dailyEasy + dailyMedium + dailyHard));
-                          }
+                            if (dailyTotal > (dailyEasy + dailyMedium + dailyHard)) {
+                              dailyEasy += (dailyTotal - (dailyEasy + dailyMedium + dailyHard));
+                            }
 
-                          const snapEasy = snap.easy_solved + Math.max(0, snap.total_solved - (snap.easy_solved + snap.medium_solved + snap.hard_solved));
+                            const snapEasy = snap.easy_solved + Math.max(0, snap.total_solved - (snap.easy_solved + snap.medium_solved + snap.hard_solved));
 
-                          return (
-                            <tr key={snap.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                              <td style={{ padding: '0.75rem', fontWeight: 600 }}>
-                                {(() => {
-                                  if (typeof snap.snapshot_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(snap.snapshot_date)) {
-                                    return snap.snapshot_date;
-                                  }
-                                  const d = new Date(snap.snapshot_date);
-                                  return isNaN(d.getTime())
-                                    ? String(snap.snapshot_date)
-                                    : new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d);
-                                })()}
-                              </td>
-                              <td style={{ padding: '0.75rem' }}>
-                                <span style={{
-                                  padding: '0.2rem 0.55rem',
-                                  borderRadius: '6px',
-                                  fontSize: '0.8rem',
-                                  fontWeight: 700,
-                                  backgroundColor: dailyTotal > 0 ? 'rgba(52, 211, 153, 0.15)' : 'rgba(148, 163, 184, 0.1)',
-                                  color: dailyTotal > 0 ? '#34d399' : '#94a3b8',
-                                  border: dailyTotal > 0 ? '1px solid rgba(52, 211, 153, 0.3)' : '1px solid rgba(148, 163, 184, 0.2)',
-                                }}>
-                                  {dailyTotal > 0 ? `+${dailyTotal}` : '0'}
-                                </span>
-                              </td>
-                              <td style={{ padding: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                                <span style={{ color: '#4ade80', fontWeight: dailyEasy > 0 ? 700 : 400 }}>+{dailyEasy} E</span> &bull;{' '}
-                                <span style={{ color: '#facc15', fontWeight: dailyMedium > 0 ? 700 : 400 }}>+{dailyMedium} M</span> &bull;{' '}
-                                <span style={{ color: '#f87171', fontWeight: dailyHard > 0 ? 700 : 400 }}>+{dailyHard} H</span>
-                              </td>
-                              <td style={{ padding: '0.75rem', color: '#4ade80' }}>{snapEasy}</td>
-                              <td style={{ padding: '0.75rem', color: '#facc15' }}>{snap.medium_solved}</td>
-                              <td style={{ padding: '0.75rem', color: '#f87171' }}>{snap.hard_solved}</td>
-                              <td style={{ padding: '0.75rem', fontWeight: 700, color: 'var(--primary)' }}>{snap.total_solved}</td>
-                            </tr>
-                          );
-                        })}
+                            return (
+                              <tr key={snap.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                                <td style={{ padding: '0.75rem', fontWeight: 600 }}>
+                                  {snapDateStr}
+                                </td>
+                                <td style={{ padding: '0.75rem' }}>
+                                  <span style={{
+                                    padding: '0.2rem 0.55rem',
+                                    borderRadius: '6px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: 700,
+                                    backgroundColor: dailyTotal > 0 ? 'rgba(52, 211, 153, 0.15)' : 'rgba(148, 163, 184, 0.1)',
+                                    color: dailyTotal > 0 ? '#34d399' : '#94a3b8',
+                                    border: dailyTotal > 0 ? '1px solid rgba(52, 211, 153, 0.3)' : '1px solid rgba(148, 163, 184, 0.2)',
+                                  }}>
+                                    {dailyTotal > 0 ? `+${dailyTotal}` : '0'}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                                  <span style={{ color: '#4ade80', fontWeight: dailyEasy > 0 ? 700 : 400 }}>+{dailyEasy} E</span> &bull;{' '}
+                                  <span style={{ color: '#facc15', fontWeight: dailyMedium > 0 ? 700 : 400 }}>+{dailyMedium} M</span> &bull;{' '}
+                                  <span style={{ color: '#f87171', fontWeight: dailyHard > 0 ? 700 : 400 }}>+{dailyHard} H</span>
+                                </td>
+                                <td style={{ padding: '0.75rem', color: '#4ade80' }}>{snapEasy}</td>
+                                <td style={{ padding: '0.75rem', color: '#facc15' }}>{snap.medium_solved}</td>
+                                <td style={{ padding: '0.75rem', color: '#f87171' }}>{snap.hard_solved}</td>
+                                <td style={{ padding: '0.75rem', fontWeight: 700, color: 'var(--primary)' }}>{snap.total_solved}</td>
+                              </tr>
+                            );
+                          })
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -727,7 +871,7 @@ export const StudentDetailPage: React.FC = () => {
                       gap: '0.75rem',
                     }}>
                       <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                        Page <strong style={{ color: 'var(--text-primary)' }}>{validPage}</strong> of <strong style={{ color: 'var(--text-primary)' }}>{totalPages}</strong> ({snapshots.length} total entries)
+                        Page <strong style={{ color: 'var(--text-primary)' }}>{validPage}</strong> of <strong style={{ color: 'var(--text-primary)' }}>{totalPages}</strong> ({displayedSnapshots.length} total entries)
                       </div>
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
