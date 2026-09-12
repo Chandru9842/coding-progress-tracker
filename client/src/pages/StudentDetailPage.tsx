@@ -23,7 +23,24 @@ export const StudentDetailPage: React.FC = () => {
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const PAGE_SIZE = 10;
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [customRowsInput, setCustomRowsInput] = useState<string>('10');
+
+  const handleSelectPresetRows = (size: number) => {
+    setPageSize(size);
+    setCustomRowsInput(size >= 99999 ? 'All' : String(size));
+    setCurrentPage(1);
+  };
+
+  const handleCustomRowsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setCustomRowsInput(val);
+    const parsed = parseInt(val, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      setPageSize(parsed);
+      setCurrentPage(1);
+    }
+  };
 
   const ensureContinuousTimeline = (rawSnaps: DailySnapshot[]): DailySnapshot[] => {
     if (!rawSnaps || rawSnaps.length === 0) return [];
@@ -554,127 +571,6 @@ export const StudentDetailPage: React.FC = () => {
                 </div>
               </div>
             </div>
-
-            {/* Date Range Mode Selector for Student Profile */}
-            {latestSnapshot && (
-              <div className="glass-panel" style={{ padding: '1rem 1.25rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '0.5rem' }}>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                    <Calendar size={15} />
-                    <span>Date Range Mode</span>
-                  </label>
-                  <span style={{ fontSize: '0.78rem', color: isPeriod ? '#34d399' : 'var(--text-muted)', fontWeight: 600 }}>
-                    {datePreset === 'today'
-                      ? `⚡ Showing Progress Solved Today (${filterStart})`
-                      : datePreset === 'yesterday'
-                      ? `⚡ Showing Progress Solved Yesterday (${filterStart})`
-                      : datePreset === 'last_7'
-                      ? `⚡ Showing Progress in Last 7 Days (${filterStart} to ${filterEnd})`
-                      : datePreset === 'this_month'
-                      ? `🗓️ Showing Progress Solved This Month (${formatMonthLabel(filterStart.slice(0, 7))}: ${filterStart} to ${filterEnd})`
-                      : datePreset === 'last_month'
-                      ? `⏪ Showing Progress Solved Last Month (${formatMonthLabel(filterStart.slice(0, 7))}: ${filterStart} to ${filterEnd})`
-                      : datePreset === 'month' && selectedMonth
-                      ? `📅 Showing Progress Solved in ${formatMonthLabel(selectedMonth)} (${filterStart} to ${filterEnd})`
-                      : datePreset === 'custom' && (filterStart || filterEnd)
-                      ? `⚡ Showing Custom Range Progress (${filterStart || 'Start'} to ${filterEnd || 'Today'})`
-                      : '🏆 Showing All-Time Cumulative Totals'}
-                  </span>
-                </div>
-
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                  {[
-                    { key: 'all', label: 'All Time (Cumulative)' },
-                    { key: 'today', label: 'Today (New Solved)' },
-                    { key: 'yesterday', label: 'Yesterday (New Solved)' },
-                    { key: 'last_7', label: 'Last 7 Days' },
-                    { key: 'this_month', label: 'This Month' },
-                    { key: 'last_month', label: 'Last Month' },
-                    { key: 'month', label: 'Select Month 📅' },
-                    { key: 'custom', label: 'Custom Range' },
-                  ].map((p) => (
-                    <button
-                      key={p.key}
-                      type="button"
-                      className={datePreset === p.key ? 'btn-primary' : 'btn-secondary'}
-                      style={{ fontSize: '0.8rem', padding: '0.35rem 0.8rem' }}
-                      onClick={() => {
-                        setDatePreset(p.key as any);
-                        if (p.key === 'month' && !selectedMonth) {
-                          setSelectedMonth(getThisMonthRange().start.slice(0, 7));
-                        }
-                        if (p.key === 'custom' && !customFromDate && !customToDate) {
-                          const today = getRelativeIST(0);
-                          setCustomFromDate(today);
-                          setCustomToDate(today);
-                        }
-                      }}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Month Picker for 'month' Preset */}
-                {datePreset === 'month' && (
-                  <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border-subtle)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Historical Month:</label>
-                      <select
-                        id="select-history-month"
-                        className="form-input"
-                        value={selectedMonth}
-                        onChange={(e) => setSelectedMonth(e.target.value)}
-                        style={{ fontSize: '0.85rem', padding: '0.4rem 0.75rem', minWidth: '180px' }}
-                      >
-                        {availableMonths.map((ym) => (
-                          <option key={ym} value={ym}>
-                            {formatMonthLabel(ym)} ({ym})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Or pick specific month:</label>
-                      <input
-                        type="month"
-                        className="form-input"
-                        value={selectedMonth}
-                        onChange={(e) => setSelectedMonth(e.target.value)}
-                        style={{ fontSize: '0.85rem', padding: '0.35rem 0.6rem' }}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* Custom Date Range Picker */}
-                {datePreset === 'custom' && (
-                  <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border-subtle)' }}>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.25rem' }}>From Date</label>
-                      <input
-                        type="date"
-                        className="form-input"
-                        value={customFromDate}
-                        onChange={(e) => setCustomFromDate(e.target.value)}
-                        style={{ fontSize: '0.85rem', padding: '0.4rem 0.6rem' }}
-                      />
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.25rem' }}>To Date</label>
-                      <input
-                        type="date"
-                        className="form-input"
-                        value={customToDate}
-                        onChange={(e) => setCustomToDate(e.target.value)}
-                        style={{ fontSize: '0.85rem', padding: '0.4rem 0.6rem' }}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
             {/* LeetCode Solved Cards */}
             {latestSnapshot ? (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
@@ -756,10 +652,10 @@ export const StudentDetailPage: React.FC = () => {
 
             {/* Daily Snapshots History Table */}
             {snapshots.length > 0 && (() => {
-              const totalPages = Math.max(1, Math.ceil(displayedSnapshots.length / PAGE_SIZE));
+              const totalPages = Math.max(1, Math.ceil(displayedSnapshots.length / pageSize));
               const validPage = Math.min(Math.max(1, currentPage), totalPages);
-              const startIndex = (validPage - 1) * PAGE_SIZE;
-              const endIndex = Math.min(startIndex + PAGE_SIZE, displayedSnapshots.length);
+              const startIndex = (validPage - 1) * pageSize;
+              const endIndex = Math.min(startIndex + pageSize, displayedSnapshots.length);
               const currentSnapshots = displayedSnapshots.slice(startIndex, endIndex);
 
               const getPageNumbers = () => {
@@ -780,17 +676,230 @@ export const StudentDetailPage: React.FC = () => {
 
               return (
                 <div className="glass-panel" style={{ padding: '1.5rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  {/* Header Title and Status Badge */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                      <Activity size={20} style={{ color: 'var(--primary)' }} />
-                      <h4 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Daily Snapshot History</h4>
+                      <Activity size={22} style={{ color: 'var(--primary)' }} />
+                      <div>
+                        <h4 style={{ fontSize: '1.15rem', fontWeight: 700, margin: 0 }}>Daily Snapshot History</h4>
+                        <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                          Daily LeetCode solves and cumulative snapshots
+                        </span>
+                      </div>
                     </div>
-                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    <span style={{
+                      fontSize: '0.8rem',
+                      padding: '0.35rem 0.75rem',
+                      borderRadius: '9999px',
+                      backgroundColor: isPeriod ? 'rgba(52, 211, 153, 0.12)' : 'rgba(99, 102, 241, 0.12)',
+                      color: isPeriod ? '#34d399' : '#818cf8',
+                      border: isPeriod ? '1px solid rgba(52, 211, 153, 0.25)' : '1px solid rgba(99, 102, 241, 0.25)',
+                      fontWeight: 600,
+                    }}>
                       {isPeriod
-                        ? `Showing ${displayedSnapshots.length > 0 ? startIndex + 1 : 0}–${endIndex} of ${displayedSnapshots.length} daily snapshots (${datePreset === 'this_month' ? 'This Month' : datePreset === 'last_month' ? 'Last Month' : datePreset === 'month' ? formatMonthLabel(selectedMonth) : `${filterStart} to ${filterEnd}`})`
-                        : `Showing ${startIndex + 1}–${endIndex} of ${snapshots.length} daily snapshots`}
+                        ? `Showing ${displayedSnapshots.length > 0 ? startIndex + 1 : 0}–${endIndex} of ${displayedSnapshots.length} snapshots (${datePreset === 'this_month' ? 'This Month' : datePreset === 'last_month' ? 'Last Month' : datePreset === 'month' ? formatMonthLabel(selectedMonth) : `${filterStart} to ${filterEnd}`})`
+                        : `Showing ${displayedSnapshots.length > 0 ? startIndex + 1 : 0}–${endIndex} of ${snapshots.length} total snapshots`}
                     </span>
                   </div>
+
+                  {/* FILTER TOOLBAR: Month Filter & Rows Filter Above Table */}
+                  <div style={{
+                    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-md, 8px)',
+                    padding: '1rem 1.15rem',
+                    marginBottom: '1.25rem',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.85rem',
+                  }}>
+                    {/* Row 1: Month & Date Filter */}
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                        <label style={{ fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.4rem', letterSpacing: '0.04em' }}>
+                          <Calendar size={15} />
+                          <span>Month & Date Filter</span>
+                        </label>
+                        <span style={{ fontSize: '0.75rem', color: isPeriod ? '#34d399' : 'var(--text-muted)', fontWeight: 500 }}>
+                          {datePreset === 'today'
+                            ? `⚡ Solved Today (${filterStart})`
+                            : datePreset === 'yesterday'
+                            ? `⚡ Solved Yesterday (${filterStart})`
+                            : datePreset === 'last_7'
+                            ? `⚡ Past 7 Days (${filterStart} to ${filterEnd})`
+                            : datePreset === 'this_month'
+                            ? `🗓️ This Month (${formatMonthLabel(filterStart.slice(0, 7))})`
+                            : datePreset === 'last_month'
+                            ? `⏪ Last Month (${formatMonthLabel(filterStart.slice(0, 7))})`
+                            : datePreset === 'month' && selectedMonth
+                            ? `📅 ${formatMonthLabel(selectedMonth)} (${filterStart} to ${filterEnd})`
+                            : datePreset === 'custom' && (filterStart || filterEnd)
+                            ? `⚡ Custom (${filterStart || 'Start'} to ${filterEnd || 'Today'})`
+                            : '🌐 All Time History'}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                        {[
+                          { key: 'all', label: '🌐 All Time' },
+                          { key: 'this_month', label: '🗓️ This Month' },
+                          { key: 'last_month', label: '⏪ Last Month' },
+                          { key: 'month', label: '📅 Select Month ▾' },
+                          { key: 'today', label: '⚡ Today' },
+                          { key: 'yesterday', label: '⏪ Yesterday' },
+                          { key: 'last_7', label: 'Last 7 Days' },
+                          { key: 'custom', label: 'Custom Range' },
+                        ].map((p) => (
+                          <button
+                            key={p.key}
+                            type="button"
+                            className={datePreset === p.key ? 'btn-primary' : 'btn-secondary'}
+                            style={{ fontSize: '0.78rem', padding: '0.3rem 0.65rem', borderRadius: '6px' }}
+                            onClick={() => {
+                              setDatePreset(p.key as any);
+                              if (p.key === 'month' && !selectedMonth) {
+                                setSelectedMonth(getThisMonthRange().start.slice(0, 7));
+                              }
+                              if (p.key === 'custom' && !customFromDate && !customToDate) {
+                                const today = getRelativeIST(0);
+                                setCustomFromDate(today);
+                                setCustomToDate(today);
+                              }
+                            }}
+                          >
+                            {p.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Month Picker for 'month' Preset */}
+                      {datePreset === 'month' && (
+                        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', marginTop: '0.65rem', paddingTop: '0.65rem', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <label style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Choose Recorded Month:</label>
+                            <select
+                              id="select-history-month"
+                              className="form-input"
+                              value={selectedMonth}
+                              onChange={(e) => setSelectedMonth(e.target.value)}
+                              style={{ fontSize: '0.8rem', padding: '0.35rem 0.65rem', minWidth: '170px' }}
+                            >
+                              {availableMonths.map((ym) => (
+                                <option key={ym} value={ym}>
+                                  {formatMonthLabel(ym)} ({ym})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Or pick calendar month:</label>
+                            <input
+                              type="month"
+                              className="form-input"
+                              value={selectedMonth}
+                              onChange={(e) => setSelectedMonth(e.target.value)}
+                              style={{ fontSize: '0.8rem', padding: '0.3rem 0.5rem' }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Custom Date Range Picker */}
+                      {datePreset === 'custom' && (
+                        <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '0.65rem', paddingTop: '0.65rem', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.2rem' }}>From Date</label>
+                            <input
+                              type="date"
+                              className="form-input"
+                              value={customFromDate}
+                              onChange={(e) => setCustomFromDate(e.target.value)}
+                              style={{ fontSize: '0.8rem', padding: '0.35rem 0.55rem' }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.2rem' }}>To Date</label>
+                            <input
+                              type="date"
+                              className="form-input"
+                              value={customToDate}
+                              onChange={(e) => setCustomToDate(e.target.value)}
+                              style={{ fontSize: '0.8rem', padding: '0.35rem 0.55rem' }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Row 2: Rows Filter (10, 15, 30, All, Custom) */}
+                    <div style={{ paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-secondary)', letterSpacing: '0.04em' }}>
+                          Rows:
+                        </span>
+                        {[10, 15, 30].map((num) => (
+                          <button
+                            key={num}
+                            type="button"
+                            id={`btn-rows-${num}`}
+                            className={pageSize === num && customRowsInput === String(num) ? 'btn-primary' : 'btn-secondary'}
+                            style={{
+                              fontSize: '0.78rem',
+                              padding: '0.25rem 0.65rem',
+                              borderRadius: '5px',
+                              fontWeight: pageSize === num ? 700 : 500,
+                            }}
+                            onClick={() => handleSelectPresetRows(num)}
+                          >
+                            {num}
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          id="btn-rows-all"
+                          className={pageSize >= 99999 ? 'btn-primary' : 'btn-secondary'}
+                          style={{
+                            fontSize: '0.78rem',
+                            padding: '0.25rem 0.65rem',
+                            borderRadius: '5px',
+                            fontWeight: pageSize >= 99999 ? 700 : 500,
+                          }}
+                          onClick={() => handleSelectPresetRows(99999)}
+                        >
+                          All
+                        </button>
+
+                        {/* Custom Rows Input */}
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', marginLeft: '0.5rem' }}>
+                          <label htmlFor="custom-rows-input" style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                            Custom:
+                          </label>
+                          <input
+                            id="custom-rows-input"
+                            type="number"
+                            min="1"
+                            max="1000"
+                            value={customRowsInput === 'All' ? '' : customRowsInput}
+                            onChange={handleCustomRowsChange}
+                            placeholder="e.g. 15"
+                            className="form-input"
+                            style={{
+                              width: '72px',
+                              fontSize: '0.8rem',
+                              padding: '0.25rem 0.45rem',
+                              textAlign: 'center',
+                            }}
+                          />
+                          <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>rows</span>
+                        </div>
+                      </div>
+
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        Showing previous <strong style={{ color: 'var(--text-primary)' }}>{pageSize >= 99999 ? displayedSnapshots.length : Math.min(pageSize, displayedSnapshots.length)}</strong> snapshots
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="table-responsive-container">
                     <table style={{ width: '100%', minWidth: '780px', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                       <thead>
@@ -861,7 +970,7 @@ export const StudentDetailPage: React.FC = () => {
                     </table>
                   </div>
 
-                  {/* Google-like Pagination Bar (10 items per page with arrow navigation) */}
+                  {/* Google-like Pagination Bar with Dynamic Page Size */}
                   {totalPages > 1 && (
                     <div style={{
                       display: 'flex',
@@ -900,10 +1009,10 @@ export const StudentDetailPage: React.FC = () => {
                           }}
                         >
                           <ChevronLeft size={16} />
-                          <span>Previous 10</span>
+                          <span>Previous {pageSize < 99999 ? pageSize : 'All'}</span>
                         </button>
 
-                        {/* Numbered Page Buttons (Google Pages style) */}
+                        {/* Numbered Page Buttons */}
                         {getPageNumbers().map((pageNum, idx) => {
                           if (pageNum < 0) {
                             return (
@@ -962,7 +1071,7 @@ export const StudentDetailPage: React.FC = () => {
                             transition: 'all 0.15s ease',
                           }}
                         >
-                          <span>Next 10</span>
+                          <span>Next {pageSize < 99999 ? pageSize : 'All'}</span>
                           <ChevronRight size={16} />
                         </button>
                       </div>
