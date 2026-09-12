@@ -935,47 +935,6 @@ export async function syncGoogleSheetLink(
     });
   }
 
-  // Ensure live LeetCode stats for students in this sheet who are missing today's or yesterday's snapshot
-  try {
-    const todayIST = toISTDateString(new Date());
-    const yesterdayDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const yesterdayIST = toISTDateString(yesterdayDate);
-
-    const studentsMissingSync = studentRows.filter((st) => {
-      if (!st.leetcode_username) return false;
-      const snaps = snapshotRows.filter((s) => s.student_id === st.id);
-      const hasToday = snaps.some((s) => toISTDateString(s.snapshot_date) === todayIST);
-      const hasYesterday = snaps.some((s) => toISTDateString(s.snapshot_date) === yesterdayIST);
-      return !hasToday || !hasYesterday;
-    });
-
-    if (studentsMissingSync.length > 0) {
-      console.log(`[Google Sheets Auto-Sync] Syncing ${studentsMissingSync.length} students missing today's (${todayIST}) or yesterday's (${yesterdayIST}) snapshot...`);
-      const { syncStudentLeetCode } = await import('./leetcodeService.js');
-      await runConcurrentTasks(
-        studentsMissingSync,
-        15,
-        async (st) => {
-          try {
-            await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
-          } catch (_) {}
-        },
-        3500
-      );
-
-      if (!process.env.DATABASE_URL) {
-        const studentIds = new Set(studentRows.map((s) => s.id));
-        snapshotRows = inMemoryStore.snapshots.filter((snap) => studentIds.has(snap.student_id));
-      } else {
-        const stIds = studentRows.map((s) => s.id);
-        snapshotRows = await prisma.dailyCodingSnapshot.findMany({
-          where: { student_id: { in: stIds } },
-        });
-      }
-    }
-  } catch (syncLiveErr: any) {
-    console.warn('[Google Sheets Auto-Sync Warning] Live student sync note:', syncLiveErr?.message || syncLiveErr);
-  }
 
   // Extract Start Date
   let startDate: string | null = (link as any).start_date || null;
