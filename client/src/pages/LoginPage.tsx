@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.js';
-import { Code2, LogIn, AlertCircle, Loader2 } from 'lucide-react';
+import { Code2, LogIn, AlertCircle, Loader2, Eye, EyeOff } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
   const { user, loading: authLoading, login } = useAuth();
@@ -9,6 +9,7 @@ export const LoginPage: React.FC = () => {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -122,17 +123,43 @@ export const LoginPage: React.FC = () => {
             <label className="form-label" htmlFor="password">
               Password
             </label>
-            <input
-              id="password"
-              type="password"
-              className="form-input"
-              placeholder="••••••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={submitting}
-              required
-              autoComplete="current-password"
-            />
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+              <input
+                id="password"
+                type={showPassword ? 'text' : 'password'}
+                className="form-input"
+                placeholder="••••••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={submitting}
+                required
+                autoComplete="current-password"
+                style={{ paddingRight: '2.5rem' }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                disabled={submitting}
+                style={{
+                  position: 'absolute',
+                  right: '0.75rem',
+                  background: 'none',
+                  border: 'none',
+                  color: showPassword ? 'var(--primary)' : 'var(--text-muted)',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '0.25rem',
+                  borderRadius: '4px',
+                  transition: 'color 0.15s ease',
+                }}
+                title={showPassword ? 'Hide password' : 'Show password'}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
           </div>
 
           <button
@@ -154,44 +181,6 @@ export const LoginPage: React.FC = () => {
             )}
           </button>
         </form>
-
-        <div style={{
-          marginTop: '1.25rem',
-          padding: '0.75rem 1rem',
-          backgroundColor: 'rgba(99, 102, 241, 0.08)',
-          border: '1px dashed var(--border-glow)',
-          borderRadius: 'var(--radius-sm)',
-          fontSize: '0.825rem',
-          color: 'var(--text-secondary)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '0.35rem',
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Default Admin Credentials:</span>
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('admin@college.edu');
-                setPassword('AdminPass123!');
-              }}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: 'var(--primary)',
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontSize: '0.8rem',
-                textDecoration: 'underline',
-              }}
-            >
-              Fill Credentials
-            </button>
-          </div>
-          <div style={{ fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-            admin@college.edu / AdminPass123!
-          </div>
-        </div>
 
         <div style={{
           marginTop: '1.5rem',
