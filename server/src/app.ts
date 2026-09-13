@@ -40,13 +40,13 @@ app.use(cookieParser());
 ['/api/v1', '/v1'].forEach((prefix) => {
   app.use(prefix, healthRoutes);
   app.use(prefix, authRoutes);
+  app.use(prefix, syncRoutes);
+  app.use(prefix, googleSheetsRoutes);
   app.use(prefix, statsRoutes);
   app.use(prefix, staffRoutes);
   app.use(prefix, batchRoutes);
   app.use(prefix, studentRoutes);
-  app.use(prefix, syncRoutes);
   app.use(`${prefix}/reports`, reportRoutes);
-  app.use(prefix, googleSheetsRoutes);
 });
 
 // Global Error Handler

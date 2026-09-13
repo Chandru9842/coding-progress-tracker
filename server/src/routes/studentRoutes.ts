@@ -12,7 +12,8 @@ import {
 
 const router = Router();
 
-router.use(requireAuth);
+// Scope requireAuth only to student routes so it doesn't intercept /cron or other API paths
+router.use('/students', requireAuth);
 
 // All endpoints require at least STAFF role (ADMIN + STAFF are both allowed)
 // Scope enforcement (STAFF sees only assigned students) is done in controller/service

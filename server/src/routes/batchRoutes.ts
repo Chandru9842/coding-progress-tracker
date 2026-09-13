@@ -19,7 +19,8 @@ import {
 
 const router = Router();
 
-router.use(requireAuth);
+// Scope requireAuth only to batch and section routes so it doesn't intercept /cron or other API paths
+router.use(['/batches', '/sections'], requireAuth);
 
 router.get('/batches', requireStaff, getBatches);
 router.post('/batches', requireAdmin, createBatch);

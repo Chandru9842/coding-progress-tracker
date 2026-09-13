@@ -6,8 +6,13 @@ on:
     # 12:00 AM, 02:00 AM, 04:00 AM, 06:00 AM, 08:00 AM, 10:00 AM,
     # 12:00 PM, 02:00 PM, 04:00 PM, 06:00 PM, 08:00 PM, 10:00 PM IST
     - cron: '30 */2 * * *'
-    # Nightly reconciliation and daily rollover at 12:30 AM IST (19:00 UTC)
+    # Nightly reconciliation and daily rollover around midnight IST:
+    # 12:30 AM IST (19:00 UTC)
     - cron: '0 19 * * *'
+    # 01:00 AM IST (19:30 UTC) - backup trigger for high-load delays
+    - cron: '30 19 * * *'
+    # 01:30 AM IST (20:00 UTC) - backup trigger
+    - cron: '0 20 * * *'
   workflow_dispatch: # Allows manual run anytime from GitHub Actions UI
 
 jobs:
