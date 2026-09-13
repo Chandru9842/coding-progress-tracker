@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { RefreshCw, FileSpreadsheet, Download, Trash2, CheckCircle2, AlertCircle, X, Layers, AlertTriangle } from 'lucide-react';
 import { Layout } from '../components/Layout.js';
+import { getCachedData } from '../services/api.js';
 import { GoogleSheetsIntegration } from '../components/GoogleSheetsIntegration.js';
 import { SyncErrorsView } from '../components/SyncErrorsView.js';
 import {
@@ -44,7 +45,8 @@ export default function ReportsPage() {
     });
   };
 
-  const [filterOptions, setFilterOptions] = useState<ReportFilterOptions>({
+  const cachedFilters = getCachedData<ReportFilterOptions>('report_filters');
+  const [filterOptions, setFilterOptions] = useState<ReportFilterOptions>(cachedFilters || {
     academicYears: [],
     departments: [],
     batches: [],
@@ -214,8 +216,7 @@ export default function ReportsPage() {
       const activeAlloc = opts.allocationBatchId !== undefined ? opts.allocationBatchId : allocationBatchId;
       const activeStaff = opts.staffId !== undefined ? opts.staffId : staffId;
       const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
-
-      const data = await getReportData({
+      const fetchParams = {
         academicYear: activeAY || undefined,
         department: activeDept || undefined,
         batchId: activeBatch || undefined,
@@ -228,7 +229,18 @@ export default function ReportsPage() {
         sortOrder,
         activityStatus,
         minProblems: (parsedMin !== undefined && !isNaN(parsedMin)) ? parsedMin : undefined,
-      });
+      };
+
+      const cacheKey = `report_data_${JSON.stringify(fetchParams)}`;
+      const cached = getCachedData<ReportDataResponse>(cacheKey);
+      if (cached) {
+        setReportData(cached);
+        setLoading(false);
+      } else if (!reportData) {
+        setLoading(true);
+      }
+
+      const data = await getReportData(fetchParams);
       setReportData(data);
     } catch (err: any) {
       setError(extractErrorMessage(err, 'Failed to load report data'));
@@ -306,11 +318,13 @@ export default function ReportsPage() {
   const [activityStatus, setActivityStatus] = useState<'all' | 'active' | 'no_activity'>('all');
   const [minProblems, setMinProblems] = useState<string>('');
 
-  const [reportData, setReportData] = useState<ReportDataResponse | null>(null);
+  const defaultReportKey = 'report_data_{"sortBy":"total","sortOrder":"desc","activityStatus":"all"}';
+  const cachedReportData = getCachedData<ReportDataResponse>(defaultReportKey);
+  const [reportData, setReportData] = useState<ReportDataResponse | null>(cachedReportData);
   const [reportsList, setReportsList] = useState<ReportItem[]>([]);
   const [selectedReportIds, setSelectedReportIds] = useState<Set<string>>(new Set());
   const [deletingReport, setDeletingReport] = useState<boolean>(false);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(!cachedReportData);
   const [exporting, setExporting] = useState<boolean>(false);
   const [syncingLeetcode, setSyncingLeetcode] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -408,7 +422,9 @@ export default function ReportsPage() {
   }, []);
 
   const loadFiltersAndData = async () => {
-    setLoading(true);
+    if (!reportData && !cachedReportData) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const filters = await getReportFilters();
@@ -436,24 +452,33 @@ export default function ReportsPage() {
       return;
     }
 
-    setLoading(true);
+    const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
+    const filterParams = {
+      academicYear: academicYear || undefined,
+      department: department || undefined,
+      batchId: batchId || undefined,
+      sectionId: sectionId || undefined,
+      allocationBatchId: allocationBatchId || undefined,
+      staffId: staffId || undefined,
+      fromDate: fromDate || undefined,
+      toDate: toDate || undefined,
+      sortBy,
+      sortOrder,
+      activityStatus,
+      minProblems: (parsedMin !== undefined && !isNaN(parsedMin)) ? parsedMin : undefined,
+    };
+
+    const cacheKey = `report_data_${JSON.stringify(filterParams)}`;
+    const cached = getCachedData<ReportDataResponse>(cacheKey);
+    if (cached) {
+      setReportData(cached);
+      setLoading(false);
+    } else if (!reportData) {
+      setLoading(true);
+    }
     setError(null);
     try {
-      const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
-      const data = await getReportData({
-        academicYear: academicYear || undefined,
-        department: department || undefined,
-        batchId: batchId || undefined,
-        sectionId: sectionId || undefined,
-        allocationBatchId: allocationBatchId || undefined,
-        staffId: staffId || undefined,
-        fromDate: fromDate || undefined,
-        toDate: toDate || undefined,
-        sortBy,
-        sortOrder,
-        activityStatus,
-        minProblems: (parsedMin !== undefined && !isNaN(parsedMin)) ? parsedMin : undefined,
-      });
+      const data = await getReportData(filterParams);
       setReportData(data);
     } catch (err: any) {
       setError(extractErrorMessage(err, 'Failed to apply report filters'));
@@ -1637,7 +1662,7 @@ export default function ReportsPage() {
             </div>
           </div>
 
-          {loading ? (
+          {loading && !reportData ? (
             <div style={{ textAlign: 'center', padding: '3rem 0', color: 'var(--text-muted)' }}>
               Loading report data...
             </div>

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
-import { batchApi, Batch } from '../services/api.js';
+import { batchApi, Batch, getCachedData } from '../services/api.js';
 import { FolderKanban, Plus, Layers, Edit2, Trash2, Loader2, X, Search } from 'lucide-react';
 
 export const BatchesPage: React.FC = () => {
@@ -10,8 +10,9 @@ export const BatchesPage: React.FC = () => {
   const isAdmin = user?.role === 'ADMIN';
   const navigate = useNavigate();
 
-  const [batches, setBatches] = useState<Batch[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const initialBatches = getCachedData<Batch[]>('batches_all') || [];
+  const [batches, setBatches] = useState<Batch[]>(initialBatches);
+  const [loading, setLoading] = useState<boolean>(initialBatches.length === 0);
   const [error, setError] = useState<string | null>(null);
   const [batchSearchQuery, setBatchSearchQuery] = useState<string>('');
 
@@ -21,9 +22,11 @@ export const BatchesPage: React.FC = () => {
   const [batchForm, setBatchForm] = useState({ batch_name: '', start_year: 2023, end_year: 2027, department: 'CSE' });
   const [submitting, setSubmitting] = useState<boolean>(false);
 
-  const fetchBatches = async () => {
+  const fetchBatches = async (showSpinner: boolean = false) => {
     try {
-      setLoading(true);
+      if (showSpinner || batches.length === 0) {
+        setLoading(true);
+      }
       const data = await batchApi.getAllBatches();
       setBatches(data);
     } catch (err: any) {

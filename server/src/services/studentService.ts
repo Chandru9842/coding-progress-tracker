@@ -224,47 +224,49 @@ export async function getStudentByIdForUser(
     }
   }
 
-  if (!process.env.DATABASE_URL) {
-    const st = inMemoryStore.students.find((s) => s.id === studentId);
-    if (!st) {
+  return serverCache.wrap(`student_${studentId}`, 30000, async () => {
+    if (!process.env.DATABASE_URL) {
+      const st = inMemoryStore.students.find((s) => s.id === studentId);
+      if (!st) {
+        const notFoundErr: any = new Error('Student not found');
+        notFoundErr.statusCode = 404;
+        throw notFoundErr;
+      }
+      const b = inMemoryStore.batches.find((batch) => batch.id === st.batch_id);
+      const sec = inMemoryStore.sections.find((section) => section.id === st.section_id);
+
+      const base = {
+        ...st,
+        batch: { id: st.batch_id, batch_name: b?.batch_name || 'Batch', department: st.department },
+        section: { id: st.section_id, name: sec?.name || 'A' },
+        snapshots: inMemoryStore.snapshots.filter((snap) => snap.student_id === studentId),
+      };
+      return attachMentorInfo(base);
+    }
+
+    const student = await prisma.student.findUnique({
+      where: { id: studentId },
+      include: {
+        batch: { select: { id: true, batch_name: true, department: true } },
+        section: { select: { id: true, name: true } },
+        allocation_batch: { select: { id: true, name: true } },
+        snapshots: { orderBy: { snapshot_date: 'desc' } },
+        staff_student_assignments: {
+          include: {
+            staff: { select: { id: true, name: true, email: true } },
+          },
+        },
+      },
+    });
+
+    if (!student) {
       const notFoundErr: any = new Error('Student not found');
       notFoundErr.statusCode = 404;
       throw notFoundErr;
     }
-    const b = inMemoryStore.batches.find((batch) => batch.id === st.batch_id);
-    const sec = inMemoryStore.sections.find((section) => section.id === st.section_id);
 
-    const base = {
-      ...st,
-      batch: { id: st.batch_id, batch_name: b?.batch_name || 'Batch', department: st.department },
-      section: { id: st.section_id, name: sec?.name || 'A' },
-      snapshots: inMemoryStore.snapshots.filter((snap) => snap.student_id === studentId),
-    };
-    return attachMentorInfo(base);
-  }
-
-  const student = await prisma.student.findUnique({
-    where: { id: studentId },
-    include: {
-      batch: { select: { id: true, batch_name: true, department: true } },
-      section: { select: { id: true, name: true } },
-      allocation_batch: { select: { id: true, name: true } },
-      snapshots: { orderBy: { snapshot_date: 'desc' } },
-      staff_student_assignments: {
-        include: {
-          staff: { select: { id: true, name: true, email: true } },
-        },
-      },
-    },
+    return attachMentorInfo(student);
   });
-
-  if (!student) {
-    const notFoundErr: any = new Error('Student not found');
-    notFoundErr.statusCode = 404;
-    throw notFoundErr;
-  }
-
-  return attachMentorInfo(student);
 }
 
 async function validateActiveStaffMentor(mentorId?: string) {
@@ -309,8 +311,10 @@ export async function createStudent(data: {
   const register_number = data.register_number.trim().toUpperCase();
 
   serverCache.invalidate('students_');
+  serverCache.invalidate('student_');
   serverCache.invalidate('stats_');
   serverCache.invalidate('batch');
+  serverCache.invalidate('report_');
 
   if (!data.leetcode_username || !data.leetcode_username.trim()) {
     const err: any = new Error('LeetCode username is required');
@@ -440,8 +444,10 @@ export async function updateStudent(
   }
 ) {
   serverCache.invalidate('students_');
+  serverCache.invalidate('student_');
   serverCache.invalidate('stats_');
   serverCache.invalidate('batch');
+  serverCache.invalidate('report_');
 
   const updateData: any = {};
   if (data.register_number) {
@@ -596,8 +602,10 @@ export async function updateStudent(
 
 export async function deleteStudent(studentId: string) {
   serverCache.invalidate('students_');
+  serverCache.invalidate('student_');
   serverCache.invalidate('stats_');
   serverCache.invalidate('batch');
+  serverCache.invalidate('report_');
 
   if (!process.env.DATABASE_URL) {
     inMemoryStore.students = inMemoryStore.students.filter((s) => s.id !== studentId);
@@ -613,8 +621,10 @@ export async function deleteStudent(studentId: string) {
 
 export async function bulkDeleteStudents(studentIds: string[]) {
   serverCache.invalidate('students_');
+  serverCache.invalidate('student_');
   serverCache.invalidate('stats_');
   serverCache.invalidate('batch');
+  serverCache.invalidate('report_');
 
   if (!process.env.DATABASE_URL) {
     inMemoryStore.students = inMemoryStore.students.filter((s) => !studentIds.includes(s.id));

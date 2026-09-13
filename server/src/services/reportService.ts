@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import { prisma } from '../db/client.js';
 import { inMemoryStore } from '../db/inMemoryStore.js';
 import { UserRole } from '../types/index.js';
+import { serverCache } from '../utils/serverCache.js';
 import { getBatchesForStaff } from './batchService.js';
 import {
   isStaffAuthorizedForBatch,
@@ -30,8 +31,69 @@ export interface ReportFilterParams {
 }
 
 export async function getReportFilterOptions(user: { userId: string; role: UserRole }) {
-  if (!process.env.DATABASE_URL) {
-    let batches = inMemoryStore.batches;
+  const cacheKey = `report_filters_${user.role}_${user.userId}`;
+  return serverCache.wrap(cacheKey, 60000, async () => {
+    if (!process.env.DATABASE_URL) {
+      let batches = inMemoryStore.batches;
+      if (user.role === 'STAFF') {
+        const staffBatches = await getBatchesForStaff(user.userId);
+        const staffBatchIds = new Set(staffBatches.map((b) => b.id));
+        batches = batches.filter((b) => staffBatchIds.has(b.id));
+      }
+
+      const academicYears = Array.from(
+        new Set(batches.map((b) => `${b.start_year}–${b.end_year}`))
+      ).sort();
+      const departments = Array.from(
+        new Set(batches.map((b) => b.department))
+      ).sort();
+
+      let staff = inMemoryStore.users
+        .filter((u) => u.role === 'STAFF')
+        .map((u) => ({ id: u.id, name: u.name, email: u.email }));
+
+      if (user.role === 'STAFF') {
+        staff = staff.filter((u) => u.id === user.userId);
+      }
+
+      return {
+        academicYears,
+        departments,
+        batches: batches.map((b) => ({
+          id: b.id,
+          batch_name: b.batch_name,
+          department: b.department,
+          academicYear: `${b.start_year}–${b.end_year}`,
+          sections: inMemoryStore.sections
+            .filter((sec) => sec.batch_id === b.id)
+            .map((sec) => ({
+              id: sec.id,
+              name: sec.name,
+              allocation_batches: inMemoryStore.allocationBatches
+                .filter((ab) => ab.section_id === sec.id)
+                .map((ab) => ({ id: ab.id, name: ab.name })),
+            })),
+        })),
+        staff,
+      };
+    }
+
+    // DB Mode
+    let batches = await prisma.batch.findMany({
+      include: {
+        sections: {
+          include: {
+            allocation_batches: {
+              select: { id: true, name: true },
+              orderBy: { name: 'asc' },
+            },
+          },
+          orderBy: { name: 'asc' },
+        },
+      },
+      orderBy: { start_year: 'desc' },
+    });
+
     if (user.role === 'STAFF') {
       const staffBatches = await getBatchesForStaff(user.userId);
       const staffBatchIds = new Set(staffBatches.map((b) => b.id));
@@ -41,17 +103,21 @@ export async function getReportFilterOptions(user: { userId: string; role: UserR
     const academicYears = Array.from(
       new Set(batches.map((b) => `${b.start_year}–${b.end_year}`))
     ).sort();
+
     const departments = Array.from(
       new Set(batches.map((b) => b.department))
     ).sort();
 
-    let staff = inMemoryStore.users
-      .filter((u) => u.role === 'STAFF')
-      .map((u) => ({ id: u.id, name: u.name, email: u.email }));
-
+    let staffWhere: any = { role: 'STAFF' };
     if (user.role === 'STAFF') {
-      staff = staff.filter((u) => u.id === user.userId);
+      staffWhere.id = user.userId;
     }
+
+    const staff = await prisma.user.findMany({
+      where: staffWhere,
+      select: { id: true, name: true, email: true },
+      orderBy: { name: 'asc' },
+    });
 
     return {
       academicYears,
@@ -61,77 +127,15 @@ export async function getReportFilterOptions(user: { userId: string; role: UserR
         batch_name: b.batch_name,
         department: b.department,
         academicYear: `${b.start_year}–${b.end_year}`,
-        sections: inMemoryStore.sections
-          .filter((sec) => sec.batch_id === b.id)
-          .map((sec) => ({
-            id: sec.id,
-            name: sec.name,
-            allocation_batches: inMemoryStore.allocationBatches
-              .filter((ab) => ab.section_id === sec.id)
-              .map((ab) => ({ id: ab.id, name: ab.name })),
-          })),
+        sections: b.sections.map((sec) => ({
+          id: sec.id,
+          name: sec.name,
+          allocation_batches: sec.allocation_batches.map((ab) => ({ id: ab.id, name: ab.name })),
+        })),
       })),
       staff,
     };
-  }
-
-  // DB Mode
-  let batches = await prisma.batch.findMany({
-    include: {
-      sections: {
-        include: {
-          allocation_batches: {
-            select: { id: true, name: true },
-            orderBy: { name: 'asc' },
-          },
-        },
-        orderBy: { name: 'asc' },
-      },
-    },
-    orderBy: { start_year: 'desc' },
   });
-
-  if (user.role === 'STAFF') {
-    const staffBatches = await getBatchesForStaff(user.userId);
-    const staffBatchIds = new Set(staffBatches.map((b) => b.id));
-    batches = batches.filter((b) => staffBatchIds.has(b.id));
-  }
-
-  const academicYears = Array.from(
-    new Set(batches.map((b) => `${b.start_year}–${b.end_year}`))
-  ).sort();
-
-  const departments = Array.from(
-    new Set(batches.map((b) => b.department))
-  ).sort();
-
-  let staffWhere: any = { role: 'STAFF' };
-  if (user.role === 'STAFF') {
-    staffWhere.id = user.userId;
-  }
-
-  const staff = await prisma.user.findMany({
-    where: staffWhere,
-    select: { id: true, name: true, email: true },
-    orderBy: { name: 'asc' },
-  });
-
-  return {
-    academicYears,
-    departments,
-    batches: batches.map((b) => ({
-      id: b.id,
-      batch_name: b.batch_name,
-      department: b.department,
-      academicYear: `${b.start_year}–${b.end_year}`,
-      sections: b.sections.map((sec) => ({
-        id: sec.id,
-        name: sec.name,
-        allocation_batches: sec.allocation_batches.map((ab) => ({ id: ab.id, name: ab.name })),
-      })),
-    })),
-    staff,
-  };
 }
 
 export function toISTDateString(d: Date | string): string {
@@ -376,290 +380,262 @@ export async function getReportData(
     }
   }
 
-  let authorizedStudentIds: string[] | null = null;
-  if (user.role === 'STAFF') {
-    authorizedStudentIds = await getAuthorizedStudentIdsForStaff(user.userId);
-  } else if (staffId) {
-    authorizedStudentIds = await getAuthorizedStudentIdsForStaff(staffId);
-  }
-
-  let studentsList: any[] = [];
-
-  if (!process.env.DATABASE_URL) {
-    let rawStudents = [...inMemoryStore.students];
-
-    if (authorizedStudentIds !== null) {
-      rawStudents = rawStudents.filter((st) => authorizedStudentIds!.includes(st.id));
+  const cacheKey = `report_data_${user.role}_${user.userId}_${JSON.stringify(filters)}`;
+  return serverCache.wrap(cacheKey, 30000, async () => {
+    let authorizedStudentIds: string[] | null = null;
+    if (user.role === 'STAFF') {
+      authorizedStudentIds = await getAuthorizedStudentIdsForStaff(user.userId);
+    } else if (staffId) {
+      authorizedStudentIds = await getAuthorizedStudentIdsForStaff(staffId);
     }
 
-    if (batchId) {
-      rawStudents = rawStudents.filter((st) => st.batch_id === batchId);
-    }
+    let studentsList: any[] = [];
 
-    if (sectionId) {
-      rawStudents = rawStudents.filter((st) => st.section_id === sectionId);
-    }
+    if (!process.env.DATABASE_URL) {
+      let rawStudents = [...inMemoryStore.students];
 
-    if (allocationBatchId) {
-      rawStudents = rawStudents.filter((st) => st.allocation_batch_id === allocationBatchId || st.sub_batch === allocationBatchId);
-    }
-
-    if (department) {
-      rawStudents = rawStudents.filter((st) => st.department.toLowerCase() === department.toLowerCase());
-    }
-
-    if (academicYear) {
-      const years = academicYear.replace('–', '-').split('-');
-      if (years.length === 2) {
-        const start = parseInt(years[0].trim(), 10);
-        const end = parseInt(years[1].trim(), 10);
-        const matchingBatchIds = inMemoryStore.batches
-          .filter((b) => b.start_year === start && b.end_year === end)
-          .map((b) => b.id);
-        rawStudents = rawStudents.filter((st) => matchingBatchIds.includes(st.batch_id));
+      if (authorizedStudentIds !== null) {
+        rawStudents = rawStudents.filter((st) => authorizedStudentIds!.includes(st.id));
       }
-    }
 
-    studentsList = rawStudents.map((st) => {
-      const b = inMemoryStore.batches.find((batch) => batch.id === st.batch_id);
-      const sec = inMemoryStore.sections.find((section) => section.id === st.section_id);
-      const ab = inMemoryStore.allocationBatches.find((alloc) => alloc.id === st.allocation_batch_id);
-      const ssa = inMemoryStore.staffStudentAssignments.find((a) => a.student_id === st.id);
-      const mentorUser = ssa ? inMemoryStore.users.find((u) => u.id === ssa.staff_id) : null;
-
-      const snaps = inMemoryStore.snapshots.filter((snap) => snap.student_id === st.id);
-      const isPeriodFilter = !!(fromDate || toDate);
-      const stats = calculateStudentPeriodStats(snaps, isPeriodFilter, fromDate, toDate);
-
-      return {
-        id: st.id,
-        register_number: st.register_number,
-        name: st.name,
-        department: st.department,
-        leetcode_username: st.leetcode_username,
-        mentor_name: mentorUser ? mentorUser.name : 'Unassigned',
-        batch_id: st.batch_id,
-        section_id: st.section_id,
-        allocation_batch_id: st.allocation_batch_id,
-        batch: {
-          id: st.batch_id,
-          batch_name: b?.batch_name || 'Batch',
-          academicYear: b ? `${b.start_year}–${b.end_year}` : '',
-        },
-        section: { id: st.section_id, name: sec?.name || 'A' },
-        allocation_batch: ab ? { id: ab.id, name: ab.name } : (st.sub_batch ? { id: st.sub_batch, name: st.sub_batch } : null),
-        easy_solved: stats.easy_solved,
-        medium_solved: stats.medium_solved,
-        hard_solved: stats.hard_solved,
-        total_solved: stats.total_solved,
-        overall_easy: stats.overall_easy,
-        overall_medium: stats.overall_medium,
-        overall_hard: stats.overall_hard,
-        overall_total: stats.overall_total,
-        has_activity: stats.has_activity,
-      };
-    });
-  } else {
-    // PostgreSQL Querying
-    const where: any = {};
-
-    if (authorizedStudentIds !== null) {
-      where.id = { in: authorizedStudentIds };
-    }
-
-    if (batchId) {
-      where.batch_id = batchId;
-    }
-
-    if (sectionId) {
-      where.section_id = sectionId;
-    }
-
-    if (allocationBatchId) {
-      const val = allocationBatchId.trim();
-      const matchingAbs = await prisma.allocationBatch.findMany({
-        where: {
-          OR: [
-            { id: val },
-            { name: { equals: val, mode: 'insensitive' } },
-          ],
-        },
-        select: { id: true, name: true },
-      });
-      const abIds = matchingAbs.map((ab) => ab.id);
-      const abNames = matchingAbs.map((ab) => ab.name);
-
-      const allocConditions: any[] = [
-        { allocation_batch_id: val },
-        { sub_batch: { equals: val, mode: 'insensitive' } },
-      ];
-      if (abIds.length > 0) allocConditions.push({ allocation_batch_id: { in: abIds } });
-      if (abNames.length > 0) allocConditions.push({ sub_batch: { in: abNames } });
-
-      if (where.OR) {
-        where.AND = [
-          { OR: where.OR },
-          { OR: allocConditions },
-        ];
-        delete where.OR;
-      } else {
-        where.OR = allocConditions;
+      if (batchId) {
+        rawStudents = rawStudents.filter((st) => st.batch_id === batchId);
       }
-    }
 
-    if (department) {
-      where.department = { equals: department.trim(), mode: 'insensitive' };
-    }
+      if (sectionId) {
+        rawStudents = rawStudents.filter((st) => st.section_id === sectionId);
+      }
 
-    if (academicYear) {
-      const years = academicYear.replace('–', '-').split('-');
-      if (years.length === 2) {
-        const start = parseInt(years[0].trim(), 10);
-        const end = parseInt(years[1].trim(), 10);
-        where.batch = {
-          start_year: start,
-          end_year: end,
+      if (allocationBatchId) {
+        rawStudents = rawStudents.filter((st) => st.allocation_batch_id === allocationBatchId || st.sub_batch === allocationBatchId);
+      }
+
+      if (department) {
+        rawStudents = rawStudents.filter((st) => st.department.toLowerCase() === department.toLowerCase());
+      }
+
+      if (academicYear) {
+        const years = academicYear.replace('–', '-').split('-');
+        if (years.length === 2) {
+          const start = parseInt(years[0].trim(), 10);
+          const end = parseInt(years[1].trim(), 10);
+          const matchingBatchIds = inMemoryStore.batches
+            .filter((b) => b.start_year === start && b.end_year === end)
+            .map((b) => b.id);
+          rawStudents = rawStudents.filter((st) => matchingBatchIds.includes(st.batch_id));
+        }
+      }
+
+      studentsList = rawStudents.map((st) => {
+        const b = inMemoryStore.batches.find((batch) => batch.id === st.batch_id);
+        const sec = inMemoryStore.sections.find((section) => section.id === st.section_id);
+        const ab = inMemoryStore.allocationBatches.find((alloc) => alloc.id === st.allocation_batch_id);
+        const ssa = inMemoryStore.staffStudentAssignments.find((a) => a.student_id === st.id);
+        const mentorUser = ssa ? inMemoryStore.users.find((u) => u.id === ssa.staff_id) : null;
+
+        const snaps = inMemoryStore.snapshots.filter((snap) => snap.student_id === st.id);
+        const isPeriodFilter = !!(fromDate || toDate);
+        const stats = calculateStudentPeriodStats(snaps, isPeriodFilter, fromDate, toDate);
+
+        return {
+          id: st.id,
+          register_number: st.register_number,
+          name: st.name,
+          department: st.department,
+          leetcode_username: st.leetcode_username,
+          mentor_name: mentorUser ? mentorUser.name : 'Unassigned',
+          batch_id: st.batch_id,
+          section_id: st.section_id,
+          allocation_batch_id: st.allocation_batch_id,
+          batch: {
+            id: b?.id || st.batch_id,
+            batch_name: b?.batch_name || 'N/A',
+            academicYear: b ? `${b.start_year}–${b.end_year}` : 'N/A',
+          },
+          section: {
+            id: sec?.id || st.section_id,
+            name: sec?.name || 'N/A',
+          },
+          allocation_batch: ab
+            ? { id: ab.id, name: ab.name }
+            : (st.sub_batch ? { id: st.sub_batch, name: st.sub_batch } : null),
+          easy_solved: stats.easy_solved,
+          medium_solved: stats.medium_solved,
+          hard_solved: stats.hard_solved,
+          total_solved: stats.total_solved,
+          overall_easy: stats.overall_easy,
+          overall_medium: stats.overall_medium,
+          overall_hard: stats.overall_hard,
+          overall_total: stats.overall_total,
+          has_activity: stats.has_activity,
         };
-      }
-    }
+      });
+    } else {
+      // Database Mode
+      const where: any = {};
 
-    const students = await prisma.student.findMany({
-      where,
-      include: {
-        batch: { select: { id: true, batch_name: true, start_year: true, end_year: true } },
-        section: { select: { id: true, name: true } },
-        allocation_batch: { select: { id: true, name: true } },
-        staff_student_assignments: {
-          include: {
-            staff: { select: { id: true, name: true } },
+      if (authorizedStudentIds !== null) {
+        where.id = { in: authorizedStudentIds };
+      }
+
+      if (batchId) {
+        where.batch_id = batchId;
+      }
+
+      if (sectionId) {
+        where.section_id = sectionId;
+      }
+
+      if (allocationBatchId) {
+        where.OR = [
+          { allocation_batch_id: allocationBatchId },
+          { sub_batch: allocationBatchId },
+        ];
+      }
+
+      if (department) {
+        where.department = { equals: department, mode: 'insensitive' };
+      }
+
+      if (academicYear) {
+        const years = academicYear.replace('–', '-').split('-');
+        if (years.length === 2) {
+          const start = parseInt(years[0].trim(), 10);
+          const end = parseInt(years[1].trim(), 10);
+          where.batch = {
+            start_year: start,
+            end_year: end,
+          };
+        }
+      }
+
+      const students = await prisma.student.findMany({
+        where,
+        include: {
+          batch: { select: { id: true, batch_name: true, start_year: true, end_year: true } },
+          section: { select: { id: true, name: true } },
+          allocation_batch: { select: { id: true, name: true } },
+          staff_student_assignments: {
+            include: {
+              staff: { select: { id: true, name: true } },
+            },
+          },
+          snapshots: {
+            select: { snapshot_date: true, easy_solved: true, medium_solved: true, hard_solved: true, total_solved: true },
+            orderBy: { snapshot_date: 'asc' },
           },
         },
-        snapshots: {
-          select: { snapshot_date: true, easy_solved: true, medium_solved: true, hard_solved: true, total_solved: true },
-          orderBy: { snapshot_date: 'asc' },
-        },
+        orderBy: { register_number: 'asc' },
+      });
+
+      const isPeriodFilter = !!(fromDate || toDate);
+
+      studentsList = students.map((st) => {
+        const stats = calculateStudentPeriodStats(st.snapshots, isPeriodFilter, fromDate, toDate);
+        const mentor_name = st.staff_student_assignments?.[0]?.staff?.name || 'Unassigned';
+
+        return {
+          id: st.id,
+          register_number: st.register_number,
+          name: st.name,
+          department: st.department,
+          leetcode_username: st.leetcode_username,
+          mentor_name,
+          batch_id: st.batch_id,
+          section_id: st.section_id,
+          allocation_batch_id: st.allocation_batch_id,
+          batch: {
+            id: st.batch.id,
+            batch_name: st.batch.batch_name,
+            academicYear: `${st.batch.start_year}–${st.batch.end_year}`,
+          },
+          section: { id: st.section.id, name: st.section.name },
+          allocation_batch: st.allocation_batch
+            ? { id: st.allocation_batch.id, name: st.allocation_batch.name }
+            : (st.sub_batch ? { id: st.sub_batch, name: st.sub_batch } : null),
+          easy_solved: stats.easy_solved,
+          medium_solved: stats.medium_solved,
+          hard_solved: stats.hard_solved,
+          total_solved: stats.total_solved,
+          overall_easy: stats.overall_easy,
+          overall_medium: stats.overall_medium,
+          overall_hard: stats.overall_hard,
+          overall_total: stats.overall_total,
+          has_activity: stats.has_activity,
+        };
+      });
+    }
+
+    // Filter by Activity Status
+    if (activityStatus === 'active') {
+      studentsList = studentsList.filter((s) => s.has_activity);
+    } else if (activityStatus === 'no_activity') {
+      studentsList = studentsList.filter((s) => !s.has_activity);
+    }
+
+    // Filter by Minimum Problems Solved
+    if (minProblems !== undefined && minProblems > 0) {
+      studentsList = studentsList.filter((s) => s.total_solved >= minProblems);
+    }
+
+    // Sort Students List
+    studentsList.sort((a, b) => {
+      if (sortBy === 'register_number') {
+        const cmp = a.register_number.localeCompare(b.register_number, undefined, { numeric: true });
+        return sortOrder === 'asc' ? cmp : -cmp;
+      }
+      if (sortBy === 'name') {
+        const cmp = a.name.localeCompare(b.name);
+        return sortOrder === 'asc' ? cmp : -cmp;
+      }
+      if (sortBy === 'overall_total') {
+        const valA = a.overall_total ?? 0;
+        const valB = b.overall_total ?? 0;
+        if (valA !== valB) {
+          return sortOrder === 'asc' ? valA - valB : valB - valA;
+        }
+        return a.register_number.localeCompare(b.register_number, undefined, { numeric: true });
+      }
+
+      const valA = a[`${sortBy}_solved` as keyof typeof a] as number;
+      const valB = b[`${sortBy}_solved` as keyof typeof b] as number;
+      if (valA !== valB) {
+        return sortOrder === 'asc' ? valA - valB : valB - valA;
+      }
+      // Stable Tie-Breaker: register_number
+      return a.register_number.localeCompare(b.register_number, undefined, { numeric: true });
+    });
+
+    // Calculate Summary Metrics
+    const totalStudents = studentsList.length;
+    const activeStudentsCount = studentsList.filter((s) => s.has_activity).length;
+    const noActivityCount = totalStudents - activeStudentsCount;
+    const totalEasy = studentsList.reduce((acc, s) => acc + s.easy_solved, 0);
+    const totalMedium = studentsList.reduce((acc, s) => acc + s.medium_solved, 0);
+    const totalHard = studentsList.reduce((acc, s) => acc + s.hard_solved, 0);
+    const totalProblems = studentsList.reduce((acc, s) => acc + s.total_solved, 0);
+    const overallTotalProblems = studentsList.reduce((acc, s) => acc + (s.overall_total || 0), 0);
+    const overallTotalEasy = studentsList.reduce((acc, s) => acc + (s.overall_easy || 0), 0);
+    const overallTotalMedium = studentsList.reduce((acc, s) => acc + (s.overall_medium || 0), 0);
+    const overallTotalHard = studentsList.reduce((acc, s) => acc + (s.overall_hard || 0), 0);
+
+    return {
+      summary: {
+        totalStudents,
+        activeStudentsCount,
+        noActivityCount,
+        totalProblems,
+        totalEasy,
+        totalMedium,
+        totalHard,
+        overallTotalProblems,
+        overallTotalEasy,
+        overallTotalMedium,
+        overallTotalHard,
       },
-      orderBy: { register_number: 'asc' },
-    });
-
-    const isPeriodFilter = !!(fromDate || toDate);
-
-    studentsList = students.map((st) => {
-      const stats = calculateStudentPeriodStats(st.snapshots, isPeriodFilter, fromDate, toDate);
-      const mentor_name = st.staff_student_assignments?.[0]?.staff?.name || 'Unassigned';
-
-      return {
-        id: st.id,
-        register_number: st.register_number,
-        name: st.name,
-        department: st.department,
-        leetcode_username: st.leetcode_username,
-        mentor_name,
-        batch_id: st.batch_id,
-        section_id: st.section_id,
-        allocation_batch_id: st.allocation_batch_id,
-        batch: {
-          id: st.batch.id,
-          batch_name: st.batch.batch_name,
-          academicYear: `${st.batch.start_year}–${st.batch.end_year}`,
-        },
-        section: { id: st.section.id, name: st.section.name },
-        allocation_batch: st.allocation_batch
-          ? { id: st.allocation_batch.id, name: st.allocation_batch.name }
-          : (st.sub_batch ? { id: st.sub_batch, name: st.sub_batch } : null),
-        easy_solved: stats.easy_solved,
-        medium_solved: stats.medium_solved,
-        hard_solved: stats.hard_solved,
-        total_solved: stats.total_solved,
-        overall_easy: stats.overall_easy,
-        overall_medium: stats.overall_medium,
-        overall_hard: stats.overall_hard,
-        overall_total: stats.overall_total,
-        has_activity: stats.has_activity,
-      };
-    });
-  }
-
-  // Apply Activity Status Filter
-  if (activityStatus === 'active') {
-    studentsList = studentsList.filter((st) => st.has_activity);
-  } else if (activityStatus === 'no_activity') {
-    studentsList = studentsList.filter((st) => !st.has_activity);
-  }
-
-  // Apply Minimum Problems Solved Filter (e.g. 2+ problems solved)
-  if (minProblems !== undefined && !isNaN(minProblems) && minProblems > 0) {
-    studentsList = studentsList.filter((st) => (st.total_solved || 0) >= minProblems);
-  }
-
-  // Apply Sorting
-  studentsList.sort((a, b) => {
-    if (sortBy === ('register_number' as any) || sortBy === ('reg_no' as any)) {
-      const cmp = a.register_number.localeCompare(b.register_number, undefined, { numeric: true });
-      return sortOrder === 'asc' ? cmp : -cmp;
-    }
-    if (sortBy === ('name' as any)) {
-      const cmp = a.name.localeCompare(b.name);
-      return sortOrder === 'asc' ? cmp : -cmp;
-    }
-
-    let keyA = 0;
-    let keyB = 0;
-
-    if (sortBy === 'easy') {
-      keyA = a.easy_solved;
-      keyB = b.easy_solved;
-    } else if (sortBy === 'medium') {
-      keyA = a.medium_solved;
-      keyB = b.medium_solved;
-    } else if (sortBy === 'hard') {
-      keyA = a.hard_solved;
-      keyB = b.hard_solved;
-    } else if (sortBy === 'overall_total') {
-      keyA = a.overall_total !== undefined ? a.overall_total : a.total_solved;
-      keyB = b.overall_total !== undefined ? b.overall_total : b.total_solved;
-    } else {
-      keyA = a.total_solved;
-      keyB = b.total_solved;
-    }
-
-    if (keyA !== keyB) {
-      return sortOrder === 'asc' ? keyA - keyB : keyB - keyA;
-    }
-
-    return a.register_number.localeCompare(b.register_number, undefined, { numeric: true });
+      students: studentsList,
+    };
   });
-
-  // Calculate Summary Analytics
-  const totalStudents = studentsList.length;
-  const activeStudentsCount = studentsList.filter((st) => st.has_activity).length;
-  const noActivityCount = totalStudents - activeStudentsCount;
-  const totalEasy = studentsList.reduce((acc, curr) => acc + curr.easy_solved, 0);
-  const totalMedium = studentsList.reduce((acc, curr) => acc + curr.medium_solved, 0);
-  const totalHard = studentsList.reduce((acc, curr) => acc + curr.hard_solved, 0);
-  const totalProblems = totalEasy + totalMedium + totalHard;
-
-  const overallTotalEasy = studentsList.reduce((acc, curr) => acc + (curr.overall_easy || 0), 0);
-  const overallTotalMedium = studentsList.reduce((acc, curr) => acc + (curr.overall_medium || 0), 0);
-  const overallTotalHard = studentsList.reduce((acc, curr) => acc + (curr.overall_hard || 0), 0);
-  const overallTotalProblems = overallTotalEasy + overallTotalMedium + overallTotalHard;
-
-  return {
-    summary: {
-      totalStudents,
-      activeStudentsCount,
-      noActivityCount,
-      totalProblems,
-      totalEasy,
-      totalMedium,
-      totalHard,
-      overallTotalProblems,
-      overallTotalEasy,
-      overallTotalMedium,
-      overallTotalHard,
-    },
-    students: studentsList,
-  };
 }
 
 export async function getStudentDailyProgress(
@@ -676,64 +652,67 @@ export async function getStudentDailyProgress(
     }
   }
 
-  let rawSnaps: any[] = [];
-  let studentObj: any = null;
+  const cacheKey = `student_daily_${studentId}_${JSON.stringify(filters || {})}`;
+  return serverCache.wrap(cacheKey, 30000, async () => {
+    let rawSnaps: any[] = [];
+    let studentObj: any = null;
 
-  if (!process.env.DATABASE_URL) {
-    const st = inMemoryStore.students.find((s) => s.id === studentId);
-    studentObj = st ? { id: st.id, register_number: st.register_number, name: st.name } : null;
-    rawSnaps = inMemoryStore.snapshots.filter((s) => s.student_id === studentId);
-  } else {
-    const st = await prisma.student.findUnique({
-      where: { id: studentId },
-      select: { id: true, register_number: true, name: true },
-    });
-    studentObj = st;
-    rawSnaps = await prisma.dailyCodingSnapshot.findMany({
-      where: { student_id: studentId },
-      orderBy: { snapshot_date: 'desc' },
-    });
-  }
-
-  let filledSnapshots = fillContinuousSnapshotTimeline(rawSnaps);
-
-  // Compute daily deltas on the filled timeline (ordered DESC: newest first)
-  const snapshotsWithDeltas = filledSnapshots.map((snap, idx) => {
-    const prevSnap = filledSnapshots[idx + 1];
-    const dailyTotal = prevSnap ? Math.max(0, snap.total_solved - prevSnap.total_solved) : 0;
-    let dailyEasy = prevSnap ? Math.max(0, snap.easy_solved - prevSnap.easy_solved) : 0;
-    let dailyMedium = prevSnap ? Math.max(0, snap.medium_solved - prevSnap.medium_solved) : 0;
-    let dailyHard = prevSnap ? Math.max(0, snap.hard_solved - prevSnap.hard_solved) : 0;
-
-    const sumDaily = dailyEasy + dailyMedium + dailyHard;
-    if (dailyTotal > sumDaily) {
-      dailyEasy += (dailyTotal - sumDaily);
+    if (!process.env.DATABASE_URL) {
+      const st = inMemoryStore.students.find((s) => s.id === studentId);
+      studentObj = st ? { id: st.id, register_number: st.register_number, name: st.name } : null;
+      rawSnaps = inMemoryStore.snapshots.filter((s) => s.student_id === studentId);
+    } else {
+      const st = await prisma.student.findUnique({
+        where: { id: studentId },
+        select: { id: true, register_number: true, name: true },
+      });
+      studentObj = st;
+      rawSnaps = await prisma.dailyCodingSnapshot.findMany({
+        where: { student_id: studentId },
+        orderBy: { snapshot_date: 'desc' },
+      });
     }
 
-    const dIST = toISTDateString(snap.snapshot_date);
+    let filledSnapshots = fillContinuousSnapshotTimeline(rawSnaps);
 
-    return {
-      ...snap,
-      snapshot_date: dIST,
-      formatted_date: dIST,
-      daily_solved: dailyTotal,
-      daily_easy: dailyEasy,
-      daily_medium: dailyMedium,
-      daily_hard: dailyHard,
-    };
+    // Compute daily deltas on the filled timeline (ordered DESC: newest first)
+    const snapshotsWithDeltas = filledSnapshots.map((snap, idx) => {
+      const prevSnap = filledSnapshots[idx + 1];
+      const dailyTotal = prevSnap ? Math.max(0, snap.total_solved - prevSnap.total_solved) : 0;
+      let dailyEasy = prevSnap ? Math.max(0, snap.easy_solved - prevSnap.easy_solved) : 0;
+      let dailyMedium = prevSnap ? Math.max(0, snap.medium_solved - prevSnap.medium_solved) : 0;
+      let dailyHard = prevSnap ? Math.max(0, snap.hard_solved - prevSnap.hard_solved) : 0;
+
+      const sumDaily = dailyEasy + dailyMedium + dailyHard;
+      if (dailyTotal > sumDaily) {
+        dailyEasy += (dailyTotal - sumDaily);
+      }
+
+      const dIST = toISTDateString(snap.snapshot_date);
+
+      return {
+        ...snap,
+        snapshot_date: dIST,
+        formatted_date: dIST,
+        daily_solved: dailyTotal,
+        daily_easy: dailyEasy,
+        daily_medium: dailyMedium,
+        daily_hard: dailyHard,
+      };
+    });
+
+    let filteredSnapshots = snapshotsWithDeltas;
+    if (filters?.fromDate) {
+      const fStr = toISTDateString(filters.fromDate);
+      filteredSnapshots = filteredSnapshots.filter((s) => toISTDateString(s.snapshot_date) >= fStr);
+    }
+    if (filters?.toDate) {
+      const tStr = toISTDateString(filters.toDate);
+      filteredSnapshots = filteredSnapshots.filter((s) => toISTDateString(s.snapshot_date) <= tStr);
+    }
+
+    return { student: studentObj, snapshots: filteredSnapshots };
   });
-
-  let filteredSnapshots = snapshotsWithDeltas;
-  if (filters?.fromDate) {
-    const fStr = toISTDateString(filters.fromDate);
-    filteredSnapshots = filteredSnapshots.filter((s) => toISTDateString(s.snapshot_date) >= fStr);
-  }
-  if (filters?.toDate) {
-    const tStr = toISTDateString(filters.toDate);
-    filteredSnapshots = filteredSnapshots.filter((s) => toISTDateString(s.snapshot_date) <= tStr);
-  }
-
-  return { student: studentObj, snapshots: filteredSnapshots };
 }
 
 export function buildReportFileName(filters: ReportFilterParams, ext: 'csv' | 'xlsx' = 'csv'): string {

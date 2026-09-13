@@ -77,7 +77,7 @@ interface CacheEntry<T> {
 }
 const cacheStore: Record<string, CacheEntry<any>> = {};
 const inFlightRequests = new Map<string, Promise<any>>();
-const CACHE_TTL = 30000; // 30 seconds
+const CACHE_TTL = 300000; // 5 minutes for instant back/forth navigation
 
 export function getCachedData<T>(key: string): T | null {
   const entry = cacheStore[key];
@@ -577,7 +577,11 @@ export const studentApi = {
   },
 
   getStudentById: async (studentId: string): Promise<Student> => {
+    const key = `student_${studentId}`;
+    const cached = getCachedData<Student>(key);
+    if (cached) return cached;
     const res = await api.get<{ student: Student }>(`/students/${studentId}`);
+    setCachedData(key, res.data.student);
     return res.data.student;
   },
 
@@ -780,7 +784,11 @@ export const syncApi = {
   },
 
   getSnapshots: async (studentId: string): Promise<DailySnapshot[]> => {
+    const key = `snapshots_${studentId}`;
+    const cached = getCachedData<DailySnapshot[]>(key);
+    if (cached) return cached;
     const res = await api.get<{ snapshots: DailySnapshot[] }>(`/students/${studentId}/snapshots`);
+    setCachedData(key, res.data.snapshots);
     return res.data.snapshots;
   },
 

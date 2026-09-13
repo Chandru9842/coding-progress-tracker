@@ -1,21 +1,24 @@
 import React, { useEffect, useState } from 'react';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
-import { statsApi } from '../services/api.js';
+import { statsApi, getCachedData } from '../services/api.js';
 import { DashboardStats } from '../types/index.js';
 import { Users, FolderKanban, UserCheck, GraduationCap, AlertCircle, Loader2 } from 'lucide-react';
 import { SyncStatus } from '../components/SyncStatus.js';
 
 export const DashboardPage: React.FC = () => {
   const { user } = useAuth();
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const cachedStats = getCachedData<DashboardStats>('stats_dashboard');
+  const [stats, setStats] = useState<DashboardStats | null>(cachedStats);
+  const [loading, setLoading] = useState<boolean>(!cachedStats);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        setLoading(true);
+        if (!stats && !cachedStats) {
+          setLoading(true);
+        }
         const data = await statsApi.getStats();
         setStats(data);
       } catch (err: unknown) {

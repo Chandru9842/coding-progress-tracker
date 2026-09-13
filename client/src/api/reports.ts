@@ -1,4 +1,4 @@
-import { api } from '../services/api.js';
+import { api, getCachedData, setCachedData } from '../services/api.js';
 
 export interface GenerateReportRequest {
   reportType: 'SUMMARY' | 'PROGRESS_LOG' | 'SECTION_COMPARISON';
@@ -76,7 +76,11 @@ export interface ReportDataResponse {
 }
 
 export async function getReportFilters(): Promise<ReportFilterOptions> {
+  const key = 'report_filter_options';
+  const cached = getCachedData<ReportFilterOptions>(key);
+  if (cached) return cached;
   const response = await api.get('/reports/filters');
+  setCachedData(key, response.data);
   return response.data;
 }
 
@@ -94,7 +98,11 @@ export async function getReportData(params?: {
   activityStatus?: 'all' | 'active' | 'no_activity';
   minProblems?: number | string;
 }): Promise<ReportDataResponse> {
+  const key = `report_data_${JSON.stringify(params || {})}`;
+  const cached = getCachedData<ReportDataResponse>(key);
+  if (cached) return cached;
   const response = await api.get('/reports/data', { params });
+  setCachedData(key, response.data);
   return response.data;
 }
 

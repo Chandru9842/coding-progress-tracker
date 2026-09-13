@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
-import { studentApi, syncApi, Student, DailySnapshot, extractErrorMessage } from '../services/api.js';
+import { studentApi, syncApi, Student, DailySnapshot, extractErrorMessage, getCachedData } from '../services/api.js';
 import { ArrowLeft, User, ShieldAlert, Code2, GraduationCap, Layers, Loader2, Activity, RefreshCw, CheckCircle2, Trash2, ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
 import { SyncStatus } from '../components/SyncStatus.js';
 
@@ -11,36 +11,6 @@ export const StudentDetailPage: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const canManage = user?.role === 'ADMIN' || user?.role === 'STAFF';
-
-  const [student, setStudent] = useState<Student | null>(null);
-  const [snapshots, setSnapshots] = useState<DailySnapshot[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [syncing, setSyncing] = useState<boolean>(false);
-
-  const [deleting, setDeleting] = useState<boolean>(false);
-  const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState<number>(1);
-  const [pageSize, setPageSize] = useState<number>(10);
-  const [customRowsInput, setCustomRowsInput] = useState<string>('10');
-
-  const handleSelectPresetRows = (size: number) => {
-    setPageSize(size);
-    setCustomRowsInput(size >= 99999 ? 'All' : String(size));
-    setCurrentPage(1);
-  };
-
-  const handleCustomRowsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setCustomRowsInput(val);
-    const parsed = parseInt(val, 10);
-    if (!isNaN(parsed) && parsed > 0) {
-      setPageSize(parsed);
-      setCurrentPage(1);
-    }
-  };
 
   const ensureContinuousTimeline = (rawSnaps: DailySnapshot[]): DailySnapshot[] => {
     if (!rawSnaps || rawSnaps.length === 0) return [];
@@ -78,10 +48,45 @@ export const StudentDetailPage: React.FC = () => {
     return filled.sort((a, b) => new Date(b.snapshot_date).getTime() - new Date(a.snapshot_date).getTime());
   };
 
+  const cachedStudent = studentId ? getCachedData<Student>(`student_${studentId}`) : null;
+  const cachedSnapshots = studentId ? getCachedData<DailySnapshot[]>(`snapshots_${studentId}`) : null;
+
+  const [student, setStudent] = useState<Student | null>(cachedStudent);
+  const [snapshots, setSnapshots] = useState<DailySnapshot[]>(cachedSnapshots ? ensureContinuousTimeline(cachedSnapshots) : []);
+  const [loading, setLoading] = useState<boolean>(!cachedStudent);
+  const [syncing, setSyncing] = useState<boolean>(false);
+
+  const [deleting, setDeleting] = useState<boolean>(false);
+  const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [customRowsInput, setCustomRowsInput] = useState<string>('10');
+
+  const handleSelectPresetRows = (size: number) => {
+    setPageSize(size);
+    setCustomRowsInput(size >= 99999 ? 'All' : String(size));
+    setCurrentPage(1);
+  };
+
+  const handleCustomRowsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setCustomRowsInput(val);
+    const parsed = parseInt(val, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      setPageSize(parsed);
+      setCurrentPage(1);
+    }
+  };
+
   const fetchDetailAndSnapshots = async () => {
     if (!studentId) return;
     try {
-      setLoading(true);
+      if (!student) {
+        setLoading(true);
+      }
       setError(null);
       const [data, snapData] = await Promise.all([
         studentApi.getStudentById(studentId),
@@ -89,22 +94,13 @@ export const StudentDetailPage: React.FC = () => {
       ]);
       setStudent(data);
       setSnapshots(ensureContinuousTimeline(snapData || []));
-      setLoading(false);
-
-      const formatIST = (d: any) => {
-        if (!d) return '';
-        if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.trim())) return d.trim();
-        const obj = typeof d === 'string' ? new Date(d) : d;
-        return isNaN(obj.getTime()) ? String(d) : new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(obj);
-      };
-
-
     } catch (err: any) {
       if (err.response?.status === 403) {
         setError('403 Forbidden: You are not authorized to view this student\'s profile.');
       } else {
         setError(extractErrorMessage(err, 'Failed to load student details.'));
       }
+    } finally {
       setLoading(false);
     }
   };

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
-import { studentApi, batchApi, staffApi, syncApi, Student, Batch, StaffUser, extractErrorMessage } from '../services/api.js';
+import { studentApi, batchApi, staffApi, syncApi, Student, Batch, StaffUser, extractErrorMessage, getCachedData } from '../services/api.js';
 import {
   Users,
   UserPlus,
@@ -140,10 +140,14 @@ export const StudentsPage: React.FC = () => {
   const canManage = isAdmin || isStaff;
   const navigate = useNavigate();
 
-  const [students, setStudents] = useState<Student[]>([]);
-  const [batches, setBatches] = useState<Batch[]>([]);
-  const [staffList, setStaffList] = useState<StaffUser[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const initialStudents = getCachedData<Student[]>('students_{}') || [];
+  const initialBatches = getCachedData<Batch[]>('batches_all') || [];
+  const initialStaff = getCachedData<StaffUser[]>('staff_all') || [];
+
+  const [students, setStudents] = useState<Student[]>(initialStudents);
+  const [batches, setBatches] = useState<Batch[]>(initialBatches);
+  const [staffList, setStaffList] = useState<StaffUser[]>(initialStaff);
+  const [loading, setLoading] = useState<boolean>(initialStudents.length === 0);
   const [syncingAll, setSyncingAll] = useState<boolean>(false);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
   const [search, setSearch] = useState<string>('');
@@ -225,13 +229,10 @@ export const StudentsPage: React.FC = () => {
     return () => clearTimeout(handler);
   }, [search]);
 
-  const fetchStudents = async (showLoadingSpinner: boolean = true) => {
+  const fetchStudents = async (showLoadingSpinner: boolean = false) => {
     try {
       setError(null);
-      if (showLoadingSpinner && students.length === 0) {
-        setLoading(true);
-      }
-      const data = await studentApi.getStudents({
+      const params = {
         batchId: filterBatchId || undefined,
         sectionId: filterSectionId || undefined,
         department: filterDept || undefined,
@@ -239,7 +240,16 @@ export const StudentsPage: React.FC = () => {
         allocationBatchId: filterAllocBatchId || undefined,
         mentorId: filterMentorId || undefined,
         search: debouncedSearch || undefined,
-      });
+      };
+      const cacheKey = `students_${JSON.stringify(params)}`;
+      const cached = getCachedData<Student[]>(cacheKey);
+      if (cached) {
+        setStudents(cached);
+        setLoading(false);
+      } else if (showLoadingSpinner || students.length === 0) {
+        setLoading(true);
+      }
+      const data = await studentApi.getStudents(params);
       setStudents(data);
     } catch (err: any) {
       setError(extractErrorMessage(err, 'Failed to load student roster'));

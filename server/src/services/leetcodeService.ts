@@ -7,6 +7,7 @@ import { runMidnightAutoSync } from './cronService.js';
 import { diagnosticLogService } from './diagnosticLogService.js';
 import { syncErrorService } from './syncErrorService.js';
 import { fillContinuousSnapshotTimeline, toISTDateString } from './reportService.js';
+import { serverCache } from '../utils/serverCache.js';
 
 import { UserRole } from '../types/index.js';
 
@@ -696,6 +697,11 @@ stats.easySolved += (stats.totalSolved - sumDiff);
     source: rawSource,
   });
 
+  serverCache.invalidate(`snapshots_${studentId}`);
+  serverCache.invalidate(`student_${studentId}`);
+  serverCache.invalidate('report_');
+  serverCache.invalidate('stats_');
+
   return {
     studentId,
     studentName: student.name,
@@ -1032,106 +1038,108 @@ export async function getStudentSnapshots(studentId: string, user: { userId: str
     }
   }
 
-  let snapshots = !process.env.DATABASE_URL
-    ? inMemoryStore.snapshots
-        .filter((s) => s.student_id === studentId)
-        .sort((a, b) => new Date(b.snapshot_date).getTime() - new Date(a.snapshot_date).getTime())
-    : await prisma.dailyCodingSnapshot.findMany({
-        where: { student_id: studentId },
-        orderBy: { snapshot_date: 'desc' },
-      });
-
-  // If student has 0 snapshots recorded, create an instant baseline snapshot in-memory or DB
-  // so that the frontend always has an initial snapshot record instantly without waiting
-  if (snapshots.length === 0) {
-    const today = getISTDate();
-    let student: any = null;
-    if (!process.env.DATABASE_URL) {
-      student = inMemoryStore.students.find((s) => s.id === studentId);
-      if (student) {
-        const baselineSnapshot = {
-          id: `snap_${Date.now()}_init`,
-          student_id: studentId,
-          snapshot_date: today,
-          easy_solved: 0,
-          medium_solved: 0,
-          hard_solved: 0,
-          total_solved: 0,
-          created_at: new Date(),
-        };
-        inMemoryStore.snapshots.push(baselineSnapshot);
-        snapshots = [baselineSnapshot];
-      }
-    }
-  }
-
-  // Autonomous Timeline Healing: Always guarantee a continuous timeline without gaps
-  const filledSnapshots = fillContinuousSnapshotTimeline(snapshots);
-
-  // If gap days were discovered, backfill them into persistent storage in background
-  if (filledSnapshots.length > snapshots.length) {
-    const existingDateSet = new Set(snapshots.map((s) => toISTDateString(s.snapshot_date)));
-    const missingSnaps = filledSnapshots.filter((s) => !existingDateSet.has(toISTDateString(s.snapshot_date)));
-
-    if (process.env.DATABASE_URL && missingSnaps.length > 0) {
-      prisma.dailyCodingSnapshot
-        .createMany({
-          data: missingSnaps.map((s) => ({
-            student_id: studentId,
-            snapshot_date: new Date(`${toISTDateString(s.snapshot_date)}T00:00:00.000Z`),
-            easy_solved: s.easy_solved,
-            medium_solved: s.medium_solved,
-            hard_solved: s.hard_solved,
-            total_solved: s.total_solved,
-          })),
-          skipDuplicates: true,
-        })
-        .catch((e) => console.warn('[Auto-Backfill Error]:', e?.message || e));
-    } else if (!process.env.DATABASE_URL && missingSnaps.length > 0) {
-      for (const m of missingSnaps) {
-        inMemoryStore.snapshots.push({
-          id: `snap_${Date.now()}_backfill_${toISTDateString(m.snapshot_date)}`,
-          student_id: studentId,
-          snapshot_date: new Date(`${toISTDateString(m.snapshot_date)}T00:00:00.000Z`),
-          easy_solved: m.easy_solved,
-          medium_solved: m.medium_solved,
-          hard_solved: m.hard_solved,
-          total_solved: m.total_solved,
-          created_at: new Date(),
+  return serverCache.wrap(`snapshots_${studentId}`, 30000, async () => {
+    let snapshots = !process.env.DATABASE_URL
+      ? inMemoryStore.snapshots
+          .filter((s) => s.student_id === studentId)
+          .sort((a, b) => new Date(b.snapshot_date).getTime() - new Date(a.snapshot_date).getTime())
+      : await prisma.dailyCodingSnapshot.findMany({
+          where: { student_id: studentId },
+          orderBy: { snapshot_date: 'desc' },
         });
+
+    // If student has 0 snapshots recorded, create an instant baseline snapshot in-memory or DB
+    // so that the frontend always has an initial snapshot record instantly without waiting
+    if (snapshots.length === 0) {
+      const today = getISTDate();
+      let student: any = null;
+      if (!process.env.DATABASE_URL) {
+        student = inMemoryStore.students.find((s) => s.id === studentId);
+        if (student) {
+          const baselineSnapshot = {
+            id: `snap_${Date.now()}_init`,
+            student_id: studentId,
+            snapshot_date: today,
+            easy_solved: 0,
+            medium_solved: 0,
+            hard_solved: 0,
+            total_solved: 0,
+            created_at: new Date(),
+          };
+          inMemoryStore.snapshots.push(baselineSnapshot);
+          snapshots = [baselineSnapshot];
+        }
       }
     }
-  }
 
-  // Non-blocking Auto-Snapshot trigger:
-  // If snapshots were missing or stale, trigger background sync without blocking the HTTP response!
-  const todayISTStr = getISTDateString();
-  const latest = filledSnapshots[0] || snapshots[0];
-  const latestDateStr = latest ? toISTDateString(latest.snapshot_date) : '';
-  const isMissingToday = !latest || latestDateStr !== todayISTStr;
-  const isStale = isMissingToday || (Date.now() - new Date((latest as any)?.created_at || (latest as any)?.updated_at || 0).getTime() > 10 * 60 * 1000);
+    // Autonomous Timeline Healing: Always guarantee a continuous timeline without gaps
+    const filledSnapshots = fillContinuousSnapshotTimeline(snapshots);
 
-  if (isStale) {
-    // Fire-and-forget background worker: Never block user navigation on slow external networks
-    setImmediate(async () => {
-      try {
-        let student: any = null;
-        if (!process.env.DATABASE_URL) {
-          student = inMemoryStore.students.find((s) => s.id === studentId);
-        } else {
-          student = await prisma.student.findUnique({ where: { id: studentId } });
+    // If gap days were discovered, backfill them into persistent storage in background
+    if (filledSnapshots.length > snapshots.length) {
+      const existingDateSet = new Set(snapshots.map((s) => toISTDateString(s.snapshot_date)));
+      const missingSnaps = filledSnapshots.filter((s) => !existingDateSet.has(toISTDateString(s.snapshot_date)));
+
+      if (process.env.DATABASE_URL && missingSnaps.length > 0) {
+        prisma.dailyCodingSnapshot
+          .createMany({
+            data: missingSnaps.map((s) => ({
+              student_id: studentId,
+              snapshot_date: new Date(`${toISTDateString(s.snapshot_date)}T00:00:00.000Z`),
+              easy_solved: s.easy_solved,
+              medium_solved: s.medium_solved,
+              hard_solved: s.hard_solved,
+              total_solved: s.total_solved,
+            })),
+            skipDuplicates: true,
+          })
+          .catch((e) => console.warn('[Auto-Backfill Error]:', e?.message || e));
+      } else if (!process.env.DATABASE_URL && missingSnaps.length > 0) {
+        for (const m of missingSnaps) {
+          inMemoryStore.snapshots.push({
+            id: `snap_${Date.now()}_backfill_${toISTDateString(m.snapshot_date)}`,
+            student_id: studentId,
+            snapshot_date: new Date(`${toISTDateString(m.snapshot_date)}T00:00:00.000Z`),
+            easy_solved: m.easy_solved,
+            medium_solved: m.medium_solved,
+            hard_solved: m.hard_solved,
+            total_solved: m.total_solved,
+            created_at: new Date(),
+          });
         }
-        if (student?.leetcode_username) {
-          console.log(`[Auto-Snapshot Background] Asynchronously updating stats for ${student.name} (@${student.leetcode_username})...`);
-          await syncStudentLeetCode(studentId, user, { skipGoogleSheetSync: true });
-        }
-      } catch (err: any) {
-        console.warn(`[Auto-Snapshot Background] Note for student ${studentId}:`, err?.message || err);
       }
-    });
-  }
+    }
 
-  return filledSnapshots;
+    // Non-blocking Auto-Snapshot trigger:
+    // If snapshots were missing or stale, trigger background sync without blocking the HTTP response!
+    const todayISTStr = getISTDateString();
+    const latest = filledSnapshots[0] || snapshots[0];
+    const latestDateStr = latest ? toISTDateString(latest.snapshot_date) : '';
+    const isMissingToday = !latest || latestDateStr !== todayISTStr;
+    const isStale = isMissingToday || (Date.now() - new Date((latest as any)?.created_at || (latest as any)?.updated_at || 0).getTime() > 10 * 60 * 1000);
+
+    if (isStale) {
+      // Fire-and-forget background worker: Never block user navigation on slow external networks
+      setImmediate(async () => {
+        try {
+          let student: any = null;
+          if (!process.env.DATABASE_URL) {
+            student = inMemoryStore.students.find((s) => s.id === studentId);
+          } else {
+            student = await prisma.student.findUnique({ where: { id: studentId } });
+          }
+          if (student?.leetcode_username) {
+            console.log(`[Auto-Snapshot Background] Asynchronously updating stats for ${student.name} (@${student.leetcode_username})...`);
+            await syncStudentLeetCode(studentId, user, { skipGoogleSheetSync: true });
+          }
+        } catch (err: any) {
+          console.warn(`[Auto-Snapshot Background] Note for student ${studentId}:`, err?.message || err);
+        }
+      });
+    }
+
+    return filledSnapshots;
+  });
 }
 
 export async function runPeriodicAutoSync(): Promise<{
