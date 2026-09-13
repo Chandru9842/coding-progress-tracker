@@ -117,6 +117,15 @@ export async function executeFullDailyReconciliation(force: boolean = false): Pr
   let studentResults = { totalAttempted: 0, successful: 0, failed: 0 };
   let sheetResults = { attempted: 0, successful: 0, failed: 0 };
 
+  // 1. Broadcast immediately to all active Google Sheets within 2 seconds
+  try {
+    sheetResults = await runMidnightAutoSync();
+    console.log(`[Scheduler] Sheet sync finished: ${sheetResults.successful}/${sheetResults.attempted} active Google Sheets updated.`);
+  } catch (sheetErr: any) {
+    console.warn('[Scheduler] Sheet sync notice:', sheetErr?.message || sheetErr);
+  }
+
+  // 2. Fetch fresh LeetCode stats for students in background
   try {
     const { runPeriodicAutoSync } = await import('./leetcodeService.js');
     const res = await runPeriodicAutoSync();
@@ -127,14 +136,6 @@ export async function executeFullDailyReconciliation(force: boolean = false): Pr
     };
   } catch (studentErr: any) {
     console.warn('[Scheduler] Student LeetCode sync notice:', studentErr?.message || studentErr);
-  }
-
-  // Broadcast to all active Google Sheets
-  try {
-    sheetResults = await runMidnightAutoSync();
-    console.log(`[Scheduler] Sheet sync finished: ${sheetResults.successful}/${sheetResults.attempted} active Google Sheets updated.`);
-  } catch (sheetErr: any) {
-    console.warn('[Scheduler] Sheet sync notice:', sheetErr?.message || sheetErr);
   }
 
   const durationSeconds = Number(((Date.now() - startTime) / 1000).toFixed(2));
