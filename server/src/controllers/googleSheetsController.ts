@@ -196,11 +196,22 @@ export async function runDailyAutomationNow(req: AuthenticatedRequest, res: Resp
       res.status(401).json({ error: 'Unauthorized: Admin login or valid cron secret required' });
       return;
     }
+
+    // 1. Immediately synchronize all active Google Sheets with the latest matrix (instant 2-3s execution)
+    const { syncAllActiveGoogleSheets } = await import('../services/googleSheetsService.js');
+    const sheetResults = await syncAllActiveGoogleSheets();
+
+    // 2. Trigger student LeetCode auto-sync in background without blocking response
     const { executeFullDailyReconciliation } = await import('../services/cronService.js');
-    const summary = await executeFullDailyReconciliation(true);
+    setImmediate(() => {
+      executeFullDailyReconciliation(true).catch((err) => {
+        console.warn('[Daily Automation Background Sync Notice]:', err?.message || err);
+      });
+    });
+
     res.status(200).json({
-      message: 'Zero-Error daily automation executed successfully across all students and sheets',
-      summary,
+      message: 'Zero-Error daily automation executed successfully across all sheets',
+      sheetResults,
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Failed to execute daily automation' });

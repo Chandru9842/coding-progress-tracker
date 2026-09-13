@@ -1256,12 +1256,12 @@ export async function runDailyMidnightReconciliation(): Promise<{
     console.warn('[Sync] Google Sheets sync notice during reconciliation:', sheetErr?.message || sheetErr);
   }
 
-  // 2. Run student LeetCode auto-sync in background / remaining duration
-  try {
-    result = await runPeriodicAutoSync();
-  } catch (syncErr: any) {
-    console.warn('[Sync] Student LeetCode sync notice during reconciliation:', syncErr?.message || syncErr);
-  }
+  // 2. Trigger student LeetCode auto-sync asynchronously in background so response returns in 2 seconds
+  setImmediate(() => {
+    runPeriodicAutoSync().catch((syncErr: any) => {
+      console.warn('[Sync] Student LeetCode sync notice during reconciliation:', syncErr?.message || syncErr);
+    });
+  });
 
   return {
     ...result,
