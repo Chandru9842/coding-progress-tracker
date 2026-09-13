@@ -61,6 +61,59 @@ async function testSmartCSVImport() {
     throw new Error('Failed to accurately parse student Dhipak S');
   }
 
+  // Test 1: Automatic Duplicate Removal
+  const duplicateData = `
+814723104001,AADEESH C,CSE,Mr. Shyam Sundar,https://leetcode.com/u/Aadeesh-12
+814723104001,AADEESH C,CSE,Mr. Shyam Sundar,https://leetcode.com/u/Aadeesh-12
+814723104002,AARTHI S,CSE,Mrs. K. Devi,https://leetcode.com/u/aarthi_46/
+`;
+  const dupParsed = analyzeAndParseStudents(duplicateData);
+  if (dupParsed.duplicateCount !== 1) {
+    throw new Error(`Expected 1 duplicate auto-removed, got ${dupParsed.duplicateCount}`);
+  }
+  if (dupParsed.rows.length !== 2) {
+    throw new Error(`Expected 2 unique rows after duplicate removal, got ${dupParsed.rows.length}`);
+  }
+  console.log('✔ Automatic duplicate removal verified (1 duplicate removed, only unique rows returned)');
+
+  // Test 2: Same Name with Same Initial & DOB Disambiguation
+  const sameNameData = `
+814723104001,SARAVANAKUMAR V (07.12.2005),CSE,Mr. Shyam Sundar,https://leetcode.com/u/saravana_1/
+814723104002,SARAVANAKUMAR V (14.05.2006),CSE,Mr. Shyam Sundar,https://leetcode.com/u/saravana_2/
+814723104003,DHIPAK S,CSE,Dr. A. Muthuraj,https://leetcode.com/u/dhipak/
+`;
+  const nameParsed = analyzeAndParseStudents(sameNameData);
+  const s1 = nameParsed.rows.find((r) => r.cleanRegisterNumber === '814723104001');
+  const s2 = nameParsed.rows.find((r) => r.cleanRegisterNumber === '814723104002');
+  const uniqueStudent = nameParsed.rows.find((r) => r.cleanRegisterNumber === '814723104003');
+
+  if (!s1 || !s1.name.includes('(DOB: 07.12.2005)')) {
+    throw new Error(`Expected s1 to have DOB in name, got: ${s1?.name}`);
+  }
+  if (!s2 || !s2.name.includes('(DOB: 14.05.2006)')) {
+    throw new Error(`Expected s2 to have DOB in name, got: ${s2?.name}`);
+  }
+  if (!uniqueStudent || uniqueStudent.name !== 'DHIPAK S') {
+    throw new Error(`Expected unique student name to remain clean 'DHIPAK S', got: ${uniqueStudent?.name}`);
+  }
+  console.log('✔ Same name & same initial DOB disambiguation verified cleanly');
+
+  // Test 3: Non-Mentor (Unassigned) Students Detection
+  const nonMentorData = `
+814723104010,KAVIN P,CSE,,https://leetcode.com/u/kavin_p/
+814723104011,LOGESH R,CSE,Unassigned,https://leetcode.com/u/logesh_r/
+814723104012,MANOJ K,CSE,Dr. A. Muthuraj,https://leetcode.com/u/manoj_k/
+`;
+  const nonMentorParsed = analyzeAndParseStudents(nonMentorData);
+  const unassignedRows = nonMentorParsed.rows.filter((r) => r.cleanMentor === 'Unassigned');
+  if (unassignedRows.length !== 2) {
+    throw new Error(`Expected 2 unassigned students, got ${unassignedRows.length}`);
+  }
+  if (!nonMentorParsed.detectedMentors.includes('Unassigned')) {
+    throw new Error('Expected "Unassigned" to be in detectedMentors list');
+  }
+  console.log('✔ Non-mentor students detection verified');
+
   console.log('✔ All Smart CSV Import assertions passed cleanly!');
 }
 

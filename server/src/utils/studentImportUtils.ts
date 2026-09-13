@@ -8,12 +8,14 @@ export interface ParsedImportRow {
   rawRegisterNumber: string;
   cleanRegisterNumber: string;
   name: string;
+  dob?: string;
   department: string;
+  section?: string;
   academicYear?: string;
   currentYear?: string;
   rawMentor: string;
   cleanMentor: string;
-  phone: string;
+  phone?: string;
   rawLeetCode: string;
   cleanLeetCode: string;
   totalSolved?: number;
@@ -26,6 +28,8 @@ export interface ParsedImportRow {
 export interface ParseResult {
   rows: ParsedImportRow[];
   detectedMentors: string[];
+  detectedYears?: string[];
+  detectedSections?: string[];
   totalParsed: number;
   validCount: number;
   invalidCount: number;
@@ -132,6 +136,13 @@ const KNOWN_DEPTS = new Set([
   'CSE', 'IT', 'ECE', 'EEE', 'MECH', 'CIVIL', 'AIDS', 'AIML', 'CSBS', 'CYBER', 'AUTO', 'BIOTECH', 'CHEM', 'MCA', 'BCA',
 ]);
 
+/**
+ * Intelligently analyzes parsed CSV matrix and auto-detects columns:
+ * - Automatically removes duplicates from sheet.
+ * - Disambiguates students with identical name & initial using Date of Birth (DOB).
+ * - Discards extraneous columns (phone numbers, parent info, addresses, etc.).
+ * - Detects mentors, study years, sections, and flags non-mentor students cleanly.
+ */
 export function analyzeAndParseStudents(csvText: string): ParseResult {
   const cleanedCSV = csvText.replace(/^\uFEFF/, '');
   const lines = parseCSVLines(cleanedCSV);
@@ -175,6 +186,8 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
   const dataLines = hasHeaders ? nonCommentLines.slice(1) : nonCommentLines;
   const parsedRows: ParsedImportRow[] = [];
   const mentorSet = new Set<string>();
+  const yearSet = new Set<string>();
+  const sectionSet = new Set<string>();
   const seenRegNumbers = new Map<string, number>();
   let duplicateCount = 0;
 
@@ -182,8 +195,9 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
     let regNo = '';
     let name = '';
     let dept = 'CSE';
+    let section = '';
     let rawMentor = '';
-    let phone = '';
+    let dob = '';
     let leetcodeUrl = '';
     let academicYear = '';
     let currentYear = '';
@@ -200,12 +214,27 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
 
       if (!academicYear && /^(20\d\d)\s*[-/–]\s*(20\d\d)$/.test(cell)) {
         academicYear = cell.replace(/\s+/g, '').replace('/', '-');
+        yearSet.add(academicYear);
         continue;
       }
 
       if (!currentYear && /^(1st|2nd|3rd|4th|I|II|III|IV)\s*year/i.test(cell)) {
         currentYear = cell.trim();
+        yearSet.add(currentYear);
         continue;
+      }
+
+      if (!section) {
+        const secMatch = cell.match(/^(?:section|sec)[\s-_]*([A-Za-z0-9]+)$/i);
+        if (secMatch && secMatch[1]) {
+          section = secMatch[1].toUpperCase();
+          sectionSet.add(section);
+          continue;
+        } else if (/^[A-D]$/i.test(cell) && (firstLineStr.includes('sec') || c === 3 || c === 4)) {
+          section = cell.toUpperCase();
+          sectionSet.add(section);
+          continue;
+        }
       }
 
       const digitsOnly = cell.replace(/\s+/g, '');
@@ -233,9 +262,15 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
         }
       }
 
-      if (!phone && /^[0-9\s-]{10,14}$/.test(cell) && cell.replace(/\D/g, '').length === 10) {
-        phone = cell;
-        continue;
+      // Check for Date of Birth in independent cell (e.g. 07.12.2005, 14/05/2006, 2005-12-07)
+      if (!dob && !cell.includes('leetcode') && !/^(20\d\d)\s*[-/–]\s*(20\d\d)$/.test(cell)) {
+        const dateMatch = cell.match(/(?:dob[:\s]*)?(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})/i) || cell.match(/(\d{4}[./-]\d{1,2}[./-]\d{1,2})/);
+        if (dateMatch) {
+          const numDigits = cell.replace(/\D/g, '').length;
+          if (numDigits >= 6 && numDigits <= 8) {
+            dob = dateMatch[1].replace(/[-/]/g, '.');
+          }
+        }
       }
 
       if (solvedCount === undefined && /^\d+$/.test(cell) && parseInt(cell, 10) < 4000 && parseInt(cell, 10) > 0) {
@@ -270,7 +305,21 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
     }
 
     const cleanRegNo = regNo.trim().toUpperCase();
-    let cleanName = name.replace(/\s*\(\s*\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\s*\)/g, '').trim();
+
+    // Extract DOB from name if embedded in parentheses like "SARAVANAKUMAR V (07.12.2005)"
+    if (name) {
+      const nameDobMatch = name.match(/\(?\s*(?:dob[:\s]*)?(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s*\)?/i);
+      if (nameDobMatch && !dob) {
+        dob = nameDobMatch[1].replace(/[-/]/g, '.');
+      }
+    }
+
+    // Clean base student name (remove date patterns and clean whitespace)
+    let cleanName = name
+      .replace(/\(?\s*(?:dob[:\s]*)?\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\s*\)?/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
     const cleanUsername = extractCleanLeetCodeUsername(leetcodeUrl);
     const cleanMentor = normalizeMentorName(rawMentor) || 'Unassigned';
 
@@ -279,7 +328,6 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
     }
 
     let isValid = true;
-    let isDuplicate = false;
     let validationError = '';
 
     if (!cleanRegNo) {
@@ -293,14 +341,13 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
       validationError = 'Missing LeetCode Username / Profile URL';
     }
 
+    // AI Deduplication Engine: Automatically remove duplicates from sheet
     if (cleanRegNo && isValid) {
       if (seenRegNumbers.has(cleanRegNo)) {
-        isDuplicate = true;
         duplicateCount++;
-        validationError = 'Duplicate in sheet (Auto-resolved)';
-      } else {
-        seenRegNumbers.set(cleanRegNo, index);
+        return; // Exclude duplicate row immediately
       }
+      seenRegNumbers.set(cleanRegNo, parsedRows.length);
     }
 
     parsedRows.push({
@@ -308,21 +355,46 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
       rawRegisterNumber: regNo,
       cleanRegisterNumber: cleanRegNo,
       name: cleanName || 'Unnamed Student',
+      dob: dob || undefined,
       department: dept,
+      section: section || undefined,
       academicYear: academicYear || undefined,
       currentYear: currentYear || undefined,
       rawMentor: rawMentor,
       cleanMentor: cleanMentor || 'Unassigned',
-      phone: phone,
       rawLeetCode: leetcodeUrl,
       cleanLeetCode: cleanUsername,
       totalSolved: solvedCount,
-      isValid: isValid && !isDuplicate,
-      isDuplicate,
+      isValid,
+      isDuplicate: false,
       validationError: validationError || undefined,
-      selected: isValid && !isDuplicate,
+      selected: isValid,
     });
   });
+
+  // Disambiguate students who share the exact same name and initial using Date of Birth (DOB)
+  const nameGroups = new Map<string, ParsedImportRow[]>();
+  for (const row of parsedRows) {
+    if (!row.isValid) continue;
+    const normKey = row.name.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!nameGroups.has(normKey)) {
+      nameGroups.set(normKey, []);
+    }
+    nameGroups.get(normKey)!.push(row);
+  }
+
+  for (const [, group] of nameGroups.entries()) {
+    if (group.length > 1) {
+      // Multiple students share identical name & initial! Disambiguate with DOB
+      for (const row of group) {
+        if (row.dob) {
+          row.name = `${row.name} (DOB: ${row.dob})`;
+        } else if (row.cleanRegisterNumber) {
+          row.name = `${row.name} (${row.cleanRegisterNumber.slice(-4)})`;
+        }
+      }
+    }
+  }
 
   const validCount = parsedRows.filter((r) => r.isValid).length;
   const invalidCount = parsedRows.length - validCount;
@@ -335,6 +407,8 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
   return {
     rows: parsedRows,
     detectedMentors,
+    detectedYears: Array.from(yearSet).sort(),
+    detectedSections: Array.from(sectionSet).sort(),
     totalParsed: parsedRows.length,
     validCount,
     invalidCount,
@@ -342,3 +416,4 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
     hasHeaders,
   };
 }
+

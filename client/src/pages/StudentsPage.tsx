@@ -209,6 +209,7 @@ export const StudentsPage: React.FC = () => {
   const [importAllocBatches, setImportAllocBatches] = useState<any[]>([]);
   const [importDuplicateCount, setImportDuplicateCount] = useState<number>(0);
   const [importSearch, setImportSearch] = useState<string>('');
+  const [quickAssignStaffId, setQuickAssignStaffId] = useState<string>('');
   const [isImporting, setIsImporting] = useState<boolean>(false);
   const [importResult, setImportResult] = useState<{
     success: boolean;
@@ -601,6 +602,7 @@ export const StudentsPage: React.FC = () => {
     setImportMentorId('');
     setMentorMappings({});
     setImportDuplicateCount(0);
+    setQuickAssignStaffId('');
     setImportResult(null);
   };
 
@@ -729,6 +731,26 @@ export const StudentsPage: React.FC = () => {
     );
   };
 
+  const handleApplyBulkMentorAssignment = () => {
+    if (!quickAssignStaffId) return;
+    const targetRows = getFilteredImportRows().filter((r) => r.selected && r.isValid);
+    if (targetRows.length === 0) return;
+    const targetIds = new Set(targetRows.map((r) => r.id));
+    const targetStaff = staffList.find((s) => s.id === quickAssignStaffId);
+
+    setImportRows((prev) =>
+      prev.map((r) => {
+        if (!targetIds.has(r.id)) return r;
+        return {
+          ...r,
+          mentorStaffId: quickAssignStaffId === 'NONE' ? 'NONE' : quickAssignStaffId,
+          cleanMentor: quickAssignStaffId === 'NONE' ? 'Unassigned' : (targetStaff?.name || r.cleanMentor),
+        };
+      })
+    );
+    setQuickAssignStaffId('');
+  };
+
   const getFilteredImportRows = () => {
     return importRows.filter((row) => {
       // Mentor filter (supports multi-selection of mentors)
@@ -787,10 +809,10 @@ export const StudentsPage: React.FC = () => {
       const payload = {
         students: targetRowsToImport.map((r) => {
           let rowMentorId: string | undefined = undefined;
-          if (importMentorId && importMentorId !== 'AUTO') {
-            rowMentorId = importMentorId;
-          } else if (r.mentorStaffId && r.mentorStaffId !== 'AUTO') {
+          if (r.mentorStaffId && r.mentorStaffId !== 'AUTO') {
             rowMentorId = r.mentorStaffId;
+          } else if (importMentorId && importMentorId !== 'AUTO') {
+            rowMentorId = importMentorId;
           } else if (mentorMappings[r.cleanMentor] && mentorMappings[r.cleanMentor] !== 'AUTO') {
             rowMentorId = mentorMappings[r.cleanMentor];
           }
@@ -2057,6 +2079,60 @@ export const StudentsPage: React.FC = () => {
                       </div>
 
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.65rem' }}>
+                        {/* Unassigned / Non-Mentor Students Mapping Card */}
+                        {importRows.some((r) => r.cleanMentor === 'Unassigned') && (
+                          <div
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.45rem',
+                              padding: '0.35rem 0.65rem',
+                              borderRadius: '6px',
+                              backgroundColor: 'rgba(245, 158, 11, 0.12)',
+                              border: '1px solid rgba(245, 158, 11, 0.35)',
+                              fontSize: '0.78rem',
+                            }}
+                          >
+                            <div style={{ fontWeight: 600, color: '#fbbf24', whiteSpace: 'nowrap' }}>
+                              ⚠️ Non-Mentor Students ({importRows.filter((r) => r.cleanMentor === 'Unassigned').length}) &rarr;
+                            </div>
+                            <select
+                              className="form-input"
+                              value={mentorMappings['Unassigned'] || 'NONE'}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setMentorMappings((prev) => ({ ...prev, Unassigned: val }));
+                                if (val && val !== 'NONE' && val !== 'AUTO') {
+                                  const staff = staffList.find((s) => s.id === val);
+                                  setImportRows((prevRows) =>
+                                    prevRows.map((r) =>
+                                      r.cleanMentor === 'Unassigned'
+                                        ? { ...r, mentorStaffId: val, cleanMentor: staff?.name || 'Assigned' }
+                                        : r
+                                    )
+                                  );
+                                }
+                              }}
+                              style={{
+                                fontSize: '0.75rem',
+                                padding: '0.2rem 0.4rem',
+                                height: '28px',
+                                minWidth: '160px',
+                                borderColor: mentorMappings['Unassigned'] && mentorMappings['Unassigned'] !== 'NONE' ? '#818cf8' : undefined,
+                              }}
+                            >
+                              <option value="NONE">❌ Keep Unassigned</option>
+                              <optgroup label="Assign to Admin-Created Staff">
+                                {staffList.map((stf) => (
+                                  <option key={stf.id} value={stf.id}>
+                                    👤 {stf.name} ({(stf.role || 'staff').toLowerCase()})
+                                  </option>
+                                ))}
+                              </optgroup>
+                            </select>
+                          </div>
+                        )}
+
                         {detectedMentors.filter((m) => m !== 'Unassigned').map((mentorName) => {
                           const studentCount = importRows.filter((r) => r.cleanMentor === mentorName).length;
                           const currentMappedVal = mentorMappings[mentorName] || 'AUTO';
@@ -2166,14 +2242,18 @@ export const StudentsPage: React.FC = () => {
                                 borderRadius: '16px',
                                 fontSize: '0.73rem',
                                 fontWeight: 600,
-                                backgroundColor: isSelected ? 'var(--primary)' : 'rgba(255, 255, 255, 0.06)',
-                                color: isSelected ? '#ffffff' : isUnassigned ? '#f87171' : 'var(--text-secondary)',
-                                border: isSelected ? '1px solid var(--primary)' : isUnassigned ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid var(--border-subtle)',
+                                backgroundColor: isSelected
+                                  ? (isUnassigned ? '#d97706' : 'var(--primary)')
+                                  : (isUnassigned ? 'rgba(245, 158, 11, 0.15)' : 'rgba(255, 255, 255, 0.06)'),
+                                color: isSelected ? '#ffffff' : isUnassigned ? '#fbbf24' : 'var(--text-secondary)',
+                                border: isSelected
+                                  ? (isUnassigned ? '1px solid #d97706' : '1px solid var(--primary)')
+                                  : (isUnassigned ? '1px solid rgba(245, 158, 11, 0.4)' : '1px solid var(--border-subtle)'),
                                 cursor: 'pointer',
                               }}
-                              title={isUnassigned ? 'Students without a mentor in the file' : `Click to filter ${mentor} (Shift+Click to multi-select)`}
+                              title={isUnassigned ? 'Click to view students without mentor details' : `Click to filter ${mentor} (Shift+Click to multi-select)`}
                             >
-                              {isSelected ? '✓ ' : ''}{isUnassigned ? '⚠️ Unassigned' : `👤 ${mentor}`} ({count})
+                              {isSelected ? '✓ ' : ''}{isUnassigned ? '⚠️ Non-Mentor Students' : `👤 ${mentor}`} ({count})
                             </button>
                           );
                         })}
@@ -2311,15 +2391,64 @@ export const StudentsPage: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Table Selection Helper */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', color: 'var(--text-secondary)', padding: '0 0.25rem' }}>
-                    <div>
-                      Showing <strong>{getFilteredImportRows().length}</strong> student(s) &bull; Selected:{' '}
-                      <strong style={{ color: 'var(--primary)' }}>
-                        {getFilteredImportRows().filter((r) => r.selected && r.isValid).length}
-                      </strong>
+                  {/* Table Selection & Quick Bulk Mentor Assignment Helper */}
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '0.75rem',
+                    padding: '0.55rem 0.75rem',
+                    borderRadius: '8px',
+                    backgroundColor: 'rgba(30, 41, 59, 0.85)',
+                    border: '1px solid var(--border-subtle)',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                        Showing <strong>{getFilteredImportRows().length}</strong> student(s) &bull; Selected:{' '}
+                        <strong style={{ color: 'var(--primary)' }}>
+                          {getFilteredImportRows().filter((r) => r.selected && r.isValid).length}
+                        </strong>
+                      </span>
+
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <select
+                          className="form-input"
+                          value={quickAssignStaffId}
+                          onChange={(e) => setQuickAssignStaffId(e.target.value)}
+                          style={{ fontSize: '0.75rem', padding: '0.2rem 0.45rem', height: '28px', minWidth: '170px' }}
+                        >
+                          <option value="">⚡ Assign Selected to Mentor...</option>
+                          <option value="NONE">❌ Set Unassigned (No Mentor)</option>
+                          <optgroup label="Available Staff (Admin Created)">
+                            {staffList.map((stf) => (
+                              <option key={stf.id} value={stf.id}>
+                                👤 {stf.name} ({(stf.role || 'staff').toLowerCase()})
+                              </option>
+                            ))}
+                          </optgroup>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={handleApplyBulkMentorAssignment}
+                          disabled={!quickAssignStaffId || getFilteredImportRows().filter((r) => r.selected && r.isValid).length === 0}
+                          style={{
+                            padding: '0.25rem 0.65rem',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            borderRadius: '6px',
+                            backgroundColor: quickAssignStaffId && getFilteredImportRows().filter((r) => r.selected && r.isValid).length > 0 ? 'var(--primary)' : 'rgba(255, 255, 255, 0.08)',
+                            color: '#ffffff',
+                            border: 'none',
+                            cursor: quickAssignStaffId && getFilteredImportRows().filter((r) => r.selected && r.isValid).length > 0 ? 'pointer' : 'not-allowed',
+                          }}
+                        >
+                          Assign Mentor
+                        </button>
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                       <button
                         type="button"
                         onClick={() => handleToggleAllVisibleImportRows(true)}
@@ -2327,7 +2456,7 @@ export const StudentsPage: React.FC = () => {
                       >
                         Select All Visible
                       </button>
-                      <span>|</span>
+                      <span style={{ color: 'var(--text-muted)' }}>|</span>
                       <button
                         type="button"
                         onClick={() => handleToggleAllVisibleImportRows(false)}
@@ -2432,61 +2561,58 @@ export const StudentsPage: React.FC = () => {
                             <td style={{ padding: '0.55rem 0.75rem', color: 'var(--text-secondary)' }}>
                               {row.cleanMentor}
                             </td>
-                            <td style={{ padding: '0.55rem 0.75rem', whiteSpace: 'nowrap' }}>
+                            <td style={{ padding: '0.4rem 0.6rem', whiteSpace: 'nowrap' }}>
                               {(() => {
-                                let resolvedStaffId: string | undefined = undefined;
-                                if (importMentorId && importMentorId !== 'AUTO') {
-                                  resolvedStaffId = importMentorId === 'NONE' ? undefined : importMentorId;
-                                } else if (row.mentorStaffId && row.mentorStaffId !== 'AUTO') {
-                                  resolvedStaffId = row.mentorStaffId === 'NONE' ? undefined : row.mentorStaffId;
-                                } else if (mentorMappings[row.cleanMentor]) {
-                                  const m = mentorMappings[row.cleanMentor];
-                                  if (m !== 'AUTO' && m !== 'NONE') {
-                                    resolvedStaffId = m;
-                                  }
-                                }
-
-                                const assignedStaff = resolvedStaffId ? staffList.find((s) => s.id === resolvedStaffId) : null;
-
-                                if (assignedStaff) {
-                                  return (
-                                    <span style={{
-                                      display: 'inline-flex',
-                                      alignItems: 'center',
-                                      gap: '0.3rem',
-                                      padding: '0.15rem 0.5rem',
-                                      borderRadius: '4px',
-                                      backgroundColor: 'rgba(99, 102, 241, 0.15)',
-                                      color: '#818cf8',
-                                      fontSize: '0.75rem',
-                                      fontWeight: 600,
-                                    }}>
-                                      <UserCheck size={12} /> {assignedStaff.name}
-                                    </span>
-                                  );
-                                }
-
-                                if (row.cleanMentor && row.cleanMentor !== 'Unassigned') {
-                                  return (
-                                    <span style={{
-                                      display: 'inline-flex',
-                                      alignItems: 'center',
-                                      gap: '0.3rem',
-                                      padding: '0.15rem 0.5rem',
-                                      borderRadius: '4px',
-                                      backgroundColor: 'rgba(245, 158, 11, 0.15)',
-                                      color: '#fbbf24',
-                                      fontSize: '0.75rem',
-                                    }}>
-                                      🔍 {row.cleanMentor} (Auto)
-                                    </span>
-                                  );
+                                let effectiveStaffId = '';
+                                if (row.mentorStaffId && row.mentorStaffId !== 'AUTO') {
+                                  effectiveStaffId = row.mentorStaffId;
+                                } else if (importMentorId && importMentorId !== 'AUTO') {
+                                  effectiveStaffId = importMentorId;
+                                } else if (mentorMappings[row.cleanMentor] && mentorMappings[row.cleanMentor] !== 'AUTO') {
+                                  effectiveStaffId = mentorMappings[row.cleanMentor];
                                 }
 
                                 return (
-                                  <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
-                                    Unassigned
-                                  </span>
+                                  <select
+                                    className="form-input"
+                                    value={effectiveStaffId}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      const stf = staffList.find((s) => s.id === val);
+                                      setImportRows((prev) =>
+                                        prev.map((r) =>
+                                          r.id === row.id
+                                            ? {
+                                                ...r,
+                                                mentorStaffId: val || undefined,
+                                                cleanMentor: val === 'NONE' ? 'Unassigned' : (stf?.name || r.cleanMentor),
+                                              }
+                                            : r
+                                        )
+                                      );
+                                    }}
+                                    style={{
+                                      fontSize: '0.74rem',
+                                      padding: '0.15rem 0.35rem',
+                                      height: '26px',
+                                      minWidth: '145px',
+                                      borderColor: effectiveStaffId && effectiveStaffId !== 'NONE' ? '#818cf8' : undefined,
+                                    }}
+                                  >
+                                    <option value="">
+                                      {row.cleanMentor && row.cleanMentor !== 'Unassigned'
+                                        ? `🔍 ${row.cleanMentor}`
+                                        : '⚠️ Unassigned'}
+                                    </option>
+                                    <option value="NONE">❌ Unassigned</option>
+                                    <optgroup label="Assign Staff">
+                                      {staffList.map((stf) => (
+                                        <option key={stf.id} value={stf.id}>
+                                          👤 {stf.name}
+                                        </option>
+                                      ))}
+                                    </optgroup>
+                                  </select>
                                 );
                               })()}
                             </td>
