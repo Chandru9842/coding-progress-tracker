@@ -766,7 +766,8 @@ async function syncGoogleSheetsForBatchIds(batchIds: string[], user: { userId: s
     await Promise.all(
       activeLinks.map(async (link) => {
         try {
-          await syncGoogleSheetLink(link.id, user);
+          const sysContext = { userId: link.owner_user_id || 'system-batch-sync', role: 'ADMIN' as const };
+          await syncGoogleSheetLink(link.id, sysContext);
         } catch (sheetErr: any) {
           console.warn(`[Google Sheets Isolation Warning] Active link ${link.id} sync error:`, sheetErr?.message || sheetErr);
         }
@@ -911,9 +912,9 @@ export async function syncFilteredStudentsLeetCode(
     studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
   }
 
-  // Run student syncing concurrently with a pool of 15 workers and an 8.5-second time budget
+  // Run student syncing concurrently with a pool of 15 workers and a 6.5-second time budget
   // to guarantee the HTTP response always returns cleanly within Vercel's serverless timeout.
-  const MAX_SAFE_EXECUTION_MS = 8500;
+  const MAX_SAFE_EXECUTION_MS = 6500;
   const results = await runConcurrentTasks(
     studentList,
     15,

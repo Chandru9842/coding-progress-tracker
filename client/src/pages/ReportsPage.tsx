@@ -68,16 +68,29 @@ export default function ReportsPage() {
     const m = String(ist.getMonth() + 1).padStart(2, '0');
     return `${y}-${m}`;
   });
-  const [autoSyncOnSection, setAutoSyncOnSection] = useState<boolean>(true);
-
   const extractErrorMessage = (err: any, fallback: string): string => {
     if (!err) return fallback;
-    if (typeof err === 'string' && err.trim()) return err;
+    if (typeof err === 'string' && err.trim()) {
+      if (err.includes('deployment') || err.includes('FUNCTION_INVOCATION_TIMEOUT') || err.includes('504')) {
+        return 'The cloud request timed out. Showing latest data from PostgreSQL database.';
+      }
+      return err;
+    }
     if (err.response?.data) {
       const data = err.response.data;
-      if (typeof data === 'string' && data.trim()) return data;
+      if (typeof data === 'string' && data.trim()) {
+        if (data.includes('deployment') || data.includes('FUNCTION_INVOCATION_TIMEOUT') || data.includes('504')) {
+          return 'The cloud request timed out. Showing latest data from PostgreSQL database.';
+        }
+        return data;
+      }
       if (typeof data === 'object') {
-        if (typeof data.error === 'string' && data.error.trim()) return data.error;
+        if (typeof data.error === 'string' && data.error.trim()) {
+          if (data.error.includes('deployment') || data.error.includes('FUNCTION_INVOCATION_TIMEOUT') || data.error.includes('504')) {
+            return 'The cloud request timed out. Showing latest data from PostgreSQL database.';
+          }
+          return data.error;
+        }
         if (data.error && typeof data.error === 'object') {
           if (typeof data.error.message === 'string' && data.error.message.trim()) {
             return data.error.message;
@@ -235,10 +248,8 @@ export default function ReportsPage() {
       const todayStr = getISTDateString(0);
       setFromDate(todayStr);
       setToDate(todayStr);
-      // Immediately switch view to today's date boundary
+      // Switch view to today's date boundary instantly from PostgreSQL
       fetchWithParams({ from: todayStr, to: todayStr, preset: 'today' });
-      // Automatically trigger live LeetCode sync for current scope so problems solved since 12:00 AM midnight are fetched live
-      handleSyncFilteredLeetCode(undefined, undefined, todayStr, todayStr);
     } else if (preset === 'yesterday') {
       const yestStr = getISTDateString(-1);
       setFromDate(yestStr);
@@ -1012,9 +1023,6 @@ export default function ReportsPage() {
                   const targetBatchId = secMatch ? secMatch.batchId : '';
                   setBatchId(targetBatchId);
                   fetchWithParams({ sectionId: selectedSecId, batchId: targetBatchId, allocationBatchId: '' });
-                  if (selectedSecId && autoSyncOnSection) {
-                    handleSyncFilteredLeetCode(selectedSecId, targetBatchId);
-                  }
                 }}
                 style={{
                   width: '100%',
@@ -1033,16 +1041,6 @@ export default function ReportsPage() {
               </select>
 
               <div style={{ marginTop: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.725rem', color: 'var(--text-muted)', cursor: 'pointer', userSelect: 'none' }}>
-                  <input
-                    type="checkbox"
-                    checked={autoSyncOnSection}
-                    onChange={(e) => setAutoSyncOnSection(e.target.checked)}
-                    style={{ cursor: 'pointer', accentColor: '#34d399' }}
-                  />
-                  <span>Auto-fetch live LeetCode on section select</span>
-                </label>
-
                 {sectionId && (
                   <button
                     type="button"
@@ -1183,7 +1181,7 @@ export default function ReportsPage() {
                 marginBottom: '0.5rem',
               }}>
                 {datePreset === 'today' && (
-                  <span>⚡ <strong>Today Preset:</strong> Shows problems students solved starting from 12:00 AM midnight till now, alongside their overall cumulative total. Live LeetCode sync is triggered immediately on selection.</span>
+                  <span>⚡ <strong>Today Preset:</strong> Shows problems students solved starting from 12:00 AM midnight till now, alongside their overall cumulative total. (Click "Sync Filtered LeetCode Data" above anytime for a live refresh).</span>
                 )}
                 {datePreset === 'yesterday' && (
                   <span>⏪ <strong>Yesterday Preset:</strong> Isolates strictly yesterday's solves (problems submitted from yesterday's 12:00 AM to 11:59 PM), alongside overall cumulative total.</span>
