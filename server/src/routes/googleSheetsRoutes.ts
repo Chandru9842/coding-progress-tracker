@@ -12,6 +12,8 @@ import {
   getAutomationStatus,
   testWebhook,
   runDailyAutomationNow,
+  getDailySyncMatrixController,
+  recordSyncLogController,
   getGoogleSheetsSyncStatusController,
 } from '../controllers/googleSheetsController.js';
 
@@ -23,6 +25,11 @@ router.get('/google-sheets/automation-status', requireAuth, requireStaff, getAut
 router.post('/google-sheets/run-daily-automation', requireAuth, requireStaff, runDailyAutomationNow);
 router.get('/google-sheets/daily-sync-ping', runDailyAutomationNow);
 router.post('/google-sheets/daily-sync-ping', runDailyAutomationNow);
+
+// Autonomous Scheduler Endpoints (secured by CRON_SECRET or Admin Auth)
+router.get('/google-sheets/daily-sync-matrix', getDailySyncMatrixController);
+router.post('/google-sheets/daily-sync-matrix', getDailySyncMatrixController);
+router.post('/google-sheets/record-sync-log', recordSyncLogController);
 
 // Both ADMIN and STAFF can manage Google Sheet links for their authorized scope
 router.get('/google-sheets/links', requireAuth, requireStaff, getLinks);

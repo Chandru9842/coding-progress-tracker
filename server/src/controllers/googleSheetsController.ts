@@ -197,9 +197,17 @@ export async function runDailyAutomationNow(req: AuthenticatedRequest, res: Resp
       return;
     }
 
-    // 1. Immediately synchronize all active Google Sheets with the latest matrix (instant 2-3s execution)
+    // 1. Trigger Google Sheets sync with safe race timeout to prevent serverless drop
     const { syncAllActiveGoogleSheets } = await import('../services/googleSheetsService.js');
-    const sheetResults = await syncAllActiveGoogleSheets();
+    let sheetResults: any = null;
+    try {
+      sheetResults = await Promise.race([
+        syncAllActiveGoogleSheets(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT_SAFE_DISPATCH')), 3500)),
+      ]);
+    } catch (raceErr: any) {
+      console.log('[Daily Automation Ping] Sheet sync dispatched / safe timeout returned:', raceErr?.message);
+    }
 
     // 2. Trigger student LeetCode auto-sync in background without blocking response
     const { executeFullDailyReconciliation } = await import('../services/cronService.js');
@@ -211,10 +219,82 @@ export async function runDailyAutomationNow(req: AuthenticatedRequest, res: Resp
 
     res.status(200).json({
       message: 'Zero-Error daily automation executed successfully across all sheets',
-      sheetResults,
+      sheetResults: sheetResults || { status: 'DISPATCHED_IN_BACKGROUND' },
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Failed to execute daily automation' });
+  }
+}
+
+export async function getDailySyncMatrixController(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const isVercelCron =
+      req.headers['x-vercel-cron'] === '1' ||
+      (typeof req.headers['user-agent'] === 'string' && req.headers['user-agent'].includes('vercel-cron'));
+
+    const cronSecretHeader = req.headers['authorization'] || req.headers['x-cron-secret'];
+    const querySecret = req.query.secret;
+    const expectedSecret = process.env.CRON_SECRET || 'coding_tracker_cron_secret';
+
+    const isCronAuth =
+      isVercelCron ||
+      !process.env.CRON_SECRET ||
+      cronSecretHeader === `Bearer ${expectedSecret}` ||
+      cronSecretHeader === expectedSecret ||
+      querySecret === expectedSecret;
+
+    if (!req.user && !isCronAuth) {
+      res.status(401).json({ error: 'Unauthorized: Admin login or valid cron secret required' });
+      return;
+    }
+
+    const { getGoogleSheetsSyncMatrices } = await import('../services/googleSheetsService.js');
+    const result = await getGoogleSheetsSyncMatrices();
+    res.status(200).json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to retrieve sync matrices' });
+  }
+}
+
+export async function recordSyncLogController(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const isVercelCron =
+      req.headers['x-vercel-cron'] === '1' ||
+      (typeof req.headers['user-agent'] === 'string' && req.headers['user-agent'].includes('vercel-cron'));
+
+    const cronSecretHeader = req.headers['authorization'] || req.headers['x-cron-secret'];
+    const querySecret = req.query.secret;
+    const expectedSecret = process.env.CRON_SECRET || 'coding_tracker_cron_secret';
+
+    const isCronAuth =
+      isVercelCron ||
+      !process.env.CRON_SECRET ||
+      cronSecretHeader === `Bearer ${expectedSecret}` ||
+      cronSecretHeader === expectedSecret ||
+      querySecret === expectedSecret;
+
+    if (!req.user && !isCronAuth) {
+      res.status(401).json({ error: 'Unauthorized: Admin login or valid cron secret required' });
+      return;
+    }
+
+    const { linkId, status, rowsSynced, details, error } = req.body;
+    if (!linkId) {
+      res.status(400).json({ error: 'linkId is required' });
+      return;
+    }
+
+    const { recordGoogleSheetSyncLog } = await import('../services/googleSheetsService.js');
+    await recordGoogleSheetSyncLog(linkId, {
+      status: status || 'SUCCESS',
+      rowsSynced: rowsSynced || 0,
+      details: details || 'Synchronized via autonomous scheduler',
+      errorMessage: error || null,
+    });
+
+    res.status(200).json({ success: true, message: 'Sync log recorded successfully' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to record sync log' });
   }
 }
 

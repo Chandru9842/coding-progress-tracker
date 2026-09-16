@@ -794,23 +794,24 @@ async function runConcurrentTasks<T, R>(
   return results.filter((r) => r !== undefined);
 }
 
-export async function syncGoogleSheetLink(
+export async function getGoogleSheetMatrixData(
   linkId: string,
   user: { userId: string; role: 'ADMIN' | 'STAFF' }
 ): Promise<{
-  success: boolean;
-  rowsSynced: number;
-  dateColumnsCount: number;
-  syncedAt: Date;
-  details: string;
+  link: any;
   matrix: GoogleSheetMatrix;
+  startDate: string | null;
+  webhookUrl: string | null;
+  payload: {
+    sheetName: string;
+    headers: string[];
+    rows: string[][];
+    studentCount: number;
+    updatedAt: string;
+  };
 }> {
-  const syncStartTime = Date.now();
   const link = await getGoogleSheetLinkById(linkId, user);
-  const stopTask = diagnosticLogService.startSyncTask(`sheet_${linkId}`, `Sync Google Sheet: ${link.name}`);
-
-  try {
-    let studentRows: any[] = [];
+  let studentRows: any[] = [];
   let snapshotRows: any[] = [];
 
   let activeBatchIds = [...link.batch_ids];
@@ -907,8 +908,6 @@ export async function syncGoogleSheetLink(
       whereClause.id = { in: authorizedIds };
     }
 
-
-
     studentRows = await prisma.student.findMany({
       where: whereClause,
       include: {
@@ -929,24 +928,25 @@ export async function syncGoogleSheetLink(
       mentor: st.staff_student_assignments?.[0]?.staff || null,
     }));
 
-    const stIds = studentRows.map((s) => s.id);
-    snapshotRows = await prisma.dailyCodingSnapshot.findMany({
-      where: { student_id: { in: stIds } },
-    });
+    // Reuse snapshots already eager-loaded in studentRows when available
+    const existingSnapshots = studentRows.flatMap((st) => st.snapshots || []);
+    if (existingSnapshots.length > 0) {
+      snapshotRows = existingSnapshots;
+    } else {
+      const stIds = studentRows.map((s) => s.id);
+      snapshotRows = await prisma.dailyCodingSnapshot.findMany({
+        where: { student_id: { in: stIds } },
+      });
+    }
   }
 
-
-  // Extract Start Date
   let startDate: string | null = (link as any).start_date || null;
   if (!startDate && link.spreadsheet_url && link.spreadsheet_url.includes('@@START_DATE@@')) {
     startDate = link.spreadsheet_url.split('@@START_DATE@@')[1] || null;
   }
 
   const matrix = buildGoogleSheetMatrix(studentRows, snapshotRows, startDate);
-  const now = new Date();
-  let details = `Idempotently synchronized ${matrix.studentCount} student rows (one row per student) and ${matrix.dateColumnsCount} date columns (from ${startDate || 'all history'}) for linked batches [${link.batch_ids.join(', ')}] into Google Sheet ID [${link.spreadsheet_id}].`;
 
-  // Dispatch Webhook POST if Google Apps Script URL or webhook_url is linked
   let webhookUrl: string | null = (link as any).webhook_url || null;
   if (!webhookUrl && link.spreadsheet_url && link.spreadsheet_url.includes('@@WEBHOOK@@')) {
     const afterWh = link.spreadsheet_url.split('@@WEBHOOK@@')[1];
@@ -957,31 +957,56 @@ export async function syncGoogleSheetLink(
     webhookUrl = link.spreadsheet_id;
   }
 
-  let webhookSuccess = true;
-  let webhookResponseText = '';
+  const now = new Date();
+  const payload = {
+    sheetName: link.name || 'Daily Progress',
+    headers: matrix.headers,
+    rows: matrix.rows,
+    studentCount: matrix.studentCount,
+    updatedAt: now.toISOString(),
+  };
 
-  if (webhookUrl) {
-    const payloadString = JSON.stringify({
-      sheetName: link.name || 'Daily Progress',
-      headers: matrix.headers,
-      rows: matrix.rows,
-      studentCount: matrix.studentCount,
-      updatedAt: now.toISOString(),
-    });
+  return {
+    link,
+    matrix,
+    startDate,
+    webhookUrl,
+    payload,
+  };
+}
 
-    const maxRetries = 2;
-    let attempt = 0;
-    let lastErrorMsg = '';
+export async function syncGoogleSheetLink(
+  linkId: string,
+  user: { userId: string; role: 'ADMIN' | 'STAFF' }
+): Promise<{
+  success: boolean;
+  rowsSynced: number;
+  dateColumnsCount: number;
+  syncedAt: Date;
+  details: string;
+  matrix: GoogleSheetMatrix;
+}> {
+  const syncStartTime = Date.now();
+  const { link, matrix, startDate, webhookUrl, payload } = await getGoogleSheetMatrixData(linkId, user);
+  const stopTask = diagnosticLogService.startSyncTask(`sheet_${linkId}`, `Sync Google Sheet: ${link.name}`);
 
-    while (attempt < maxRetries) {
-      attempt++;
+  try {
+    const now = new Date();
+    let details = `Idempotently synchronized ${matrix.studentCount} student rows (one row per student) and ${matrix.dateColumnsCount} date columns (from ${startDate || 'all history'}) for linked batches [${link.batch_ids.join(', ')}] into Google Sheet ID [${link.spreadsheet_id}].`;
+
+    let webhookSuccess = true;
+    let webhookResponseText = '';
+
+    if (webhookUrl) {
+      const payloadString = JSON.stringify(payload);
+
       try {
         const whRes = await axios.post(webhookUrl, payloadString, {
           headers: {
             'Content-Type': 'text/plain;charset=utf-8',
           },
           maxRedirects: 5,
-          timeout: 7000,
+          timeout: 4500, // Safe fast timeout to guarantee serverless responsiveness
         });
 
         webhookResponseText = String(whRes.data || '').trim();
@@ -991,91 +1016,50 @@ export async function syncGoogleSheetLink(
 
         webhookSuccess = true;
         details += ` [Google Sheet updated via Apps Script: ${webhookResponseText || 'SUCCESS'}]`;
-        console.log(`[GOOGLE_SHEETS] (Attempt ${attempt}/${maxRetries}) Successfully posted matrix data to Apps Script Webhook [${webhookUrl}], Response: ${webhookResponseText}`);
-        break;
+        console.log(`[GOOGLE_SHEETS] Successfully posted matrix data to Apps Script Webhook [${webhookUrl}], Response: ${webhookResponseText}`);
       } catch (postErr: any) {
-        lastErrorMsg = postErr?.message || String(postErr);
-        console.warn(`[GOOGLE_SHEETS] Webhook attempt ${attempt}/${maxRetries} failed for link [${linkId}]: ${lastErrorMsg}`);
-        if (attempt < maxRetries) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        } else {
-          webhookSuccess = false;
-          webhookResponseText = lastErrorMsg;
-          details += ` [Webhook Warning after ${maxRetries} attempts: ${lastErrorMsg}]`;
-          console.error(`[GOOGLE_SHEETS] Apps Script Webhook POST failed after ${maxRetries} attempts:`, lastErrorMsg);
-        }
+        webhookSuccess = false;
+        webhookResponseText = postErr?.message || String(postErr);
+        details += ` [Webhook Notice: ${webhookResponseText}]`;
+        console.warn(`[GOOGLE_SHEETS] Apps Script Webhook notice for [${linkId}]: ${webhookResponseText}`);
       }
-    }
-  } else {
-    webhookSuccess = false;
-    webhookResponseText = 'No Google Apps Script Webhook URL attached. Data matrix was generated locally, but Google Sheet cannot receive updates without an Apps Script Web App URL.';
-    details += ' [Warning: No Webhook URL attached - Google Sheet cannot receive updates automatically without Apps Script deployment]';
-  }
-
-  const syncStatus = webhookSuccess ? 'SUCCESS' : 'PARTIAL_WARNING';
-
-  if (!process.env.DATABASE_URL) {
-    const memLink = inMemoryStore.googleSheetLinks.find((l) => l.id === linkId);
-    if (memLink) {
-      memLink.last_sync_at = now;
-      memLink.last_sync_status = syncStatus;
-      memLink.last_sync_error = webhookSuccess ? null : 'Apps Script webhook did not confirm SUCCESS';
-      memLink.updated_at = now;
+    } else {
+      webhookSuccess = false;
+      webhookResponseText = 'No Google Apps Script Webhook URL attached.';
+      details += ' [Warning: No Webhook URL attached]';
     }
 
-    inMemoryStore.googleSheetLinkLogs.unshift({
-      id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      sheet_link_id: linkId,
+    const syncStatus = webhookSuccess ? 'SUCCESS' : 'PARTIAL_WARNING';
+
+    await recordGoogleSheetSyncLog(linkId, {
       status: syncStatus,
-      rows_synced: matrix.studentCount,
+      rowsSynced: matrix.studentCount,
       details,
-      error_message: webhookSuccess ? null : (webhookResponseText || 'Webhook dispatch warning'),
-      synced_at: now,
-    });
-  } else {
-    await prisma.googleSheetLink.update({
-      where: { id: linkId },
-      data: {
-        last_sync_at: now,
-        last_sync_status: syncStatus,
-        last_sync_error: webhookSuccess ? null : (webhookResponseText || 'Apps Script webhook did not confirm SUCCESS'),
-      },
+      errorMessage: webhookSuccess ? null : (webhookResponseText || 'Webhook dispatch notice'),
     });
 
-    await prisma.googleSheetLinkSyncLog.create({
-      data: {
-        sheet_link_id: linkId,
-        status: syncStatus,
-        rows_synced: matrix.studentCount,
-        details,
-        error_message: webhookSuccess ? null : (webhookResponseText || null),
-        synced_at: now,
-      },
+    const sheetsLatencyMs = Date.now() - syncStartTime;
+    diagnosticLogService.recordLog({
+      targetType: 'GOOGLE_SHEET',
+      targetId: linkId,
+      targetName: link.name,
+      identifier: link.spreadsheet_id,
+      department: link.department || undefined,
+      latencyMs: sheetsLatencyMs,
+      status: webhookSuccess ? 'SUCCESS' : 'WARNING',
+      details: `Exported ${matrix.studentCount} student rows and ${matrix.dateColumnsCount} dates in ${(sheetsLatencyMs / 1000).toFixed(2)}s. ${webhookSuccess ? 'Webhook delivery confirmed.' : 'Apps Script notice: ' + (webhookResponseText || 'Not acknowledged')}`,
+      errorMessage: webhookSuccess ? undefined : (webhookResponseText || 'Webhook dispatch notice'),
+      source: link.webhook_url ? 'apps_script_webhook' : 'matrix_export',
     });
-  }
 
-  const sheetsLatencyMs = Date.now() - syncStartTime;
-  diagnosticLogService.recordLog({
-    targetType: 'GOOGLE_SHEET',
-    targetId: linkId,
-    targetName: link.name,
-    identifier: link.spreadsheet_id,
-    department: link.department || undefined,
-    latencyMs: sheetsLatencyMs,
-    status: webhookSuccess ? 'SUCCESS' : 'WARNING',
-    details: `Exported ${matrix.studentCount} student rows and ${matrix.dateColumnsCount} dates in ${(sheetsLatencyMs / 1000).toFixed(2)}s. ${webhookSuccess ? 'Webhook delivery confirmed.' : 'Apps Script warning: ' + (webhookResponseText || 'Not acknowledged')}`,
-    errorMessage: webhookSuccess ? undefined : (webhookResponseText || 'Webhook dispatch warning'),
-    source: link.webhook_url ? 'apps_script_webhook' : 'matrix_export',
-  });
-
-  return {
-    success: true,
-    rowsSynced: matrix.studentCount,
-    dateColumnsCount: matrix.dateColumnsCount,
-    syncedAt: now,
-    details,
-    matrix,
-  };
+    return {
+      success: true,
+      rowsSynced: matrix.studentCount,
+      dateColumnsCount: matrix.dateColumnsCount,
+      syncedAt: now,
+      details,
+      matrix,
+    };
   } finally {
     stopTask();
   }
@@ -1226,6 +1210,115 @@ export async function testGoogleSheetWebhook(
       message: `Webhook test failed: ${err?.message || 'Connection timeout'}. Verify the Apps Script is deployed as Web App with Access: "Anyone".`,
     };
   }
+}
+
+/**
+ * Records a Google Sheet synchronization log entry and updates the link status.
+ */
+export async function recordGoogleSheetSyncLog(
+  linkId: string,
+  data: {
+    status: 'SUCCESS' | 'FAILED' | 'PARTIAL_WARNING';
+    rowsSynced?: number;
+    details?: string;
+    errorMessage?: string | null;
+  }
+): Promise<void> {
+  const now = new Date();
+  if (!process.env.DATABASE_URL) {
+    const memLink = inMemoryStore.googleSheetLinks.find((l) => l.id === linkId);
+    if (memLink) {
+      memLink.last_sync_at = now;
+      memLink.last_sync_status = data.status;
+      memLink.last_sync_error = data.errorMessage || null;
+      memLink.updated_at = now;
+    }
+    inMemoryStore.googleSheetLinkLogs.unshift({
+      id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      sheet_link_id: linkId,
+      status: data.status,
+      rows_synced: data.rowsSynced ?? 0,
+      details: data.details || 'Synchronized via autonomous scheduler',
+      error_message: data.errorMessage || null,
+      synced_at: now,
+    });
+    return;
+  }
+
+  await prisma.googleSheetLink.update({
+    where: { id: linkId },
+    data: {
+      last_sync_at: now,
+      last_sync_status: data.status,
+      last_sync_error: data.errorMessage || null,
+    },
+  });
+
+  await prisma.googleSheetLinkSyncLog.create({
+    data: {
+      sheet_link_id: linkId,
+      status: data.status,
+      rows_synced: data.rowsSynced ?? 0,
+      details: data.details || 'Synchronized via autonomous scheduler',
+      error_message: data.errorMessage || null,
+      synced_at: now,
+    },
+  });
+}
+
+/**
+ * Returns pre-computed Google Sheets data matrices for all active links.
+ * Enables zero-timeout background execution by decoupling data preparation from webhook posting.
+ */
+export async function getGoogleSheetsSyncMatrices(): Promise<{
+  success: boolean;
+  sheets: Array<{
+    linkId: string;
+    name: string;
+    spreadsheetId: string;
+    webhookUrl: string | null;
+    studentCount: number;
+    dateColumnsCount: number;
+    payload: {
+      sheetName: string;
+      headers: string[];
+      rows: string[][];
+      studentCount: number;
+      updatedAt: string;
+    };
+  }>;
+}> {
+  let activeLinks: any[] = [];
+  if (!process.env.DATABASE_URL) {
+    activeLinks = inMemoryStore.googleSheetLinks.filter((l) => l.is_active);
+  } else {
+    activeLinks = await prisma.googleSheetLink.findMany({
+      where: { is_active: true },
+    });
+  }
+
+  const sheets: any[] = [];
+  for (const link of activeLinks) {
+    try {
+      const data = await getGoogleSheetMatrixData(link.id, { userId: link.owner_user_id || 'admin', role: 'ADMIN' });
+      sheets.push({
+        linkId: link.id,
+        name: link.name,
+        spreadsheetId: link.spreadsheet_id,
+        webhookUrl: data.webhookUrl,
+        studentCount: data.matrix.studentCount,
+        dateColumnsCount: data.matrix.dateColumnsCount,
+        payload: data.payload,
+      });
+    } catch (err: any) {
+      console.warn(`[Matrix Generation Notice] Failed for sheet ${link.id}:`, err?.message || err);
+    }
+  }
+
+  return {
+    success: true,
+    sheets,
+  };
 }
 
 /**

@@ -20,53 +20,17 @@ jobs:
     name: Execute Daily Snapshot Reconciliation
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger Production Daily Snapshot Reconciliation
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Execute Autonomous Daily Sync & Google Sheets Matrix Dispatch
         env:
           TARGET_URL: ${{ vars.PRODUCTION_URL || 'https://coding-progress-tracker-navy.vercel.app' }}
           CRON_SECRET: ${{ secrets.CRON_SECRET || 'coding_tracker_cron_secret' }}
         run: |
-          echo "=========================================================="
-          echo "Starting Autonomous Daily Snapshot Sync via GitHub Actions"
-          echo "Target URL: ${TARGET_URL}"
-          echo "Execution Time (UTC): $(date -u)"
-          echo "=========================================================="
-
-          # 1. Ping Google Sheets Daily Sync Automation Hub (Immediate Column Rollover)
-          SHEET_HTTP=$(curl -s -o /tmp/sheet_response.json -w "%{http_code}" \
-            -X GET "${TARGET_URL}/api/v1/google-sheets/daily-sync-ping?secret=${CRON_SECRET}" \
-            -H "User-Agent: vercel-cron/1.0 (GitHub-Actions-Autonomous-Scheduler)" \
-            -H "x-vercel-cron: 1" \
-            -H "x-cron-secret: ${CRON_SECRET}" \
-            -H "Authorization: Bearer ${CRON_SECRET}" \
-            --max-time 60 \
-            --retry 2 \
-            --retry-delay 3)
-
-          echo "Google Sheets Automation HTTP Code: ${SHEET_HTTP}"
-          if [ -f /tmp/sheet_response.json ]; then
-            cat /tmp/sheet_response.json
-            echo ""
-          fi
-
-          # 2. Trigger Daily Midnight Snapshot Reconciliation
-          HTTP_RESPONSE=$(curl -s -o /tmp/cron_response.json -w "%{http_code}" \
-            -X POST "${TARGET_URL}/api/v1/cron/daily-sync?secret=${CRON_SECRET}" \
-            -H "User-Agent: vercel-cron/1.0 (GitHub-Actions-Autonomous-Scheduler)" \
-            -H "x-vercel-cron: 1" \
-            -H "x-cron-secret: ${CRON_SECRET}" \
-            -H "Authorization: Bearer ${CRON_SECRET}" \
-            --max-time 120 \
-            --retry 2 \
-            --retry-delay 3)
-
-          echo "Daily Snapshot HTTP Code: ${HTTP_RESPONSE}"
-          if [ -f /tmp/cron_response.json ]; then
-            cat /tmp/cron_response.json
-            echo ""
-          fi
-
-          if [ "${HTTP_RESPONSE}" -ge 200 ] && [ "${HTTP_RESPONSE}" -lt 400 ]; then
-            echo "✅ Autonomous daily snapshot synchronization succeeded!"
-          else
-            echo "⚠️ Notice: Non-200 HTTP code received (${HTTP_RESPONSE}). Please check target server status."
-          fi
+          node .github/scripts/autonomous-sync.cjs
