@@ -1289,26 +1289,110 @@ export async function getGoogleSheetsSyncMatrices(): Promise<{
   }>;
 }> {
   let activeLinks: any[] = [];
+  let allStudents: any[] = [];
+  let allBatches: any[] = [];
+
   if (!process.env.DATABASE_URL) {
     activeLinks = inMemoryStore.googleSheetLinks.filter((l) => l.is_active);
+    allStudents = inMemoryStore.students;
+    allBatches = inMemoryStore.batches;
   } else {
-    activeLinks = await prisma.googleSheetLink.findMany({
-      where: { is_active: true },
-    });
+    const [links, students, batches] = await Promise.all([
+      prisma.googleSheetLink.findMany({ where: { is_active: true } }),
+      prisma.student.findMany({
+        include: {
+          batch: true,
+          section: true,
+          allocation_batch: true,
+          staff_student_assignments: {
+            include: {
+              staff: { select: { id: true, name: true, email: true } },
+            },
+          },
+          snapshots: true,
+        },
+      }),
+      prisma.batch.findMany(),
+    ]);
+    activeLinks = links;
+    allStudents = students;
+    allBatches = batches;
   }
 
+  const now = new Date();
   const sheets: any[] = [];
+
   for (const link of activeLinks) {
     try {
-      const data = await getGoogleSheetMatrixData(link.id, { userId: link.owner_user_id || 'admin', role: 'ADMIN' });
+      let activeBatchIds = [...(link.batch_ids || [])];
+
+      if (link.academic_year) {
+        const years = link.academic_year.split(/[–-]/).map((y: string) => parseInt(y.trim()));
+        if (years.length === 2 && !isNaN(years[0]) && !isNaN(years[1])) {
+          let matching = allBatches.filter((b: any) => b.start_year === years[0] && b.end_year === years[1]);
+          if (link.department && link.department !== 'ALL' && link.department !== 'All Departments') {
+            matching = matching.filter((b: any) => b.department?.toLowerCase() === link.department?.toLowerCase());
+          }
+          if (matching.length > 0) {
+            activeBatchIds = matching.map((b: any) => b.id);
+          }
+        }
+      }
+
+      let linkStudents = activeBatchIds.length > 0
+        ? allStudents.filter((s: any) => activeBatchIds.includes(s.batch_id))
+        : allStudents;
+
+      if (link.section_id) {
+        linkStudents = linkStudents.filter((s: any) => s.section_id === link.section_id);
+      }
+
+      if (link.allocation_batch_id && link.allocation_batch_id !== 'ALL') {
+        linkStudents = linkStudents.filter((s: any) =>
+          s.allocation_batch_id === link.allocation_batch_id ||
+          s.allocation_batch?.name === link.allocation_batch_id ||
+          s.sub_batch === link.allocation_batch_id
+        );
+      }
+
+      const formattedStudents = linkStudents.map((st: any) => ({
+        ...st,
+        mentor: st.staff_student_assignments?.[0]?.staff || (st as any).mentor || null,
+      }));
+
+      const linkSnapshots = formattedStudents.flatMap((st: any) => st.snapshots || []);
+
+      let startDate: string | null = (link as any).start_date || null;
+      if (!startDate && link.spreadsheet_url && link.spreadsheet_url.includes('@@START_DATE@@')) {
+        startDate = link.spreadsheet_url.split('@@START_DATE@@')[1] || null;
+      }
+
+      const matrix = buildGoogleSheetMatrix(formattedStudents, linkSnapshots, startDate);
+
+      let webhookUrl: string | null = (link as any).webhook_url || null;
+      if (!webhookUrl && link.spreadsheet_url && link.spreadsheet_url.includes('@@WEBHOOK@@')) {
+        const afterWh = link.spreadsheet_url.split('@@WEBHOOK@@')[1];
+        webhookUrl = afterWh.split('@@START_DATE@@')[0] || null;
+      } else if (!webhookUrl && link.spreadsheet_url && (link.spreadsheet_url.startsWith('https://script.google.com') || link.spreadsheet_url.includes('/macros/s/'))) {
+        webhookUrl = link.spreadsheet_url;
+      } else if (!webhookUrl && link.spreadsheet_id && (link.spreadsheet_id.startsWith('https://script.google.com') || link.spreadsheet_id.includes('/macros/s/'))) {
+        webhookUrl = link.spreadsheet_id;
+      }
+
       sheets.push({
         linkId: link.id,
         name: link.name,
         spreadsheetId: link.spreadsheet_id,
-        webhookUrl: data.webhookUrl,
-        studentCount: data.matrix.studentCount,
-        dateColumnsCount: data.matrix.dateColumnsCount,
-        payload: data.payload,
+        webhookUrl,
+        studentCount: matrix.studentCount,
+        dateColumnsCount: matrix.dateColumnsCount,
+        payload: {
+          sheetName: link.name || 'Daily Progress',
+          headers: matrix.headers,
+          rows: matrix.rows,
+          studentCount: matrix.studentCount,
+          updatedAt: now.toISOString(),
+        },
       });
     } catch (err: any) {
       console.warn(`[Matrix Generation Notice] Failed for sheet ${link.id}:`, err?.message || err);
