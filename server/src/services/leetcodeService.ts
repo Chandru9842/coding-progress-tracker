@@ -1247,17 +1247,12 @@ export async function runDailyMidnightReconciliation(): Promise<{
   // When running around midnight (12:00 AM - 2:00 AM IST), the day that just concluded is yesterday
   const completedISTDate = istHour < 2 ? yesterdayIST : todayIST;
 
-  // 1. Guaranteed Immediate Execution: Always sync linked Google Sheets FIRST within 2 seconds
-  // so the new date column (e.g. 14-Sep-2026) is immediately published without timing out!
-  try {
-    await runMidnightAutoSync();
-    console.log(`[Sync] Linked Google Sheets updated during reconciliation. Completed day: ${completedISTDate}, Current day: ${todayIST}.`);
-  } catch (sheetErr: any) {
-    console.warn('[Sync] Google Sheets sync notice during reconciliation:', sheetErr?.message || sheetErr);
-  }
-
-  // 2. Trigger student LeetCode auto-sync asynchronously in background so response returns in 2 seconds
+  // Trigger Google Sheets sync and LeetCode auto-sync asynchronously in background
+  // so the HTTP response returns immediately (< 500ms) without hitting serverless execution timeouts
   setImmediate(() => {
+    runMidnightAutoSync().catch((sheetErr: any) => {
+      console.warn('[Sync] Google Sheets sync notice during reconciliation:', sheetErr?.message || sheetErr);
+    });
     runPeriodicAutoSync().catch((syncErr: any) => {
       console.warn('[Sync] Student LeetCode sync notice during reconciliation:', syncErr?.message || syncErr);
     });
