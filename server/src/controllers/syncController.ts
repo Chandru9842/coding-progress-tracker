@@ -71,20 +71,34 @@ export async function syncReportFiltered(req: AuthenticatedRequest, res: Respons
     }
 
     const { batchId, sectionId, department, allocationBatchId, staffId } = req.body || {};
-    const result = await leetcodeService.syncFilteredStudentsLeetCode(
-      { batchId, sectionId, department, allocationBatchId, staffId },
-      { userId: req.user.userId, role: req.user.role }
-    );
+    const user = { userId: req.user.userId, role: req.user.role };
 
-    res.status(200).json({
-      message: `Successfully synchronized LeetCode data for ${result.successful} student(s)`,
-      ...result,
+    // Respond immediately so the HTTP request never hits Vercel's 10-second serverless timeout.
+    // The actual LeetCode API calls run in the background (setImmediate) and save results to PostgreSQL.
+    // The client should refresh its report data after a short delay to pick up updated stats.
+    res.status(202).json({
+      message: 'LeetCode sync started in the background. Data will be updated in your PostgreSQL database within 20–60 seconds. Please refresh the report after ~30 seconds.',
+      status: 'ACCEPTED',
+      estimatedDurationSeconds: 30,
+    });
+
+    // Fire-and-forget: run the actual sync after the HTTP response has been sent
+    setImmediate(() => {
+      leetcodeService.syncFilteredStudentsLeetCode(
+        { batchId, sectionId, department, allocationBatchId, staffId },
+        user
+      ).then((result) => {
+        console.log(`[BG Sync] Filtered LeetCode sync completed: ${result.successful}/${result.totalAttempted} in ${result.durationSeconds}s`);
+      }).catch((err: any) => {
+        console.warn('[BG Sync] Filtered LeetCode sync error:', err?.message || err);
+      });
     });
   } catch (error: any) {
     const statusCode = error.statusCode || 500;
-    res.status(statusCode).json({ error: error.message || 'Failed to sync filtered students LeetCode data' });
+    res.status(statusCode).json({ error: error.message || 'Failed to start sync' });
   }
 }
+
 
 export async function getStudentSnapshots(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {

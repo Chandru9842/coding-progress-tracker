@@ -327,6 +327,7 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState<boolean>(!cachedReportData);
   const [exporting, setExporting] = useState<boolean>(false);
   const [syncingLeetcode, setSyncingLeetcode] = useState<boolean>(false);
+  const [syncCountdown, setSyncCountdown] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -494,13 +495,13 @@ export default function ReportsPage() {
     overrideToDate?: string
   ) => {
     setSyncingLeetcode(true);
+    setSyncCountdown(null);
     setSuccessMsg(null);
     setError(null);
     const targetSecId = typeof overrideSecId === 'string' ? overrideSecId : sectionId;
     const targetBatchId = typeof overrideBatchId === 'string' ? overrideBatchId : batchId;
     const activeFrom = overrideFromDate !== undefined ? overrideFromDate : fromDate;
     const activeTo = overrideToDate !== undefined ? overrideToDate : toDate;
-    const startTime = Date.now();
     try {
       const res = await syncReportStudents({
         batchId: targetBatchId || undefined,
@@ -510,12 +511,30 @@ export default function ReportsPage() {
         staffId: staffId || undefined,
       });
 
-      const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
-      setSuccessMsg(
-        res.message
-          ? `${res.message} (completed in ${res.durationSeconds || elapsedSec}s)`
-          : `⚡ Live LeetCode sync completed for ${res.successful || 0} student(s) in ${elapsedSec}s. Solves submitted after 12:00 AM midnight are now updated live.`
-      );
+      // Server responds with 202 Accepted — sync is running in background
+      // Show a countdown then auto-refresh the report
+      const waitSeconds = res.estimatedDurationSeconds || 30;
+      setSuccessMsg(`⚡ LeetCode sync started in background! Auto-refreshing data in ${waitSeconds}s...`);
+      setSyncCountdown(waitSeconds);
+      setSyncingLeetcode(false);
+
+      // Countdown ticker
+      let remaining = waitSeconds;
+      const ticker = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) {
+          clearInterval(ticker);
+          setSyncCountdown(null);
+        } else {
+          setSyncCountdown(remaining);
+          setSuccessMsg(`⚡ LeetCode sync running in background... Auto-refreshing in ${remaining}s`);
+        }
+      }, 1000);
+
+      // After wait, refresh the report data from PostgreSQL
+      await new Promise<void>((resolve) => setTimeout(resolve, waitSeconds * 1000));
+      clearInterval(ticker);
+      setSyncCountdown(null);
 
       const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
       const refreshedData = await getReportData({
@@ -533,9 +552,9 @@ export default function ReportsPage() {
         minProblems: (parsedMin !== undefined && !isNaN(parsedMin)) ? parsedMin : undefined,
       });
       setReportData(refreshedData);
+      setSuccessMsg(`✅ LeetCode data refreshed successfully! Latest solve counts are now displayed.`);
     } catch (err: any) {
       setError(extractErrorMessage(err, 'Failed to sync LeetCode data for filtered students'));
-    } finally {
       setSyncingLeetcode(false);
     }
   };
@@ -803,7 +822,7 @@ export default function ReportsPage() {
             <button
               id="btn-sync-report-leetcode"
               onClick={handleSyncFilteredLeetCode}
-              disabled={syncingLeetcode || loading}
+              disabled={syncingLeetcode || loading || syncCountdown !== null}
               style={{
                 padding: '0.65rem 1.25rem',
                 backgroundColor: 'rgba(99, 102, 241, 0.18)',
@@ -812,8 +831,8 @@ export default function ReportsPage() {
                 borderRadius: 'var(--radius-sm)',
                 fontWeight: 600,
                 fontSize: '0.875rem',
-                cursor: syncingLeetcode || loading ? 'not-allowed' : 'pointer',
-                opacity: syncingLeetcode || loading ? 0.6 : 1,
+                cursor: (syncingLeetcode || loading || syncCountdown !== null) ? 'not-allowed' : 'pointer',
+                opacity: (syncingLeetcode || loading || syncCountdown !== null) ? 0.6 : 1,
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.5rem',
@@ -821,8 +840,14 @@ export default function ReportsPage() {
               }}
               title="Sync live LeetCode stats for all currently filtered students"
             >
-              <RefreshCw size={16} className={syncingLeetcode ? 'spin' : ''} />
-              <span>{syncingLeetcode ? 'Syncing LeetCode Data...' : '⚡ Sync Filtered LeetCode Data'}</span>
+              <RefreshCw size={16} className={(syncingLeetcode || syncCountdown !== null) ? 'spin' : ''} />
+              <span>
+                {syncingLeetcode
+                  ? 'Starting Sync...'
+                  : syncCountdown !== null
+                    ? `⏳ Refreshing in ${syncCountdown}s...`
+                    : '⚡ Sync Filtered LeetCode Data'}
+              </span>
             </button>
 
             <button
