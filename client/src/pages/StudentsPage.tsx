@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
 import { studentApi, batchApi, staffApi, syncApi, Student, Batch, StaffUser, extractErrorMessage, getCachedData } from '../services/api.js';
+import { syncReportStudents } from '../api/reports.js';
 import {
   Users,
   UserPlus,
@@ -167,6 +168,7 @@ export const StudentsPage: React.FC = () => {
 
   // Selection & Bulk Action States
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
+  const [syncingStudentId, setSyncingStudentId] = useState<string | null>(null);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState<boolean>(false);
   const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
   const [studentToDelete, setStudentToDelete] = useState<Student | null>(null);
@@ -375,11 +377,39 @@ export const StudentsPage: React.FC = () => {
     ]).catch(console.error);
   }, []);
 
+  const handleLiveSyncStudent = async (student: Student, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!student.leetcode_username) {
+      alert(`Student ${student.name} does not have a LeetCode username configured.`);
+      return;
+    }
+    try {
+      setSyncingStudentId(student.id);
+      setSyncNotice(null);
+      const res = await syncApi.syncStudent(student.id);
+      const solved = res.data?.stats?.totalSolved ?? res.data?.totalSolved;
+      setSyncNotice(`⚡ Live LeetCode sync completed for ${student.name} (@${student.leetcode_username}): ${solved !== undefined ? `${solved} problems solved` : 'data updated'}!`);
+      fetchStudents(false);
+    } catch (err: any) {
+      alert(extractErrorMessage(err, `Failed to live sync LeetCode stats for @${student.leetcode_username}`));
+    } finally {
+      setSyncingStudentId(null);
+    }
+  };
+
   const handleSyncBatchOrAll = async () => {
     try {
       setSyncingAll(true);
       setSyncNotice(null);
-      if (filterBatchId) {
+      if (selectedStudentIds.size > 0) {
+        const studentIds = Array.from(selectedStudentIds);
+        const res = await syncReportStudents({ studentIds });
+        setSyncNotice(`⚡ Live synced ${res.successful ?? studentIds.length} selected student(s) directly from LeetCode.`);
+      } else if (search.trim()) {
+        const q = search.trim();
+        const res = await syncReportStudents({ search: q });
+        setSyncNotice(`⚡ Live synced student(s) matching "${q}" directly from LeetCode.`);
+      } else if (filterBatchId) {
         const res = await syncApi.syncBatch(filterBatchId);
         setSyncNotice(`Batch sync completed: ${res.data.successful} synced successfully.`);
       } else if (isAdmin) {
@@ -978,7 +1008,17 @@ export const StudentsPage: React.FC = () => {
               style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
             >
               <RefreshCw size={16} className={syncingAll ? 'animate-spin' : ''} />
-              <span>{syncingAll ? 'Syncing...' : filterBatchId ? 'Sync Active Batch' : 'Sync All Students'}</span>
+              <span>
+                {syncingAll
+                  ? 'Syncing Live...'
+                  : selectedStudentIds.size > 0
+                  ? `⚡ Sync Selected (${selectedStudentIds.size})`
+                  : search.trim()
+                  ? `⚡ Live Sync: "${search.trim()}"`
+                  : filterBatchId
+                  ? 'Sync Active Batch'
+                  : 'Sync All Students'}
+              </span>
             </button>
 
             {canManage && (
@@ -1359,7 +1399,32 @@ export const StudentsPage: React.FC = () => {
                             </td>
                             {canManage && (
                               <td style={{ padding: '1rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                                <div style={{ display: 'inline-flex', gap: '0.5rem' }}>
+                                <div style={{ display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
+                                  {student.leetcode_username && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleLiveSyncStudent(student, e)}
+                                      disabled={syncingStudentId === student.id || syncingAll}
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '0.35rem',
+                                        padding: '0.3rem 0.6rem',
+                                        borderRadius: '6px',
+                                        fontSize: '0.75rem',
+                                        fontWeight: 700,
+                                        backgroundColor: syncingStudentId === student.id ? 'rgba(59, 130, 246, 0.2)' : 'rgba(16, 185, 129, 0.12)',
+                                        color: syncingStudentId === student.id ? '#60a5fa' : '#34d399',
+                                        border: syncingStudentId === student.id ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid rgba(16, 185, 129, 0.3)',
+                                        cursor: (syncingStudentId === student.id || syncingAll) ? 'not-allowed' : 'pointer',
+                                        whiteSpace: 'nowrap',
+                                      }}
+                                      title={`Fetch live LeetCode data for @${student.leetcode_username}`}
+                                    >
+                                      <RefreshCw size={12} className={syncingStudentId === student.id ? 'animate-spin' : ''} />
+                                      <span>{syncingStudentId === student.id ? 'Syncing...' : '⚡ Live Sync'}</span>
+                                    </button>
+                                  )}
                                   <button
                                     onClick={(e) => handleOpenEditModal(student, e)}
                                     className="touch-target"

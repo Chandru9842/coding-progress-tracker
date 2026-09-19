@@ -138,21 +138,22 @@ export async function getReportFilterOptions(user: { userId: string; role: UserR
   });
 }
 
+const istDateFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' });
+
 export function toISTDateString(d: Date | string): string {
   if (!d) return '';
   if (typeof d === 'string') {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(d.trim())) {
-      return d.trim();
+    const trimmed = d.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return trimmed;
     }
-    const parsed = new Date(d);
+    const parsed = new Date(trimmed);
     if (!isNaN(parsed.getTime())) {
-      const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' });
-      return formatter.format(parsed);
+      return istDateFormatter.format(parsed);
     }
-    return d.substring(0, 10);
+    return trimmed.substring(0, 10);
   }
-  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' });
-  return formatter.format(d);
+  return istDateFormatter.format(d);
 }
 
 export function fillContinuousSnapshotTimeline<T extends { snapshot_date: Date | string; easy_solved: number; medium_solved: number; hard_solved: number; total_solved: number }>(
@@ -182,7 +183,7 @@ export function fillContinuousSnapshotTimeline<T extends { snapshot_date: Date |
   let lastKnownSnap = sorted[0];
 
   while (currDate <= endDate) {
-    const dStr = toISTDateString(currDate);
+    const dStr = currDate.toISOString().slice(0, 10);
     if (mapByDate.has(dStr)) {
       lastKnownSnap = mapByDate.get(dStr)!;
     }
@@ -219,16 +220,16 @@ export function calculateStudentPeriodStats(
     };
   }
 
-  const timeline = fillContinuousSnapshotTimeline(rawSnapshots);
-  const sortedAsc = [...timeline].sort((a, b) => new Date(a.snapshot_date).getTime() - new Date(b.snapshot_date).getTime());
-  const latest = sortedAsc[sortedAsc.length - 1];
-
-  const overall_easy = latest.easy_solved || 0;
-  const overall_medium = latest.medium_solved || 0;
-  const overall_hard = latest.hard_solved || 0;
-  const overall_total = latest.total_solved || 0;
-
+  // Fast path for All-Time view (default on initial page load and section switching)
   if (!isPeriodFilter || (!fromDate && !toDate)) {
+    const sorted = [...rawSnapshots].sort((a, b) => new Date(a.snapshot_date).getTime() - new Date(b.snapshot_date).getTime());
+    const latest = sorted[sorted.length - 1];
+
+    const overall_easy = latest.easy_solved || 0;
+    const overall_medium = latest.medium_solved || 0;
+    const overall_hard = latest.hard_solved || 0;
+    const overall_total = latest.total_solved || 0;
+
     return {
       easy_solved: overall_easy,
       medium_solved: overall_medium,
@@ -241,6 +242,15 @@ export function calculateStudentPeriodStats(
       has_activity: overall_total > 0,
     };
   }
+
+  const timeline = fillContinuousSnapshotTimeline(rawSnapshots);
+  const sortedAsc = [...timeline].sort((a, b) => new Date(a.snapshot_date).getTime() - new Date(b.snapshot_date).getTime());
+  const latest = sortedAsc[sortedAsc.length - 1];
+
+  const overall_easy = latest.easy_solved || 0;
+  const overall_medium = latest.medium_solved || 0;
+  const overall_hard = latest.hard_solved || 0;
+  const overall_total = latest.total_solved || 0;
 
   const fromDateStr = fromDate ? toISTDateString(fromDate) : '';
   const toDateStr = toDate ? toISTDateString(toDate) : '';
@@ -338,44 +348,38 @@ export async function getReportData(
       err.statusCode = 403;
       throw err;
     }
+    const authChecks: Promise<boolean>[] = [];
+    const checkNames: string[] = [];
+
     if (batchId) {
-      const isAuthBatch = await isStaffAuthorizedForBatch(user.userId, batchId);
-      if (!isAuthBatch) {
-        const err: any = new Error('Forbidden: You are not authorized to view reports for this batch');
-        err.statusCode = 403;
-        throw err;
-      }
+      authChecks.push(isStaffAuthorizedForBatch(user.userId, batchId));
+      checkNames.push('batch');
     }
     if (sectionId) {
-      const isAuthSec = await isStaffAuthorizedForSection(user.userId, sectionId);
-      if (!isAuthSec) {
-        const err: any = new Error('Forbidden: You are not authorized to view reports for this section');
-        err.statusCode = 403;
-        throw err;
-      }
+      authChecks.push(isStaffAuthorizedForSection(user.userId, sectionId));
+      checkNames.push('section');
     }
     if (allocationBatchId) {
-      const isAuthAlloc = await isStaffAuthorizedForAllocationBatch(user.userId, allocationBatchId);
-      if (!isAuthAlloc) {
-        const err: any = new Error('Forbidden: You are not authorized to view reports for this allocation batch');
-        err.statusCode = 403;
-        throw err;
-      }
+      authChecks.push(isStaffAuthorizedForAllocationBatch(user.userId, allocationBatchId));
+      checkNames.push('allocation batch');
     }
     if (department) {
-      const isAuthDept = await isStaffAuthorizedForDepartment(user.userId, department);
-      if (!isAuthDept) {
-        const err: any = new Error('Forbidden: You are not authorized to view reports for this department');
-        err.statusCode = 403;
-        throw err;
-      }
+      authChecks.push(isStaffAuthorizedForDepartment(user.userId, department));
+      checkNames.push('department');
     }
     if (academicYear) {
-      const isAuthAY = await isStaffAuthorizedForAcademicYear(user.userId, academicYear);
-      if (!isAuthAY) {
-        const err: any = new Error('Forbidden: You are not authorized to view reports for this academic year');
-        err.statusCode = 403;
-        throw err;
+      authChecks.push(isStaffAuthorizedForAcademicYear(user.userId, academicYear));
+      checkNames.push('academic year');
+    }
+
+    if (authChecks.length > 0) {
+      const results = await Promise.all(authChecks);
+      for (let i = 0; i < results.length; i++) {
+        if (!results[i]) {
+          const err: any = new Error(`Forbidden: You are not authorized to view reports for this ${checkNames[i]}`);
+          err.statusCode = 403;
+          throw err;
+        }
       }
     }
   }
@@ -509,6 +513,8 @@ export async function getReportData(
         }
       }
 
+      const isPeriodFilter = !!(fromDate || toDate);
+
       const students = await prisma.student.findMany({
         where,
         include: {
@@ -520,15 +526,19 @@ export async function getReportData(
               staff: { select: { id: true, name: true } },
             },
           },
-          snapshots: {
-            select: { snapshot_date: true, easy_solved: true, medium_solved: true, hard_solved: true, total_solved: true },
-            orderBy: { snapshot_date: 'asc' },
-          },
+          snapshots: isPeriodFilter
+            ? {
+                select: { snapshot_date: true, easy_solved: true, medium_solved: true, hard_solved: true, total_solved: true },
+                orderBy: { snapshot_date: 'asc' },
+              }
+            : {
+                select: { snapshot_date: true, easy_solved: true, medium_solved: true, hard_solved: true, total_solved: true },
+                orderBy: { snapshot_date: 'desc' },
+                take: 1,
+              },
         },
         orderBy: { register_number: 'asc' },
       });
-
-      const isPeriodFilter = !!(fromDate || toDate);
 
       studentsList = students.map((st) => {
         const stats = calculateStudentPeriodStats(st.snapshots, isPeriodFilter, fromDate, toDate);

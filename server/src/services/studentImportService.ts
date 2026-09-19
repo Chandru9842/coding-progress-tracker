@@ -1,7 +1,7 @@
 import { prisma } from '../db/client.js';
 import { inMemoryStore } from '../db/inMemoryStore.js';
 import { UserRole } from '../types/index.js';
-import { syncStudentLeetCode } from './leetcodeService.js';
+import { syncStudentLeetCode, extractLeetCodeUsername } from './leetcodeService.js';
 import { syncAllActiveGoogleSheets } from './googleSheetsService.js';
 import { serverCache } from '../utils/serverCache.js';
 
@@ -200,20 +200,7 @@ export async function bulkImportStudents(
   for (const row of students) {
     const rawRegNo = row.register_number ? row.register_number.trim().toUpperCase() : '';
     const rawName = row.name ? row.name.trim() : '';
-    let rawLeetCode = row.leetcode_username ? row.leetcode_username.trim() : '';
-
-    // Clean LeetCode username
-    if (rawLeetCode.includes('leetcode.com') || rawLeetCode.includes('leetcode.cn')) {
-      rawLeetCode = rawLeetCode.split('?')[0].split('#')[0].replace(/\/+$/, '');
-      const parts = rawLeetCode.split('/').filter(Boolean);
-      rawLeetCode = parts[parts.length - 1] || '';
-      if (rawLeetCode === '_' && parts.length > 1) {
-        rawLeetCode = parts[parts.length - 2] || '';
-      }
-    }
-    if (rawLeetCode.startsWith('@')) {
-      rawLeetCode = rawLeetCode.substring(1).trim();
-    }
+    const rawLeetCode = extractLeetCodeUsername(row.leetcode_username || (row as any).cleanLeetCode || '');
 
     if (!rawRegNo) {
       failedCount++;

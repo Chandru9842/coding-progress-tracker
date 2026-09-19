@@ -117,8 +117,14 @@ export async function syncReportStudents(data?: {
   department?: string;
   allocationBatchId?: string;
   staffId?: string;
+  studentId?: string;
+  studentIds?: string[];
+  search?: string;
+  leetcodeUsername?: string;
 }) {
   clearClientCache('report_data_');
+  clearClientCache('students_');
+  clearClientCache('sheets_');
   const response = await api.post('/sync/report-filtered', data || {});
   return response.data;
 }

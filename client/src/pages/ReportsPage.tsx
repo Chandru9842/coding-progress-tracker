@@ -59,6 +59,8 @@ export default function ReportsPage() {
   const [sectionId, setSectionId] = useState<string>('');
   const [allocationBatchId, setAllocationBatchId] = useState<string>('');
   const [staffId, setStaffId] = useState<string>('');
+  const [studentSearchQuery, setStudentSearchQuery] = useState<string>('');
+  const [syncingStudentId, setSyncingStudentId] = useState<string | null>(null);
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
   const [datePreset, setDatePreset] = useState<DatePresetType>('all');
@@ -488,6 +490,61 @@ export default function ReportsPage() {
     }
   };
 
+  const displayedStudents = React.useMemo(() => {
+    if (!reportData?.students) return [];
+    if (!studentSearchQuery.trim()) return reportData.students;
+    const q = studentSearchQuery.trim().toLowerCase();
+    return reportData.students.filter(
+      (st) =>
+        st.register_number.toLowerCase().includes(q) ||
+        st.name.toLowerCase().includes(q) ||
+        (st.leetcode_username && st.leetcode_username.toLowerCase().includes(q))
+    );
+  }, [reportData?.students, studentSearchQuery]);
+
+  const handleSyncSingleStudent = async (student: StudentReportItem, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!student.id) return;
+    if (!student.leetcode_username) {
+      setError(`Student ${student.name} does not have a LeetCode username linked.`);
+      return;
+    }
+    try {
+      setSyncingStudentId(student.id);
+      setError(null);
+      setSuccessMsg(null);
+      const res = await syncReportStudents({
+        studentId: student.id,
+        leetcodeUsername: student.leetcode_username,
+      });
+      setSuccessMsg(`⚡ Live LeetCode sync completed for @${student.leetcode_username}: solve data updated!`);
+      const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
+      const refreshedData = await getReportData(
+        {
+          academicYear: academicYear || undefined,
+          department: department || undefined,
+          batchId: batchId || undefined,
+          sectionId: sectionId || undefined,
+          allocationBatchId: allocationBatchId || undefined,
+          staffId: staffId || undefined,
+          fromDate: fromDate || undefined,
+          toDate: toDate || undefined,
+          sortBy,
+          sortOrder,
+          activityStatus,
+          minProblems: (parsedMin !== undefined && !isNaN(parsedMin)) ? parsedMin : undefined,
+        },
+        true
+      );
+      setReportData(refreshedData);
+      window.dispatchEvent(new CustomEvent('student-synced'));
+    } catch (err: any) {
+      setError(extractErrorMessage(err, `Failed to live sync LeetCode data for @${student.leetcode_username}`));
+    } finally {
+      setSyncingStudentId(null);
+    }
+  };
+
   const handleSyncFilteredLeetCode = async (
     overrideSecId?: string | React.MouseEvent,
     overrideBatchId?: string,
@@ -502,6 +559,13 @@ export default function ReportsPage() {
     const targetBatchId = typeof overrideBatchId === 'string' ? overrideBatchId : batchId;
     const activeFrom = overrideFromDate !== undefined ? overrideFromDate : fromDate;
     const activeTo = overrideToDate !== undefined ? overrideToDate : toDate;
+
+    // Check if user has filtered by student search
+    const trimmedSearch = studentSearchQuery.trim();
+    const targetedIds = trimmedSearch && displayedStudents.length > 0 && displayedStudents.length <= 5
+      ? displayedStudents.map((s) => s.id)
+      : undefined;
+
     try {
       const res = await syncReportStudents({
         batchId: targetBatchId || undefined,
@@ -509,7 +573,36 @@ export default function ReportsPage() {
         department: department || undefined,
         allocationBatchId: allocationBatchId || undefined,
         staffId: staffId || undefined,
+        search: trimmedSearch || undefined,
+        studentIds: targetedIds,
       });
+
+      // If server responded with synchronous completion (for targeted ID / small set)
+      if (res.status === 'COMPLETED' || res.successful !== undefined) {
+        setSuccessMsg(`✅ ${res.message || 'Live LeetCode data synchronized!'}`);
+        setSyncingLeetcode(false);
+        const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
+        const refreshedData = await getReportData(
+          {
+            academicYear: academicYear || undefined,
+            department: department || undefined,
+            batchId: targetBatchId || undefined,
+            sectionId: targetSecId || undefined,
+            allocationBatchId: allocationBatchId || undefined,
+            staffId: staffId || undefined,
+            fromDate: activeFrom || undefined,
+            toDate: activeTo || undefined,
+            sortBy,
+            sortOrder,
+            activityStatus,
+            minProblems: (parsedMin !== undefined && !isNaN(parsedMin)) ? parsedMin : undefined,
+          },
+          true
+        );
+        setReportData(refreshedData);
+        window.dispatchEvent(new CustomEvent('student-synced'));
+        return;
+      }
 
       // Server responds with 202 Accepted — sync is running in background
       // Show a countdown then auto-refresh the report
@@ -846,10 +939,12 @@ export default function ReportsPage() {
               <RefreshCw size={16} className={(syncingLeetcode || syncCountdown !== null) ? 'spin' : ''} />
               <span>
                 {syncingLeetcode
-                  ? 'Starting Sync...'
+                  ? 'Syncing Live LeetCode...'
                   : syncCountdown !== null
                     ? `⏳ Refreshing in ${syncCountdown}s...`
-                    : '⚡ Sync Filtered LeetCode Data'}
+                    : studentSearchQuery.trim()
+                      ? `⚡ Live Sync: "${studentSearchQuery.trim()}"`
+                      : '⚡ Sync Filtered LeetCode Data'}
               </span>
             </button>
 
@@ -1351,6 +1446,52 @@ export default function ReportsPage() {
               </select>
             </div>
 
+            {/* Student Search Filter (Reg No, Name, or LeetCode username) */}
+            <div>
+              <label htmlFor="filter-student-search" style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+                Filter by Student / LeetCode ID
+              </label>
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                <input
+                  id="filter-student-search"
+                  type="text"
+                  placeholder="e.g. chandrum_06, 927623BCS006..."
+                  value={studentSearchQuery}
+                  onChange={(e) => setStudentSearchQuery(e.target.value)}
+                  style={{
+                    width: '100%',
+                    backgroundColor: 'var(--bg-input, #0f172a)',
+                    border: studentSearchQuery ? '1px solid #3b82f6' : '1px solid var(--border-subtle)',
+                    color: 'var(--text-main)',
+                    padding: '0.6rem 0.75rem',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '0.875rem',
+                  }}
+                />
+                {studentSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setStudentSearchQuery('')}
+                    style={{
+                      position: 'absolute',
+                      right: '0.5rem',
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--text-muted)',
+                      cursor: 'pointer',
+                      padding: '0.2rem',
+                    }}
+                    title="Clear student search"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              <span style={{ display: 'block', fontSize: '0.7rem', color: studentSearchQuery ? '#60a5fa' : 'var(--text-muted)', marginTop: '0.25rem' }}>
+                {studentSearchQuery ? `Targeting: "${studentSearchQuery}"` : 'Filter specifically by Reg No, Name, or LeetCode username'}
+              </span>
+            </div>
+
             {/* Minimum Problems Solved Filter */}
             <div>
               <label htmlFor="filter-min-problems" style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
@@ -1498,6 +1639,7 @@ export default function ReportsPage() {
                 setDatePreset('all');
                 setActivityStatus('all');
                 setMinProblems('');
+                setStudentSearchQuery('');
                 setSortBy('total');
                 setSortOrder('desc');
               }}
@@ -1745,10 +1887,11 @@ export default function ReportsPage() {
                       </th>
                     )}
                     <th style={{ padding: '0.75rem 1rem' }}>Status</th>
+                    <th style={{ padding: '0.75rem 1rem', textAlign: 'center' }}>Live Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {reportData.students.map((st, index) => (
+                  {displayedStudents.map((st, index) => (
                     <tr
                       key={st.id}
                       onClick={() => handleOpenStudentModal(st)}
@@ -1850,6 +1993,36 @@ export default function ReportsPage() {
                           <span style={{ padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600, backgroundColor: 'rgba(248, 113, 113, 0.1)', color: '#f87171' }}>
                             No Activity
                           </span>
+                        )}
+                      </td>
+                      <td style={{ padding: '0.85rem 1rem', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                        {st.leetcode_username ? (
+                          <button
+                            type="button"
+                            onClick={(e) => handleSyncSingleStudent(st, e)}
+                            disabled={syncingStudentId === st.id || syncingLeetcode}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.35rem',
+                              padding: '0.32rem 0.65rem',
+                              borderRadius: '6px',
+                              fontSize: '0.75rem',
+                              fontWeight: 700,
+                              backgroundColor: syncingStudentId === st.id ? 'rgba(59, 130, 246, 0.2)' : 'rgba(16, 185, 129, 0.12)',
+                              color: syncingStudentId === st.id ? '#60a5fa' : '#34d399',
+                              border: syncingStudentId === st.id ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid rgba(16, 185, 129, 0.3)',
+                              cursor: (syncingStudentId === st.id || syncingLeetcode) ? 'not-allowed' : 'pointer',
+                              transition: 'all 0.15s ease',
+                              whiteSpace: 'nowrap',
+                            }}
+                            title={`Fetch live LeetCode stats for @${st.leetcode_username}`}
+                          >
+                            <RefreshCw size={12} className={syncingStudentId === st.id ? 'spin' : ''} />
+                            <span>{syncingStudentId === st.id ? 'Syncing...' : '⚡ Live Sync'}</span>
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>No ID</span>
                         )}
                       </td>
                     </tr>

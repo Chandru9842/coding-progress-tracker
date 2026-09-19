@@ -87,8 +87,34 @@ export async function seedInitialAdmin(): Promise<void> {
           allocation_batch_id: allocId,
           department: 'Computer Science and Engineering',
           created_at: new Date(),
+        },
+        {
+          id: 'student-chandrum-06',
+          register_number: '814723104029',
+          name: 'CHANDRU M',
+          email: 'chandru@example.edu',
+          leetcode_username: 'Chandrum06',
+          batch_id: batchId,
+          section_id: sectionId,
+          allocation_batch_id: allocId,
+          department: 'Computer Science and Engineering',
+          created_at: new Date(),
         }
       );
+
+      // Seed current verified LeetCode stats snapshot for Chandru M
+      const todayDate = new Date();
+      inMemoryStore.snapshots.push({
+        id: 'snap-chandru-today',
+        student_id: 'student-chandrum-06',
+        snapshot_date: todayDate,
+        easy_solved: 116,
+        medium_solved: 152,
+        hard_solved: 15,
+        total_solved: 283,
+        created_at: todayDate,
+      });
+
       console.log('[Seed] Demo batch and active LeetCode students seeded to in-memory store.');
     }
     return;

@@ -5,6 +5,7 @@ import {
   isStaffAuthorizedForStudent,
   getAuthorizedStudentIdsForStaff,
 } from './studentAuthorizationService.js';
+import { extractLeetCodeUsername } from './leetcodeService.js';
 import { UserRole } from '../types/index.js';
 
 function attachMentorInfo(st: any) {
@@ -316,8 +317,9 @@ export async function createStudent(data: {
   serverCache.invalidate('batch');
   serverCache.invalidate('report_');
 
-  if (!data.leetcode_username || !data.leetcode_username.trim()) {
-    const err: any = new Error('LeetCode username is required');
+  const cleanLeetcodeUsername = extractLeetCodeUsername(data.leetcode_username);
+  if (!cleanLeetcodeUsername) {
+    const err: any = new Error('A valid LeetCode username is required');
     err.statusCode = 400;
     throw err;
   }
@@ -358,7 +360,7 @@ export async function createStudent(data: {
       sub_batch: resolvedSubBatch,
       allocation_batch_id: resolvedAllocBatchId,
       current_year: data.current_year || null,
-      leetcode_username: data.leetcode_username?.trim() || null,
+      leetcode_username: cleanLeetcodeUsername,
       mentor_id: data.mentor_id || null,
       created_at: new Date(),
     };
@@ -396,7 +398,7 @@ export async function createStudent(data: {
         sub_batch: resolvedSubBatch,
         allocation_batch_id: resolvedAllocBatchId,
         current_year: data.current_year || null,
-        leetcode_username: data.leetcode_username?.trim() || null,
+        leetcode_username: cleanLeetcodeUsername,
         ...(data.mentor_id ? {
           staff_student_assignments: {
             create: {
@@ -533,7 +535,9 @@ export async function updateStudent(
   }
 
   if (data.current_year !== undefined) updateData.current_year = data.current_year;
-  if (data.leetcode_username !== undefined) updateData.leetcode_username = data.leetcode_username ? data.leetcode_username.trim() : null;
+  if (data.leetcode_username !== undefined) {
+    updateData.leetcode_username = data.leetcode_username ? extractLeetCodeUsername(data.leetcode_username) : null;
+  }
 
   if (data.mentor_id !== undefined) {
     updateData.mentor_id = data.mentor_id || null;

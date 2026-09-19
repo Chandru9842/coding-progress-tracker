@@ -70,22 +70,41 @@ export async function syncReportFiltered(req: AuthenticatedRequest, res: Respons
       return;
     }
 
-    const { batchId, sectionId, department, allocationBatchId, staffId } = req.body || {};
+    const { batchId, sectionId, department, allocationBatchId, staffId, studentId, studentIds, search, leetcodeUsername } = req.body || {};
     const user = { userId: req.user.userId, role: req.user.role };
 
-    // Respond immediately so the HTTP request never hits Vercel's 10-second serverless timeout.
-    // The actual LeetCode API calls run in the background (setImmediate) and save results to PostgreSQL.
-    // The client should refresh its report data after a short delay to pick up updated stats.
+    // Targeted sync fast-path: if filtered for a specific student, leetcode handle, or small set of <= 5 IDs,
+    // execute live synchronously and return immediate 200 with fresh stats!
+    const isTargeted = Boolean(
+      studentId ||
+      leetcodeUsername ||
+      (Array.isArray(studentIds) && studentIds.length > 0 && studentIds.length <= 5)
+    );
+
+    if (isTargeted) {
+      const result = await leetcodeService.syncFilteredStudentsLeetCode(
+        { batchId, sectionId, department, allocationBatchId, staffId, studentId, studentIds, search, leetcodeUsername },
+        user
+      );
+      res.status(200).json({
+        message: `⚡ Live LeetCode sync completed for targeted student(s): ${result.successful}/${result.totalAttempted} succeeded.`,
+        status: 'COMPLETED',
+        ...result,
+      });
+      return;
+    }
+
+    // Larger batch: respond immediately so the HTTP request never hits serverless timeout.
     res.status(202).json({
-      message: 'LeetCode sync started in the background. Data will be updated in your PostgreSQL database within 20–60 seconds. Please refresh the report after ~30 seconds.',
+      message: 'LeetCode sync started in the background. Data will be updated in your database within 20–60 seconds. Please refresh after ~30 seconds.',
       status: 'ACCEPTED',
       estimatedDurationSeconds: 30,
     });
 
-    // Fire-and-forget: run the actual sync after the HTTP response has been sent
+    // Fire-and-forget: run the actual batch sync after response has been sent
     setImmediate(() => {
       leetcodeService.syncFilteredStudentsLeetCode(
-        { batchId, sectionId, department, allocationBatchId, staffId },
+        { batchId, sectionId, department, allocationBatchId, staffId, studentId, studentIds, search, leetcodeUsername },
         user
       ).then((result) => {
         console.log(`[BG Sync] Filtered LeetCode sync completed: ${result.successful}/${result.totalAttempted} in ${result.durationSeconds}s`);
@@ -95,7 +114,7 @@ export async function syncReportFiltered(req: AuthenticatedRequest, res: Respons
     });
   } catch (error: any) {
     const statusCode = error.statusCode || 500;
-    res.status(statusCode).json({ error: error.message || 'Failed to start sync' });
+    res.status(statusCode).json({ error: error.message || 'Failed to sync LeetCode data' });
   }
 }
 
