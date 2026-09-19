@@ -1,4 +1,4 @@
-import { api, getCachedData, setCachedData } from '../services/api.js';
+import { api, getCachedData, setCachedData, clearClientCache } from '../services/api.js';
 
 export interface GenerateReportRequest {
   reportType: 'SUMMARY' | 'PROGRESS_LOG' | 'SECTION_COMPARISON';
@@ -84,23 +84,28 @@ export async function getReportFilters(): Promise<ReportFilterOptions> {
   return response.data;
 }
 
-export async function getReportData(params?: {
-  academicYear?: string;
-  department?: string;
-  batchId?: string;
-  sectionId?: string;
-  allocationBatchId?: string;
-  staffId?: string;
-  fromDate?: string;
-  toDate?: string;
-  sortBy?: 'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name' | 'overall_total';
-  sortOrder?: 'asc' | 'desc';
-  activityStatus?: 'all' | 'active' | 'no_activity';
-  minProblems?: number | string;
-}): Promise<ReportDataResponse> {
+export async function getReportData(
+  params?: {
+    academicYear?: string;
+    department?: string;
+    batchId?: string;
+    sectionId?: string;
+    allocationBatchId?: string;
+    staffId?: string;
+    fromDate?: string;
+    toDate?: string;
+    sortBy?: 'total' | 'easy' | 'medium' | 'hard' | 'register_number' | 'name' | 'overall_total';
+    sortOrder?: 'asc' | 'desc';
+    activityStatus?: 'all' | 'active' | 'no_activity';
+    minProblems?: number | string;
+  },
+  skipCache = false
+): Promise<ReportDataResponse> {
   const key = `report_data_${JSON.stringify(params || {})}`;
-  const cached = getCachedData<ReportDataResponse>(key);
-  if (cached) return cached;
+  if (!skipCache) {
+    const cached = getCachedData<ReportDataResponse>(key);
+    if (cached) return cached;
+  }
   const response = await api.get('/reports/data', { params });
   setCachedData(key, response.data);
   return response.data;
@@ -113,6 +118,7 @@ export async function syncReportStudents(data?: {
   allocationBatchId?: string;
   staffId?: string;
 }) {
+  clearClientCache('report_data_');
   const response = await api.post('/sync/report-filtered', data || {});
   return response.data;
 }

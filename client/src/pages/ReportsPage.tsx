@@ -537,20 +537,23 @@ export default function ReportsPage() {
       setSyncCountdown(null);
 
       const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
-      const refreshedData = await getReportData({
-        academicYear: academicYear || undefined,
-        department: department || undefined,
-        batchId: targetBatchId || undefined,
-        sectionId: targetSecId || undefined,
-        allocationBatchId: allocationBatchId || undefined,
-        staffId: staffId || undefined,
-        fromDate: activeFrom || undefined,
-        toDate: activeTo || undefined,
-        sortBy,
-        sortOrder,
-        activityStatus,
-        minProblems: (parsedMin !== undefined && !isNaN(parsedMin)) ? parsedMin : undefined,
-      });
+      const refreshedData = await getReportData(
+        {
+          academicYear: academicYear || undefined,
+          department: department || undefined,
+          batchId: targetBatchId || undefined,
+          sectionId: targetSecId || undefined,
+          allocationBatchId: allocationBatchId || undefined,
+          staffId: staffId || undefined,
+          fromDate: activeFrom || undefined,
+          toDate: activeTo || undefined,
+          sortBy,
+          sortOrder,
+          activityStatus,
+          minProblems: (parsedMin !== undefined && !isNaN(parsedMin)) ? parsedMin : undefined,
+        },
+        true
+      );
       setReportData(refreshedData);
       setSuccessMsg(`✅ LeetCode data refreshed successfully! Latest solve counts are now displayed.`);
     } catch (err: any) {

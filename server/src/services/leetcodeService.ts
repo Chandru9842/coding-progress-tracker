@@ -38,9 +38,25 @@ export function getISTDate(offsetDays: number = 0): Date {
   return new Date(`${istDateStr}T00:00:00.000Z`);
 }
 
+export function extractLeetCodeUsername(input: string): string {
+  if (!input) return '';
+  let clean = input.trim();
+  const urlMatch = clean.match(/leetcode\.com\/(?:u\/)?([a-zA-Z0-9_\-]+)/i);
+  if (urlMatch && urlMatch[1]) {
+    return urlMatch[1].trim();
+  }
+  return clean.replace(/^@+/, '').replace(/\/+$/, '').trim();
+}
+
 // Fetch stats from LeetCode API or GraphQL endpoint with resilient fallback
 export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStats> {
-  const cleanUsername = username.trim();
+  const cleanUsername = extractLeetCodeUsername(username);
+
+  if (!cleanUsername) {
+    const err: any = new Error('Invalid LeetCode username');
+    err.statusCode = 400;
+    throw err;
+  }
 
   // 1. Try Primary: Official LeetCode GraphQL Endpoint
   try {
@@ -64,6 +80,9 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
             profile {
               ranking
             }
+            userCalendar {
+              submissionCalendar
+            }
           }
           recentAcSubmissionList(username: $username, limit: 50) {
             id
@@ -82,8 +101,28 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Referer': `https://leetcode.com/u/${cleanUsername}/`,
       },
-      timeout: 2500,
+      timeout: 8000,
     });
+
+    // Check if LeetCode explicitly returned "That user does not exist."
+    if (Array.isArray(gqlRes.data?.errors) && gqlRes.data.errors.length > 0) {
+      const isNotFound = gqlRes.data.errors.some((e: any) =>
+        (e.message || '').toLowerCase().includes('user does not exist')
+      );
+      if (isNotFound) {
+        const notFoundErr: any = new Error(`LeetCode user "@${cleanUsername}" does not exist on LeetCode. Please verify the student's LeetCode username.`);
+        notFoundErr.statusCode = 404;
+        notFoundErr.isUserNotFound = true;
+        throw notFoundErr;
+      }
+    }
+
+    if (gqlRes.data?.data && gqlRes.data.data.matchedUser === null) {
+      const notFoundErr: any = new Error(`LeetCode user "@${cleanUsername}" does not exist on LeetCode. Please verify the student's LeetCode username.`);
+      notFoundErr.statusCode = 404;
+      notFoundErr.isUserNotFound = true;
+      throw notFoundErr;
+    }
 
     const user = gqlRes.data?.data?.matchedUser;
     if (user) {
@@ -145,12 +184,15 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
       }
     }
   } catch (gqlErr: any) {
+    if (gqlErr.isUserNotFound) {
+      throw gqlErr;
+    }
     console.warn(`Official LeetCode GraphQL fetch for @${cleanUsername} failed (${gqlErr.message}). Trying backup...`);
   }
 
   // 2. Try High-Availability Backup: Faisal Shohag Vercel LeetCode API
   try {
-    const backupRes = await axios.get(`https://leetcode-api-faisalshohag.vercel.app/${cleanUsername}`, { timeout: 2000 });
+    const backupRes = await axios.get(`https://leetcode-api-faisalshohag.vercel.app/${cleanUsername}`, { timeout: 5000 });
     if (backupRes.data && (typeof backupRes.data.totalSolved === 'number' || Array.isArray(backupRes.data.matchedUserStats?.acSubmissionNum))) {
       let easy = typeof backupRes.data.easySolved === 'number' ? backupRes.data.easySolved : 0;
       let medium = typeof backupRes.data.mediumSolved === 'number' ? backupRes.data.mediumSolved : 0;
@@ -176,6 +218,15 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
         easy = total;
       }
 
+      const recentSubmissions = Array.isArray(backupRes.data.recentSubmissions)
+        ? backupRes.data.recentSubmissions.map((item: any) => ({
+            id: String(item.id || ''),
+            title: String(item.title || ''),
+            titleSlug: String(item.titleSlug || ''),
+            timestamp: Number(item.timestamp || 0),
+          }))
+        : undefined;
+
       return {
         username: cleanUsername,
         easySolved: easy,
@@ -183,6 +234,7 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
         hardSolved: hard,
         totalSolved: total,
         ranking: backupRes.data.ranking || 0,
+        recentSubmissions,
       };
     }
   } catch (backupErr: any) {
@@ -191,7 +243,7 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
 
   // 3. Try Tertiary Backup: Alfa LeetCode Proxy
   try {
-    const alfaRes = await axios.get(`https://alfa-leetcode-api.onrender.com/userProfile/${cleanUsername}`, { timeout: 2000 });
+    const alfaRes = await axios.get(`https://alfa-leetcode-api.onrender.com/userProfile/${cleanUsername}`, { timeout: 5000 });
     if (alfaRes.data && typeof alfaRes.data.totalSolved === 'number') {
       let easy = typeof alfaRes.data.easySolved === 'number' ? alfaRes.data.easySolved : 0;
       let medium = typeof alfaRes.data.mediumSolved === 'number' ? alfaRes.data.mediumSolved : 0;
@@ -220,25 +272,10 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
     console.warn(`Alfa LeetCode proxy fetch for @${cleanUsername} failed (${alfaErr.message}).`);
   }
 
-  // If connected to PostgreSQL database, NEVER overwrite real data with fake mock numbers
-  if (process.env.DATABASE_URL) {
-    const err: any = new Error(`Unable to reach live LeetCode stats endpoints for @${cleanUsername}. Please try again later.`);
-    err.statusCode = 502;
-    throw err;
-  }
-
-  // Resilient mock stats ONLY for offline unit testing without DB
-  const hash = cleanUsername.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  const easy = (hash % 80) + 20;
-  const medium = (hash % 50) + 10;
-  const hard = (hash % 15) + 2;
-  return {
-    username: cleanUsername,
-    easySolved: easy,
-    mediumSolved: medium,
-    hardSolved: hard,
-    totalSolved: easy + medium + hard,
-  };
+  // Live fetch failed across all official and backup endpoints
+  const err: any = new Error(`Unable to reach live LeetCode endpoints for @${cleanUsername}. Please verify the username exists and check your network connection.`);
+  err.statusCode = 502;
+  throw err;
 }
 
 export async function syncStudentLeetCode(
@@ -291,19 +328,20 @@ export async function syncStudentLeetCode(
     throw err;
   }
 
+  const cleanHandle = extractLeetCodeUsername(student.leetcode_username);
   let stats: LeetCodeStats;
   let fetchError: string | null = null;
   let rawSource = 'official_graphql';
 
   try {
-    stats = await fetchLeetCodeStats(student.leetcode_username);
+    stats = await fetchLeetCodeStats(cleanHandle);
     // Successfully parsed live profile -> resolve any previously recorded error
     syncErrorService.resolveError(student.id);
   } catch (apiErr: any) {
     fetchError = apiErr?.message || String(apiErr);
-    console.warn(`[Zero-Error Fallback] Live LeetCode API unreachable for @${student.leetcode_username} (${fetchError}). Searching for previous snapshot to carry forward...`);
+    console.warn(`[Sync Warning] LeetCode live sync failed for @${student.leetcode_username}: ${fetchError}`);
 
-    // Record error in sync error service for admin review and retry
+    // Record error in sync error service for admin review and UI indication
     syncErrorService.recordError({
       studentId: student.id,
       studentName: student.name,
@@ -314,7 +352,7 @@ export async function syncStudentLeetCode(
       department: studentBatch?.department,
       sectionId: student.section_id,
       sectionName: studentSection?.name,
-      errorMessage: fetchError || 'Unknown fetch error',
+      errorMessage: fetchError,
     });
 
     let latestSnapshot: any = null;
@@ -338,9 +376,12 @@ export async function syncStudentLeetCode(
         hardSolved: latestSnapshot.hard_solved,
         totalSolved: latestSnapshot.total_solved,
       };
-      rawSource = 'fallback_snapshot_cache';
-      console.log(`[Zero-Error Fallback] Carried forward previous snapshot (${latestSnapshot.total_solved} solved) for @${student.leetcode_username}, guaranteeing 0% error.`);
+      rawSource = 'stale_snapshot_cache';
     } else {
+      // If user does not exist and no previous data exists, rethrow error so caller knows immediately
+      if (apiErr.isUserNotFound || apiErr.statusCode === 404) {
+        throw apiErr;
+      }
       stats = {
         username: student.leetcode_username,
         easySolved: 0,
@@ -352,8 +393,6 @@ export async function syncStudentLeetCode(
     }
   }
 
-  const today = getISTDate();
-
   // Consistency Guard: Validate integers and guarantee easy + medium + hard === total
   stats.easySolved = Math.max(0, Math.floor(stats.easySolved || 0));
   stats.mediumSolved = Math.max(0, Math.floor(stats.mediumSolved || 0));
@@ -364,285 +403,148 @@ export async function syncStudentLeetCode(
     stats.totalSolved = stats.easySolved + stats.mediumSolved + stats.hardSolved;
   }
 
-  // If total > 0 but breakdown was 0, retrieve previous snapshot to carry breakdown forward with delta
-  if (stats.totalSolved > 0 && stats.easySolved === 0 && stats.mediumSolved === 0 && stats.hardSolved === 0) {
-    let prev: any = null;
-    if (!process.env.DATABASE_URL) {
-      const studentSnaps = inMemoryStore.snapshots
-        .filter((s) => s.student_id === studentId)
-        .sort((a, b) => new Date(b.snapshot_date).getTime() - new Date(a.snapshot_date).getTime());
-      prev = studentSnaps[0] || null;
-    } else {
-      prev = await prisma.dailyCodingSnapshot.findFirst({
-        where: { student_id: studentId },
-        orderBy: { snapshot_date: 'desc' },
-      });
-    }
-
-    if (prev && prev.total_solved > 0) {
-      const delta = Math.max(0, stats.totalSolved - prev.total_solved);
-      stats.mediumSolved = prev.medium_solved || 0;
-      stats.hardSolved = prev.hard_solved || 0;
-      stats.easySolved = (prev.easy_solved || 0) + delta;
-    } else {
-      stats.easySolved = stats.totalSolved;
-    }
-  }
-
-  // Reconcile total and sum so they always mathematically match
   const sumDiff = stats.easySolved + stats.mediumSolved + stats.hardSolved;
   if (stats.totalSolved > sumDiff) {
-stats.easySolved += (stats.totalSolved - sumDiff);
+    stats.easySolved += (stats.totalSolved - sumDiff);
   } else if (stats.totalSolved < sumDiff) {
     stats.totalSolved = sumDiff;
   }
 
-  // Baseline preservation & midnight boundary reconciliation (12:00 AM IST)
-  // When daily sync runs at midnight (e.g., 10/09/2026 00:00 - 00:30 IST),
-  // yesterday (09/09/2026) is the completed calendar day being finalized.
-  const todayISTStr = getISTDateString(0);
-  const yesterdayISTStr = getISTDateString(-1);
-  const todayMidnightMs = new Date(`${todayISTStr}T00:00:00+05:30`).getTime();
-  const yesterdayDate = getISTDate(-1);
-
-  let todaySolvedCount = 0;
+  // Group recent accepted submissions by IST calendar date string (YYYY-MM-DD)
+  const distinctSlugsByDate = new Map<string, Set<string>>();
   if (stats.recentSubmissions && stats.recentSubmissions.length > 0) {
-    const todaySolvedSlugs = new Set(
-      stats.recentSubmissions
-        .filter((s) => s.timestamp * 1000 >= todayMidnightMs)
-        .map((s) => s.titleSlug)
-    );
-    todaySolvedCount = todaySolvedSlugs.size;
-  }
-
-  // End-of-day total for yesterday (23:59:59 IST):
-  // Any problem solved today was not yet solved at yesterday's midnight boundary.
-  let yestTotal = Math.max(0, stats.totalSolved - todaySolvedCount);
-  let rem = todaySolvedCount;
-  let yestEasy = stats.easySolved;
-  let yestMed = stats.mediumSolved;
-  let yestHard = stats.hardSolved;
-
-  const easyDed = Math.min(yestEasy, rem);
-  yestEasy -= easyDed;
-  rem -= easyDed;
-
-  const medDed = Math.min(yestMed, rem);
-  yestMed -= medDed;
-  rem -= medDed;
-
-  const hardDed = Math.min(yestHard, rem);
-  yestHard -= hardDed;
-  rem -= hardDed;
-
-  yestTotal = yestEasy + yestMed + yestHard;
-
-  // Reconcile and upsert yesterday's completed day snapshot when applicable
-  // (if yesterday snapshot already exists, if student solved problems past midnight today, or has prior history)
-  let hasPriorSnapshots = false;
-  let existingYest: any = null;
-
-  if (process.env.DATABASE_URL) {
-    existingYest = await prisma.dailyCodingSnapshot.findUnique({
-      where: {
-        student_id_snapshot_date: {
-          student_id: studentId,
-          snapshot_date: yesterdayDate,
-        },
-      },
-    });
-    if (!existingYest) {
-      const priorCount = await prisma.dailyCodingSnapshot.count({
-        where: {
-          student_id: studentId,
-          snapshot_date: { lt: yesterdayDate },
-        },
-      });
-      hasPriorSnapshots = priorCount > 0;
-    }
-  } else {
-    const studentSnaps = inMemoryStore.snapshots.filter((s) => s.student_id === studentId);
-    existingYest = studentSnaps.find(
-      (s) => new Date(s.snapshot_date).toDateString() === yesterdayDate.toDateString()
-    );
-    if (!existingYest) {
-      hasPriorSnapshots = studentSnaps.some(
-        (s) => new Date(s.snapshot_date).getTime() < yesterdayDate.getTime()
-      );
-    }
-  }
-
-  const shouldRecordYesterday = Boolean(existingYest) || todaySolvedCount > 0 || hasPriorSnapshots;
-
-  if (shouldRecordYesterday) {
-    if (process.env.DATABASE_URL) {
-      try {
-        // Monotonic guard: never decrease yesterday's snapshot if it was already higher
-        if (existingYest && existingYest.total_solved > yestTotal) {
-          yestTotal = existingYest.total_solved;
-          yestEasy = existingYest.easy_solved;
-          yestMed = existingYest.medium_solved;
-          yestHard = existingYest.hard_solved;
-        }
-
-        await prisma.dailyCodingSnapshot.upsert({
-          where: {
-            student_id_snapshot_date: {
-              student_id: studentId,
-              snapshot_date: yesterdayDate,
-            },
-          },
-          update: {
-            easy_solved: yestEasy,
-            medium_solved: yestMed,
-            hard_solved: yestHard,
-            total_solved: yestTotal,
-          },
-          create: {
-            student_id: studentId,
-            snapshot_date: yesterdayDate,
-            easy_solved: yestEasy,
-            medium_solved: yestMed,
-            hard_solved: yestHard,
-            total_solved: yestTotal,
-          },
-        });
-      } catch (yestErr) {
-        console.warn(`[Yesterday Snapshot Upsert Warning for ${student.name}]:`, yestErr);
+    for (const sub of stats.recentSubmissions) {
+      if (!sub.timestamp || !sub.titleSlug) continue;
+      const subISTDateStr = toISTDateString(new Date(sub.timestamp * 1000));
+      if (!distinctSlugsByDate.has(subISTDateStr)) {
+        distinctSlugsByDate.set(subISTDateStr, new Set());
       }
-    } else {
-      const yestIndex = inMemoryStore.snapshots.findIndex(
-        (s) => s.student_id === studentId && new Date(s.snapshot_date).toDateString() === yesterdayDate.toDateString()
-      );
-      if (yestIndex >= 0) {
-        const existingRecord = inMemoryStore.snapshots[yestIndex];
-        if (existingRecord && existingRecord.total_solved > yestTotal) {
-          yestTotal = existingRecord.total_solved;
-          yestEasy = existingRecord.easy_solved;
-          yestMed = existingRecord.medium_solved;
-          yestHard = existingRecord.hard_solved;
-        }
-        inMemoryStore.snapshots[yestIndex] = {
-          ...existingRecord,
-          easy_solved: yestEasy,
-          medium_solved: yestMed,
-          hard_solved: yestHard,
-          total_solved: yestTotal,
-        };
-      } else {
-        inMemoryStore.snapshots.push({
-          id: `snap_${Date.now()}_yest_${Math.random().toString(36).substring(2, 6)}`,
-          student_id: studentId,
-          snapshot_date: yesterdayDate,
-          easy_solved: yestEasy,
-          medium_solved: yestMed,
-          hard_solved: yestHard,
-          total_solved: yestTotal,
-          created_at: new Date(),
-        });
-      }
+      distinctSlugsByDate.get(subISTDateStr)!.add(sub.titleSlug);
     }
   }
 
-  // Reconcile and upsert today's snapshot
-  let snapshot: any = null;
+  // Build a continuous 30-day chronological timeline (from 30 days ago to today)
+  // Day 0 = Today. Day -1 = Yesterday. Day -2 = 2 days ago ... Day -30 = 30 days ago.
+  // This guarantees that ANY filter: "today", "yesterday", "last_7", "last_30", "all"
+  // always has an exact prior baseline snapshot to compute perfect deltas!
+  const daysCount = 30;
+  const dailyTotals = new Array<number>(daysCount + 1);
+  dailyTotals[0] = stats.totalSolved; // Day 0 is today's live total
+
+  for (let offset = 0; offset < daysCount; offset++) {
+    const dStr = getISTDateString(-offset);
+    const solvedOnThisDay = distinctSlugsByDate.get(dStr)?.size || 0;
+    // The total at the end of the previous day = (total at end of this day) - (solved on this day)
+    dailyTotals[offset + 1] = Math.max(0, dailyTotals[offset] - solvedOnThisDay);
+  }
+
+  // Fetch all existing snapshots for this student to ensure monotonic non-decreasing continuity
+  const existingSnapsByDate = new Map<string, any>();
   if (!process.env.DATABASE_URL) {
-    let existingIndex = inMemoryStore.snapshots.findIndex(
-      (s) => s.student_id === studentId && new Date(s.snapshot_date).toDateString() === today.toDateString()
-    );
-
-    const snapshotObj = {
-      id: existingIndex >= 0 ? inMemoryStore.snapshots[existingIndex].id : `snap_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      student_id: studentId,
-      snapshot_date: today,
-      easy_solved: stats.easySolved,
-      medium_solved: stats.mediumSolved,
-      hard_solved: stats.hardSolved,
-      total_solved: stats.totalSolved,
-      created_at: new Date(),
-    };
-
-    if (existingIndex >= 0) {
-      inMemoryStore.snapshots[existingIndex] = snapshotObj;
-    } else {
-      inMemoryStore.snapshots.push(snapshotObj);
-    }
-    snapshot = snapshotObj;
+    const studentSnaps = inMemoryStore.snapshots.filter((s) => s.student_id === studentId);
+    studentSnaps.forEach((s) => existingSnapsByDate.set(toISTDateString(s.snapshot_date), s));
   } else {
-    snapshot = await prisma.dailyCodingSnapshot.upsert({
-      where: {
-        student_id_snapshot_date: {
-          student_id: studentId,
-          snapshot_date: today,
-        },
-      },
-      update: {
-        easy_solved: stats.easySolved,
-        medium_solved: stats.mediumSolved,
-        hard_solved: stats.hardSolved,
-        total_solved: stats.totalSolved,
-      },
-      create: {
-        student_id: studentId,
-        snapshot_date: today,
-        easy_solved: stats.easySolved,
-        medium_solved: stats.mediumSolved,
-        hard_solved: stats.hardSolved,
-        total_solved: stats.totalSolved,
-      },
+    const dbSnaps = await prisma.dailyCodingSnapshot.findMany({
+      where: { student_id: studentId },
     });
+    dbSnaps.forEach((s) => existingSnapsByDate.set(toISTDateString(s.snapshot_date), s));
   }
 
-  // Autonomous Timeline Healing: If there are any missing calendar days between earlier snapshots and today,
-  // backfill and persist them so that daily history never exhibits missing dates.
-  try {
-    if (process.env.DATABASE_URL) {
-      const allStudentSnaps = await prisma.dailyCodingSnapshot.findMany({
-        where: { student_id: studentId },
-        orderBy: { snapshot_date: 'asc' },
-      });
-      if (allStudentSnaps.length >= 2) {
-        const filled = fillContinuousSnapshotTimeline(allStudentSnaps);
-        const existingDates = new Set(allStudentSnaps.map((s) => toISTDateString(s.snapshot_date)));
-        const missing = filled.filter((s) => !existingDates.has(toISTDateString(s.snapshot_date)));
-        if (missing.length > 0) {
-          await prisma.dailyCodingSnapshot.createMany({
-            data: missing.map((m) => ({
-              student_id: studentId,
-              snapshot_date: new Date(`${toISTDateString(m.snapshot_date)}T00:00:00.000Z`),
-              easy_solved: m.easy_solved,
-              medium_solved: m.medium_solved,
-              hard_solved: m.hard_solved,
-              total_solved: m.total_solved,
-            })),
-            skipDuplicates: true,
-          }).catch(() => {});
-        }
-      }
-    } else {
-      const allStudentSnaps = inMemoryStore.snapshots
-        .filter((s) => s.student_id === studentId)
-        .sort((a, b) => new Date(a.snapshot_date).getTime() - new Date(b.snapshot_date).getTime());
-      if (allStudentSnaps.length >= 2) {
-        const filled = fillContinuousSnapshotTimeline(allStudentSnaps);
-        const existingDates = new Set(allStudentSnaps.map((s) => toISTDateString(s.snapshot_date)));
-        const missing = filled.filter((s) => !existingDates.has(toISTDateString(s.snapshot_date)));
-        for (const m of missing) {
-          inMemoryStore.snapshots.push({
-            id: `snap_${Date.now()}_backfill_${toISTDateString(m.snapshot_date)}`,
-            student_id: studentId,
-            snapshot_date: new Date(`${toISTDateString(m.snapshot_date)}T00:00:00.000Z`),
-            easy_solved: m.easy_solved,
-            medium_solved: m.medium_solved,
-            hard_solved: m.hard_solved,
-            total_solved: m.total_solved,
-            created_at: new Date(),
-          });
-        }
-      }
+  // Persist all 31 daily snapshots (Day -30 up to Day 0 = today)
+  let todaySnapshot: any = null;
+
+  for (let offset = daysCount; offset >= 0; offset--) {
+    const dStr = getISTDateString(-offset);
+    const dateObj = new Date(`${dStr}T00:00:00.000Z`);
+
+    let computedTotal = dailyTotals[offset];
+    const existing = existingSnapsByDate.get(dStr);
+
+    // Monotonic guard: never regress historic totals if previously recorded higher
+    if (existing && existing.total_solved > computedTotal) {
+      computedTotal = existing.total_solved;
     }
-  } catch (gapErr: any) {
-    console.warn(`[Snapshot Backfill Warning for ${student.name}]:`, gapErr?.message || gapErr);
+
+    // Guarantee that today (offset === 0) has today's live stats
+    if (offset === 0) {
+      computedTotal = Math.max(stats.totalSolved, computedTotal);
+    }
+
+    // Allocate breakdown across easy, medium, hard
+    const deduction = Math.max(0, stats.totalSolved - computedTotal);
+    let sEasy = stats.easySolved;
+    let sMed = stats.mediumSolved;
+    let sHard = stats.hardSolved;
+
+    let rem = deduction;
+    const eDed = Math.min(sEasy, rem);
+    sEasy -= eDed;
+    rem -= eDed;
+
+    const mDed = Math.min(sMed, rem);
+    sMed -= mDed;
+    rem -= mDed;
+
+    const hDed = Math.min(sHard, rem);
+    sHard -= hDed;
+    rem -= hDed;
+
+    // Consistency check
+    const currentSum = sEasy + sMed + sHard;
+    if (computedTotal > currentSum) {
+      sEasy += (computedTotal - currentSum);
+    } else if (computedTotal < currentSum) {
+      computedTotal = currentSum;
+    }
+
+    if (!process.env.DATABASE_URL) {
+      const existingIdx = inMemoryStore.snapshots.findIndex(
+        (s) => s.student_id === studentId && toISTDateString(s.snapshot_date) === dStr
+      );
+      const snapData = {
+        id: existingIdx >= 0 ? inMemoryStore.snapshots[existingIdx].id : `snap_${Date.now()}_${dStr}_${Math.random().toString(36).substring(2, 6)}`,
+        student_id: studentId,
+        snapshot_date: dateObj,
+        easy_solved: sEasy,
+        medium_solved: sMed,
+        hard_solved: sHard,
+        total_solved: computedTotal,
+        created_at: existingIdx >= 0 ? inMemoryStore.snapshots[existingIdx].created_at : new Date(),
+      };
+
+      if (existingIdx >= 0) {
+        inMemoryStore.snapshots[existingIdx] = snapData;
+      } else {
+        inMemoryStore.snapshots.push(snapData);
+      }
+
+      if (offset === 0) todaySnapshot = snapData;
+    } else {
+      const snapData = await prisma.dailyCodingSnapshot.upsert({
+        where: {
+          student_id_snapshot_date: {
+            student_id: studentId,
+            snapshot_date: dateObj,
+          },
+        },
+        update: {
+          easy_solved: sEasy,
+          medium_solved: sMed,
+          hard_solved: sHard,
+          total_solved: computedTotal,
+        },
+        create: {
+          student_id: studentId,
+          snapshot_date: dateObj,
+          easy_solved: sEasy,
+          medium_solved: sMed,
+          hard_solved: sHard,
+          total_solved: computedTotal,
+        },
+      });
+
+      if (offset === 0) todaySnapshot = snapData;
+    }
   }
 
   // Trigger Google Sheet update for active links covering this student's batch with Failure Isolation (only if not deferred)
@@ -708,9 +610,11 @@ stats.easySolved += (stats.totalSolved - sumDiff);
     leetcodeUsername: student.leetcode_username,
     batchId: student.batch_id,
     stats,
-    snapshot,
+    snapshot: todaySnapshot,
     latencyMs,
     syncedAt: new Date().toISOString(),
+    isFallback: Boolean(fetchError),
+    fetchError: fetchError || undefined,
   };
 }
 
@@ -813,11 +717,11 @@ export async function syncBatchLeetCode(batchId: string, user: { userId: string;
 
   let results: any[] = [];
   try {
-    // Run student syncing concurrently (15 parallel workers with 8.5s time budget)
-    const MAX_SAFE_EXECUTION_MS = 8500;
+    // Run student syncing concurrently (concurrency 10 with 60s time budget)
+    const MAX_SAFE_EXECUTION_MS = 60000;
     results = await runConcurrentTasks(
       studentList,
-      15,
+      10,
       async (st) => {
         try {
           const res = await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
@@ -918,12 +822,11 @@ export async function syncFilteredStudentsLeetCode(
     studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
   }
 
-  // Run student syncing concurrently with a pool of 15 workers and a 6.5-second time budget
-  // to guarantee the HTTP response always returns cleanly within Vercel's serverless timeout.
-  const MAX_SAFE_EXECUTION_MS = 6500;
+  // Run student syncing concurrently with a pool of 10 workers and up to 60-second budget
+  const MAX_SAFE_EXECUTION_MS = 60000;
   const results = await runConcurrentTasks(
     studentList,
-    15,
+    10,
     async (st) => {
       try {
         const res = await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
