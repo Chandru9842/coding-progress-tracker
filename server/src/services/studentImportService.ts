@@ -339,19 +339,23 @@ export async function bulkImportStudents(
     // Resolve Mentor:
     // 1. Explicit unassignment ('NONE')
     // 2. Direct row.mentor_id (from mapped staff selector or explicit selection)
-    // 3. targetScope.mentor_id (if admin explicitly picked a mentor in the top dropdown)
-    // 4. Matched from row.mentor_name using smart fuzzy matching
-    // 5. Default to logged-in user if role === 'STAFF' and no mentor resolved
-    const isExplicitlyUnassigned = row.mentor_id === 'NONE' || (!row.mentor_id && targetScope?.mentor_id === 'NONE');
+    // 3. Matched from row.mentor_name using smart fuzzy matching against staffList
+    // 4. targetScope.mentor_id (only if row has no mentor name or unassigned, and admin picked a target scope mentor)
+    // 5. Default to logged-in user if role === 'STAFF' and row had NO mentor specified in the sheet
+    const isExplicitlyUnassigned = row.mentor_id === 'NONE' || (!row.mentor_id && !row.mentor_name && targetScope?.mentor_id === 'NONE');
     let resolvedMentorId: string | null = null;
 
     if (!isExplicitlyUnassigned) {
       if (row.mentor_id && row.mentor_id !== 'AUTO') {
         resolvedMentorId = row.mentor_id;
+      } else if (row.mentor_name && row.mentor_name !== 'Unassigned') {
+        resolvedMentorId = findBestStaffMatch(row.mentor_name, staffList);
+        // If row mentor name didn't match any staff in DB, fallback to targetScope only if targetScope is set
+        if (!resolvedMentorId && targetScope?.mentor_id && targetScope.mentor_id !== 'AUTO') {
+          resolvedMentorId = targetScope.mentor_id;
+        }
       } else if (targetScope?.mentor_id && targetScope.mentor_id !== 'AUTO') {
         resolvedMentorId = targetScope.mentor_id;
-      } else if (row.mentor_name) {
-        resolvedMentorId = findBestStaffMatch(row.mentor_name, staffList);
       } else if (user.role === 'STAFF') {
         resolvedMentorId = user.userId;
       }
@@ -490,7 +494,7 @@ export async function bulkImportStudents(
   }
 
   // 4. Trigger initial background LeetCode fetch for all imported students
-  if (newlyCreatedOrUpdatedIds.length > 0) {
+  if (newlyCreatedOrUpdatedIds.length > 0 && process.env.NODE_ENV !== 'test') {
     const authContext = { userId: user.userId, role: user.role };
     (async () => {
       console.log(`[Import-Sync] Starting background LeetCode fetch for ${newlyCreatedOrUpdatedIds.length} imported student(s)...`);

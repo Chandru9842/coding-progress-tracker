@@ -32,6 +32,7 @@ import {
   ParsedImportRow,
   ParseResult,
 } from '../utils/studentImportUtils.js';
+import * as XLSX from 'xlsx';
 
 function formatStudyYear(currentYear?: string | null, batchName?: string | null, startYear?: number | null): string {
   if (currentYear) {
@@ -199,6 +200,7 @@ export const StudentsPage: React.FC = () => {
   const [detectedYears, setDetectedYears] = useState<string[]>([]);
   const [detectedSections, setDetectedSections] = useState<string[]>([]);
   const [selectedMentorFilters, setSelectedMentorFilters] = useState<Set<string>>(new Set(['ALL']));
+  const [isMultiMentorMode, setIsMultiMentorMode] = useState<boolean>(false);
   const [selectedYearFilter, setSelectedYearFilter] = useState<string>('ALL');
   const [selectedSectionFilter, setSelectedSectionFilter] = useState<string>('ALL');
   const [importBatchId, setImportBatchId] = useState<string>('');
@@ -624,6 +626,7 @@ export const StudentsPage: React.FC = () => {
     setImportFileName('');
     setImportRows([]);
     setSelectedMentorFilters(new Set(['ALL']));
+    setIsMultiMentorMode(false);
     setSelectedYearFilter('ALL');
     setSelectedSectionFilter('ALL');
     setDetectedYears([]);
@@ -641,12 +644,10 @@ export const StudentsPage: React.FC = () => {
     setImportFileName(file.name);
     setImportResult(null);
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const text = e.target?.result as string;
-      if (!text) return;
+    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
 
-      const result = analyzeAndParseStudents(text);
+    const processCsvContent = (csvText: string) => {
+      const result = analyzeAndParseStudents(csvText);
       setImportRows(result.rows);
       setDetectedMentors(result.detectedMentors);
       setDetectedYears(result.detectedYears || []);
@@ -688,27 +689,62 @@ export const StudentsPage: React.FC = () => {
       }
 
       // Smart Auto-Filter for logged in user (e.g. Dr. A. Muthuraj)
+      let matchedMentorForUser: string | null = null;
       if (user?.name) {
-        const userNorm = user.name.toLowerCase().replace(/^(dr|mr|mrs|ms|prof)\.?\s*/i, '').replace(/[^a-z0-9]/g, '');
+        const currentUserStaff = staffList.find((s) => s.id === user.id) || ({ id: user.id, name: user.name, role: user.role } as StaffUser);
         const matched = result.detectedMentors.find((m) => {
-          const mNorm = m.toLowerCase().replace(/^(dr|mr|mrs|ms|prof)\.?\s*/i, '').replace(/[^a-z0-9]/g, '');
-          return mNorm === userNorm || mNorm.includes(userNorm) || userNorm.includes(mNorm);
+          if (m === 'Unassigned') return false;
+          return findMatchingStaff(m, [currentUserStaff]) !== null;
         });
         if (matched) {
-          setSelectedMentorFilters(new Set([matched]));
-          // Pre-select only valid rows for this matched mentor
-          setImportRows(result.rows.map((r) => ({
-            ...r,
-            selected: r.isValid && r.cleanMentor === matched,
-          })));
-        } else {
-          setSelectedMentorFilters(new Set(['ALL']));
+          matchedMentorForUser = matched;
+        }
+      }
+
+      if (matchedMentorForUser) {
+        setSelectedMentorFilters(new Set([matchedMentorForUser]));
+        // Pre-select only valid rows for this matched mentor
+        setImportRows(result.rows.map((r) => ({
+          ...r,
+          selected: r.isValid && r.cleanMentor === matchedMentorForUser,
+        })));
+        if (isStaff && user?.id) {
+          setImportMentorId(user.id);
         }
       } else {
         setSelectedMentorFilters(new Set(['ALL']));
+        setImportRows(result.rows.map((r) => ({
+          ...r,
+          selected: r.isValid,
+        })));
       }
     };
-    reader.readAsText(file);
+
+    if (isExcel) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target?.result as ArrayBuffer);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          const csvText = XLSX.utils.sheet_to_csv(worksheet);
+          processCsvContent(csvText);
+        } catch (excelErr: any) {
+          console.error('Failed to parse Excel file:', excelErr);
+          alert('Failed to parse Excel file. Please ensure it is a valid .xlsx or .xls file.');
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target?.result as string;
+        if (!text) return;
+        processCsvContent(text);
+      };
+      reader.readAsText(file);
+    }
   };
 
   // Single-Select: Select ONLY this mentor and deselect all others
@@ -716,12 +752,23 @@ export const StudentsPage: React.FC = () => {
     let nextSet: Set<string>;
     if (mentor === 'ALL') {
       nextSet = new Set(['ALL']);
+      if (!isStaff) {
+        setImportMentorId('AUTO');
+      }
     } else {
       nextSet = new Set([mentor]);
+      if (mentorMappings[mentor] && mentorMappings[mentor] !== 'AUTO') {
+        setImportMentorId(mentorMappings[mentor]);
+      } else {
+        const matched = findMatchingStaff(mentor, staffList);
+        if (matched) {
+          setImportMentorId(matched.id);
+        }
+      }
     }
     setSelectedMentorFilters(nextSet);
 
-    // CRITICAL: Strictly select ONLY rows matching this active mentor filter, and deselect all others!
+    // Strictly select ONLY rows matching this active mentor filter, and deselect all others!
     setImportRows((prev) =>
       prev.map((r) => {
         if (!r.isValid) return { ...r, selected: false };
@@ -734,27 +781,30 @@ export const StudentsPage: React.FC = () => {
     );
   };
 
-  // Multi-Select: Toggle a mentor into or out of the active selection set without needing Shift/Ctrl
+  // Toggle mentor filter
   const handleToggleMentorFilter = (mentor: string) => {
+    if (!isMultiMentorMode) {
+      handleSelectOnlyMentor(mentor);
+      return;
+    }
+
     let nextSet: Set<string>;
 
     if (mentor === 'ALL') {
       nextSet = new Set(['ALL']);
     } else if (selectedMentorFilters.has('ALL')) {
-      // Switching from ALL to a specific mentor: isolate to this mentor
+      // Switching from ALL to a specific mentor
       nextSet = new Set([mentor]);
     } else {
       // Multi-select toggle
       nextSet = new Set(selectedMentorFilters);
       if (nextSet.has(mentor)) {
         nextSet.delete(mentor);
-        // If all mentors were unchecked, reset back to ALL
         if (nextSet.size === 0) {
           nextSet = new Set(['ALL']);
         }
       } else {
         nextSet.add(mentor);
-        // If every detected mentor is now selected, normalize to ALL
         if (nextSet.size === detectedMentors.length && detectedMentors.length > 0) {
           nextSet = new Set(['ALL']);
         }
@@ -763,7 +813,7 @@ export const StudentsPage: React.FC = () => {
 
     setSelectedMentorFilters(nextSet);
 
-    // CRITICAL: Automatically select all valid rows matching the active filter, deselect others
+    // Automatically select all valid rows matching the active filter, deselect others
     setImportRows((prev) =>
       prev.map((r) => {
         if (!r.isValid) return { ...r, selected: false };
@@ -793,9 +843,7 @@ export const StudentsPage: React.FC = () => {
     if (stf) {
       const match = detectedMentors.find((m) => {
         if (m === 'Unassigned') return false;
-        const s1 = m.toLowerCase().replace(/^(dr|mr|mrs|ms|prof|er)\.?\s*/i, '').replace(/[^a-z0-9]/g, '');
-        const s2 = stf.name.toLowerCase().replace(/^(dr|mr|mrs|ms|prof|er)\.?\s*/i, '').replace(/[^a-z0-9]/g, '');
-        return s1 === s2 || s1.includes(s2) || s2.includes(s1);
+        return findMatchingStaff(m, [stf]) !== null;
       });
       if (match) {
         handleSelectOnlyMentor(match);
@@ -906,6 +954,8 @@ export const StudentsPage: React.FC = () => {
       setImportResult(null);
 
       const targetBatch = batches.find((b) => b.id === importBatchId);
+      const isSingleMentorFilter = selectedMentorFilters.size === 1 && !selectedMentorFilters.has('ALL');
+      const activeSingleMentor = isSingleMentorFilter ? Array.from(selectedMentorFilters)[0] : null;
 
       const payload = {
         students: targetRowsToImport.map((r) => {
@@ -914,7 +964,9 @@ export const StudentsPage: React.FC = () => {
             rowMentorId = r.mentorStaffId;
           } else if (mentorMappings[r.cleanMentor] && mentorMappings[r.cleanMentor] !== 'AUTO') {
             rowMentorId = mentorMappings[r.cleanMentor];
-          } else if (importMentorId && importMentorId !== 'AUTO') {
+          } else if (r.cleanMentor === 'Unassigned' && importMentorId && importMentorId !== 'AUTO') {
+            rowMentorId = importMentorId;
+          } else if (isSingleMentorFilter && r.cleanMentor === activeSingleMentor && importMentorId && importMentorId !== 'AUTO') {
             rowMentorId = importMentorId;
           }
 
@@ -956,7 +1008,7 @@ export const StudentsPage: React.FC = () => {
           allocation_batch_id: importAllocBatchId || undefined,
           sub_batch: importSubBatchCustom || undefined,
           current_year: importCurrentYear || undefined,
-          mentor_id: (importMentorId && importMentorId !== 'AUTO') ? importMentorId : undefined,
+          mentor_id: (isSingleMentorFilter && importMentorId && importMentorId !== 'AUTO') ? importMentorId : undefined,
         },
       };
 
@@ -2098,7 +2150,7 @@ export const StudentsPage: React.FC = () => {
                 <input
                   id="csv-file-input"
                   type="file"
-                  accept=".csv,.txt,.tsv"
+                  accept=".xlsx,.xls,.csv,.txt,.tsv"
                   style={{ display: 'none' }}
                   onChange={(e) => {
                     if (e.target.files && e.target.files[0]) {
@@ -2119,7 +2171,7 @@ export const StudentsPage: React.FC = () => {
                     {importFileName ? (
                       <span style={{ color: '#818cf8' }}>📄 Loaded: {importFileName}</span>
                     ) : (
-                      'Click to upload or drag & drop CSV spreadsheet'
+                      'Click to upload or drag & drop Excel (.xlsx, .xls) or CSV spreadsheet'
                     )}
                   </div>
                   <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
@@ -2346,7 +2398,7 @@ export const StudentsPage: React.FC = () => {
                       {/* Mentor Filter Pills */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
                         <span style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                          Mentor:
+                          Filter by Mentor:
                         </span>
                         
                         {/* All Mentors Button */}
@@ -2356,15 +2408,16 @@ export const StudentsPage: React.FC = () => {
                           style={{
                             display: 'inline-flex',
                             alignItems: 'center',
-                            gap: '0.3rem',
-                            padding: '0.22rem 0.6rem',
+                            gap: '0.35rem',
+                            padding: '0.28rem 0.65rem',
                             borderRadius: '16px',
-                            fontSize: '0.73rem',
+                            fontSize: '0.75rem',
                             fontWeight: 600,
                             backgroundColor: selectedMentorFilters.has('ALL') ? 'var(--primary)' : 'rgba(255, 255, 255, 0.06)',
                             color: selectedMentorFilters.has('ALL') ? '#ffffff' : 'var(--text-secondary)',
                             border: selectedMentorFilters.has('ALL') ? '1px solid var(--primary)' : '1px solid var(--border-subtle)',
                             cursor: 'pointer',
+                            transition: 'all 0.15s ease',
                           }}
                           title="Show and import all mentors' students in the sheet"
                         >
@@ -2372,94 +2425,66 @@ export const StudentsPage: React.FC = () => {
                           <span>All Mentors ({importRows.length})</span>
                         </button>
 
-                        {/* Each Detected Mentor Composite Pill (Toggle + [Only]) */}
+                        {/* Each Detected Mentor Pill */}
                         {detectedMentors.map((mentor) => {
                           const count = importRows.filter((r) => r.cleanMentor === mentor).length;
-                          const isSelected = selectedMentorFilters.has(mentor) || selectedMentorFilters.has('ALL');
                           const isExplicitSingle = selectedMentorFilters.size === 1 && selectedMentorFilters.has(mentor);
+                          const isSelectedInMulti = isMultiMentorMode && selectedMentorFilters.has(mentor);
+                          const isActive = isExplicitSingle || isSelectedInMulti;
                           const isUnassigned = mentor === 'Unassigned';
 
                           return (
-                            <div
+                            <button
                               key={mentor}
+                              type="button"
+                              onClick={() => handleToggleMentorFilter(mentor)}
                               style={{
                                 display: 'inline-flex',
                                 alignItems: 'center',
+                                gap: '0.35rem',
+                                padding: '0.28rem 0.65rem',
                                 borderRadius: '16px',
-                                border: isSelected
+                                border: isActive
                                   ? (isUnassigned ? '1px solid #d97706' : '1px solid var(--primary)')
                                   : '1px solid var(--border-subtle)',
-                                backgroundColor: isSelected
-                                  ? (isUnassigned ? 'rgba(217, 119, 6, 0.18)' : 'rgba(99, 102, 241, 0.18)')
-                                  : 'rgba(255, 255, 255, 0.04)',
-                                overflow: 'hidden',
-                                fontSize: '0.73rem',
+                                backgroundColor: isActive
+                                  ? (isUnassigned ? '#d97706' : 'var(--primary)')
+                                  : 'rgba(255, 255, 255, 0.05)',
+                                color: isActive ? '#ffffff' : (isUnassigned ? '#fbbf24' : 'var(--text-secondary)'),
+                                fontWeight: isActive ? 700 : 500,
+                                fontSize: '0.75rem',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s ease',
                               }}
+                              title={isMultiMentorMode ? `Click to toggle ${mentor} in/out` : `Click to select ONLY ${mentor}'s students`}
                             >
-                              {/* Main Toggle Button (Multi-Select) */}
-                              <button
-                                type="button"
-                                onClick={() => handleToggleMentorFilter(mentor)}
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '0.35rem',
-                                  padding: '0.22rem 0.55rem',
-                                  background: 'none',
-                                  border: 'none',
-                                  color: isSelected
-                                    ? (isUnassigned ? '#fbbf24' : '#ffffff')
-                                    : 'var(--text-secondary)',
-                                  fontWeight: isSelected ? 600 : 500,
-                                  cursor: 'pointer',
-                                }}
-                                title={isUnassigned ? 'Click to toggle Non-Mentor students in/out of selection' : `Click to toggle ${mentor} (Multi-Select)`}
-                              >
-                                <span style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  width: '13px',
-                                  height: '13px',
-                                  borderRadius: '3px',
-                                  border: isSelected ? '1px solid currentColor' : '1px solid var(--text-muted)',
-                                  fontSize: '0.65rem',
-                                  lineHeight: 1,
-                                }}>
-                                  {isSelected ? '✓' : ''}
-                                </span>
-                                <span>{isUnassigned ? '⚠️ Non-Mentor' : `👤 ${mentor}`}</span>
-                                <span style={{ opacity: 0.75 }}>({count})</span>
-                              </button>
-
-                              {/* [Only] Button (Single-Select) */}
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleSelectOnlyMentor(mentor);
-                                }}
-                                style={{
-                                  padding: '0.22rem 0.45rem',
-                                  background: isExplicitSingle
-                                    ? (isUnassigned ? '#d97706' : 'var(--primary)')
-                                    : 'rgba(255, 255, 255, 0.08)',
-                                  border: 'none',
-                                  borderLeft: isSelected
-                                    ? (isUnassigned ? '1px solid rgba(217, 119, 6, 0.4)' : '1px solid rgba(99, 102, 241, 0.4)')
-                                    : '1px solid rgba(255, 255, 255, 0.08)',
-                                  color: isExplicitSingle ? '#ffffff' : (isUnassigned ? '#fbbf24' : '#818cf8'),
-                                  fontSize: '0.68rem',
-                                  fontWeight: 700,
-                                  cursor: 'pointer',
-                                }}
-                                title={`Click to select ONLY ${mentor} and deselect all other mentors`}
-                              >
-                                Only
-                              </button>
-                            </div>
+                              <span>{isActive ? '✓' : '○'}</span>
+                              <span>{isUnassigned ? '⚠️ Non-Mentor' : `👤 ${mentor}`}</span>
+                              <span style={{ opacity: 0.85, fontSize: '0.7rem' }}>({count})</span>
+                            </button>
                           );
                         })}
+
+                        {/* Multi-Select Toggle Switch */}
+                        {detectedMentors.length > 1 && (
+                          <label style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.3rem',
+                            fontSize: '0.72rem',
+                            color: 'var(--text-muted)',
+                            cursor: 'pointer',
+                            marginLeft: '0.3rem',
+                          }}>
+                            <input
+                              type="checkbox"
+                              checked={isMultiMentorMode}
+                              onChange={(e) => setIsMultiMentorMode(e.target.checked)}
+                              style={{ cursor: 'pointer', width: '13px', height: '13px' }}
+                            />
+                            <span>Multi-mentor mode</span>
+                          </label>
+                        )}
                       </div>
 
                       {/* Search inside preview */}

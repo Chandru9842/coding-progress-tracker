@@ -125,7 +125,16 @@ export async function syncReportStudents(data?: {
   clearClientCache('report_data_');
   clearClientCache('students_');
   clearClientCache('sheets_');
+  clearClientCache('snapshots_');
+  clearClientCache('student_');
+  clearClientCache('student_daily_');
   const response = await api.post('/sync/report-filtered', data || {});
+  clearClientCache('report_data_');
+  clearClientCache('students_');
+  clearClientCache('sheets_');
+  clearClientCache('snapshots_');
+  clearClientCache('student_');
+  clearClientCache('student_daily_');
   return response.data;
 }
 

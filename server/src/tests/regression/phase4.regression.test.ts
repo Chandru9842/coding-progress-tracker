@@ -76,8 +76,10 @@ export async function runPhase4RegressionTests(): Promise<{ name: string; passed
     const syncRes2 = await leetcodeService.syncStudentLeetCode(testStudentId, adminUser);
     const studentSnaps = await leetcodeService.getStudentSnapshots(testStudentId, adminUser);
 
-    if (studentSnaps.length !== 1) {
-      log(`FAIL: Expected 1 upserted snapshot for date, found ${studentSnaps.length}.`);
+    // Sync records today's snapshot and yesterday's baseline; re-syncing must update in-place with zero duplicate dates
+    const uniqueDates = new Set(studentSnaps.map((s) => new Date(s.snapshot_date).toISOString().split('T')[0]));
+    if (studentSnaps.length !== uniqueDates.size) {
+      log(`FAIL: Duplicate date detected after re-sync: found ${studentSnaps.length} snapshots across ${uniqueDates.size} dates.`);
       return { name: 'Phase 4 Regression Suite', passed: false, details };
     }
     log('Pass: Snapshot upsert logic verified; duplicate date entries prevented.');

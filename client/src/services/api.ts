@@ -576,10 +576,12 @@ export const studentApi = {
     return res.data.students;
   },
 
-  getStudentById: async (studentId: string): Promise<Student> => {
+  getStudentById: async (studentId: string, bypassCache: boolean = false): Promise<Student> => {
     const key = `student_${studentId}`;
-    const cached = getCachedData<Student>(key);
-    if (cached) return cached;
+    if (!bypassCache) {
+      const cached = getCachedData<Student>(key);
+      if (cached) return cached;
+    }
     const res = await api.get<{ student: Student }>(`/students/${studentId}`);
     setCachedData(key, res.data.student);
     return res.data.student;
@@ -739,8 +741,18 @@ export function notifySyncEnded(name?: string) {
 export const syncApi = {
   syncStudent: async (studentId: string): Promise<any> => {
     notifySyncStarted('Student Sync');
+    clearClientCache(`snapshots_${studentId}`);
+    clearClientCache(`student_${studentId}`);
+    clearClientCache('students_');
+    clearClientCache('report_data_');
+    clearClientCache('student_daily_');
     try {
       const res = await api.post(`/sync/student/${studentId}`);
+      clearClientCache(`snapshots_${studentId}`);
+      clearClientCache(`student_${studentId}`);
+      clearClientCache('students_');
+      clearClientCache('report_data_');
+      clearClientCache('student_daily_');
       return res.data;
     } finally {
       notifySyncEnded('Student Sync');
@@ -751,8 +763,16 @@ export const syncApi = {
     notifySyncStarted('Batch Sync');
     clearClientCache('sheets_');
     clearClientCache('students_');
+    clearClientCache('snapshots_');
+    clearClientCache('report_data_');
+    clearClientCache('student_daily_');
     try {
       const res = await api.post(`/sync/batch/${batchId}`);
+      clearClientCache('sheets_');
+      clearClientCache('students_');
+      clearClientCache('snapshots_');
+      clearClientCache('report_data_');
+      clearClientCache('student_daily_');
       return res.data;
     } finally {
       notifySyncEnded('Batch Sync');
@@ -763,8 +783,16 @@ export const syncApi = {
     notifySyncStarted('Section Immediate Sync');
     clearClientCache('sheets_');
     clearClientCache('students_');
+    clearClientCache('snapshots_');
+    clearClientCache('report_data_');
+    clearClientCache('student_daily_');
     try {
       const res = await api.post(`/sync/section/${sectionId}`);
+      clearClientCache('sheets_');
+      clearClientCache('students_');
+      clearClientCache('snapshots_');
+      clearClientCache('report_data_');
+      clearClientCache('student_daily_');
       return res.data;
     } finally {
       notifySyncEnded('Section Immediate Sync');
@@ -775,18 +803,28 @@ export const syncApi = {
     notifySyncStarted('Global Sync');
     clearClientCache('sheets_');
     clearClientCache('students_');
+    clearClientCache('snapshots_');
+    clearClientCache('report_data_');
+    clearClientCache('student_daily_');
     try {
       const res = await api.post('/sync/all');
+      clearClientCache('sheets_');
+      clearClientCache('students_');
+      clearClientCache('snapshots_');
+      clearClientCache('report_data_');
+      clearClientCache('student_daily_');
       return res.data;
     } finally {
       notifySyncEnded('Global Sync');
     }
   },
 
-  getSnapshots: async (studentId: string): Promise<DailySnapshot[]> => {
+  getSnapshots: async (studentId: string, bypassCache: boolean = false): Promise<DailySnapshot[]> => {
     const key = `snapshots_${studentId}`;
-    const cached = getCachedData<DailySnapshot[]>(key);
-    if (cached) return cached;
+    if (!bypassCache) {
+      const cached = getCachedData<DailySnapshot[]>(key);
+      if (cached) return cached;
+    }
     const res = await api.get<{ snapshots: DailySnapshot[] }>(`/students/${studentId}/snapshots`);
     setCachedData(key, res.data.snapshots);
     return res.data.snapshots;

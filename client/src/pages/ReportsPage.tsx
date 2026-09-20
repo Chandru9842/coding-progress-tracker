@@ -2280,6 +2280,45 @@ export default function ReportsPage() {
               </button>
             </div>
 
+            {/* Quick Stats Comparison Cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem', marginBottom: '1.25rem' }}>
+              <div style={{
+                backgroundColor: (fromDate || toDate) && selectedStudent.total_solved > 0 ? 'rgba(52, 211, 153, 0.12)' : 'rgba(99, 102, 241, 0.08)',
+                border: (fromDate || toDate) && selectedStudent.total_solved > 0 ? '1px solid rgba(52, 211, 153, 0.3)' : '1px solid rgba(99, 102, 241, 0.25)',
+                borderRadius: '8px',
+                padding: '0.85rem 1rem',
+              }}>
+                <span style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', color: (fromDate || toDate) && selectedStudent.total_solved > 0 ? '#34d399' : '#818cf8', display: 'block' }}>
+                  {(fromDate || toDate)
+                    ? (datePreset === 'today' ? "Today's Solved (Delta)" : datePreset === 'yesterday' ? "Yesterday's Solved (Delta)" : "Period Solved (Delta)")
+                    : "Active Filter Solved"}
+                </span>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: (fromDate || toDate) && selectedStudent.total_solved > 0 ? '#34d399' : '#818cf8', marginTop: '0.2rem' }}>
+                  {(fromDate || toDate) && selectedStudent.total_solved > 0 ? `+${selectedStudent.total_solved}` : selectedStudent.total_solved}
+                </div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                  Easy: +{selectedStudent.easy_solved} &bull; Med: +{selectedStudent.medium_solved} &bull; Hard: +{selectedStudent.hard_solved}
+                </div>
+              </div>
+
+              <div style={{
+                backgroundColor: 'rgba(59, 130, 246, 0.08)',
+                border: '1px solid rgba(59, 130, 246, 0.25)',
+                borderRadius: '8px',
+                padding: '0.85rem 1rem',
+              }}>
+                <span style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', color: '#60a5fa', display: 'block' }}>
+                  Overall Total (All-Time)
+                </span>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#60a5fa', marginTop: '0.2rem' }}>
+                  {selectedStudent.overall_total ?? selectedStudent.total_solved}
+                </div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                  Easy: {selectedStudent.overall_easy ?? selectedStudent.easy_solved} &bull; Med: {selectedStudent.overall_medium ?? selectedStudent.medium_solved} &bull; Hard: {selectedStudent.overall_hard ?? selectedStudent.hard_solved}
+                </div>
+              </div>
+            </div>
+
             <h4 style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '0.75rem' }}>
               Date-wise Daily Coding Snapshot History
               {(fromDate || toDate) && (
@@ -2316,7 +2355,7 @@ export default function ReportsPage() {
                       <th style={{ padding: '0.6rem 0.75rem' }}>Cumul. Easy</th>
                       <th style={{ padding: '0.6rem 0.75rem' }}>Cumul. Med</th>
                       <th style={{ padding: '0.6rem 0.75rem' }}>Cumul. Hard</th>
-                      <th style={{ padding: '0.6rem 0.75rem' }}>Total Solved</th>
+                      <th style={{ padding: '0.6rem 0.75rem' }}>Cumulative Total (All-Time)</th>
                     </tr>
                   </thead>
                   <tbody>

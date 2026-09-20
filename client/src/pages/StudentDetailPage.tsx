@@ -120,8 +120,8 @@ export const StudentDetailPage: React.FC = () => {
 
       // Refresh student and snapshots
       const [data, snapData] = await Promise.all([
-        studentApi.getStudentById(studentId),
-        syncApi.getSnapshots(studentId),
+        studentApi.getStudentById(studentId, true),
+        syncApi.getSnapshots(studentId, true),
       ]);
       setStudent(data);
       setSnapshots(ensureContinuousTimeline(snapData || []));
@@ -854,12 +854,12 @@ export const StudentDetailPage: React.FC = () => {
                       <thead>
                         <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
                           <th style={{ padding: '0.75rem' }}>Date</th>
-                          <th style={{ padding: '0.75rem' }}>Today's Solved</th>
-                          <th style={{ padding: '0.75rem' }}>Today's Breakdown</th>
+                          <th style={{ padding: '0.75rem' }}>Day's Solved (Delta)</th>
+                          <th style={{ padding: '0.75rem' }}>Day's Breakdown</th>
                           <th style={{ padding: '0.75rem' }}>Cumulative Easy</th>
                           <th style={{ padding: '0.75rem' }}>Cumulative Medium</th>
                           <th style={{ padding: '0.75rem' }}>Cumulative Hard</th>
-                          <th style={{ padding: '0.75rem' }}>Total Solved</th>
+                          <th style={{ padding: '0.75rem' }}>Cumulative Total (All-Time)</th>
                         </tr>
                       </thead>
                       <tbody>

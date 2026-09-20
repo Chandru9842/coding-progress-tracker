@@ -12,11 +12,11 @@
     "prisma:push": "prisma db push",
     "prisma:seed": "tsx prisma/seed.ts",
     "lint": "tsc --noEmit",
-    "test": "tsx src/tests/runner.ts",
-    "test:unit": "tsx src/tests/runner.ts",
-    "test:integration": "tsx src/tests/runner.ts",
-    "test:security": "tsx src/tests/runner.ts",
-    "test:regression": "tsx src/tests/runner.ts"
+    "test": "NODE_ENV=test tsx src/tests/runner.ts",
+    "test:unit": "NODE_ENV=test tsx src/tests/runner.ts",
+    "test:integration": "NODE_ENV=test tsx src/tests/runner.ts",
+    "test:security": "NODE_ENV=test tsx src/tests/runner.ts",
+    "test:regression": "NODE_ENV=test tsx src/tests/runner.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.14.0",

@@ -194,15 +194,52 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
     firstLineStr.includes('student name') ||
     firstLineStr.includes('student_name') ||
     firstLineStr.includes('candidate name') ||
-    firstLineStr.includes('leetcode id') ||
-    firstLineStr.includes('leetcode profile') ||
-    firstLineStr.includes('leetcode username') ||
-    firstLineStr.includes('leetcode handle') ||
-    firstLineStr.includes('mentor name') ||
-    firstLineStr.includes('faculty name') ||
+    firstLineStr.includes('leetcode') ||
+    firstLineStr.includes('mentor') ||
+    firstLineStr.includes('faculty') ||
+    firstLineStr.includes('advisor') ||
     firstLineStr.includes('staff name');
 
   const hasHeaders = !containsUrl && !containsRegNo && hasHeaderKeywords;
+
+  // Header column index detection (exact position mapping)
+  let regNoCol = -1;
+  let nameCol = -1;
+  let deptCol = -1;
+  let secCol = -1;
+  let mentorCol = -1;
+  let leetcodeCol = -1;
+  let yearCol = -1;
+  let studyYearCol = -1;
+  let dobCol = -1;
+  let solvedCol = -1;
+
+  if (hasHeaders) {
+    firstLine.forEach((h, idx) => {
+      const hClean = h.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (regNoCol === -1 && (hClean.includes('reg') || hClean.includes('roll') || hClean.includes('usn') || hClean === 'rno' || hClean.includes('regno') || hClean.includes('registernumber') || hClean.includes('studentreg'))) {
+        regNoCol = idx;
+      } else if (nameCol === -1 && (hClean.includes('studentname') || hClean.includes('candidatename') || hClean === 'name' || hClean.includes('fullname') || hClean.includes('nameofstudent'))) {
+        nameCol = idx;
+      } else if (mentorCol === -1 && (hClean.includes('mentor') || hClean.includes('faculty') || hClean.includes('staff') || hClean.includes('advisor') || hClean.includes('guide') || hClean.includes('tutor') || hClean.includes('incharge') || hClean.includes('counselor'))) {
+        mentorCol = idx;
+      } else if (leetcodeCol === -1 && (hClean.includes('leetcode') || hClean.includes('handle') || hClean.includes('profile') || hClean.includes('username') || hClean === 'lc' || hClean.includes('lcurl') || hClean.includes('profileurl'))) {
+        leetcodeCol = idx;
+      } else if (deptCol === -1 && (hClean.includes('dept') || hClean.includes('department') || hClean.includes('branch'))) {
+        deptCol = idx;
+      } else if (secCol === -1 && (hClean.includes('sec') || hClean.includes('section'))) {
+        secCol = idx;
+      } else if (studyYearCol === -1 && (hClean.includes('studyyear') || hClean.includes('currentyear') || hClean === 'year' || hClean === 'class')) {
+        studyYearCol = idx;
+      } else if (yearCol === -1 && (hClean.includes('academicyear') || hClean.includes('batchyear') || hClean.includes('batch'))) {
+        yearCol = idx;
+      } else if (dobCol === -1 && (hClean.includes('dob') || hClean.includes('birth') || hClean.includes('dateofbirth'))) {
+        dobCol = idx;
+      } else if (solvedCol === -1 && (hClean.includes('solved') || hClean.includes('problems') || hClean.includes('score') || hClean.includes('count'))) {
+        solvedCol = idx;
+      }
+    });
+  }
 
   const dataLines = hasHeaders ? nonCommentLines.slice(1) : nonCommentLines;
   const parsedRows: ParsedImportRow[] = [];
@@ -223,6 +260,56 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
     let academicYear = '';
     let currentYear = '';
     let solvedCount: number | undefined;
+
+    // Fast-path: If columns mapped from header, extract them directly
+    if (hasHeaders) {
+      if (regNoCol >= 0 && cells[regNoCol]) {
+        const val = cells[regNoCol].replace(/\s+/g, '');
+        if (val.length >= 8 && /\d/.test(val) && !val.includes('/')) {
+          regNo = val.toUpperCase();
+        }
+      }
+      if (nameCol >= 0 && cells[nameCol]) {
+        name = cells[nameCol].trim();
+      }
+      if (mentorCol >= 0 && cells[mentorCol]) {
+        const mVal = cells[mentorCol].trim();
+        if (mVal && !mVal.includes('leetcode') && !/^\d{8,}$/.test(mVal)) {
+          rawMentor = mVal;
+        }
+      }
+      if (leetcodeCol >= 0 && cells[leetcodeCol]) {
+        leetcodeUrl = cells[leetcodeCol].trim();
+      }
+      if (deptCol >= 0 && cells[deptCol]) {
+        const dVal = cells[deptCol].trim().toUpperCase();
+        if (KNOWN_DEPTS.has(dVal)) dept = dVal;
+      }
+      if (secCol >= 0 && cells[secCol]) {
+        const sVal = cells[secCol].trim().toUpperCase().replace(/^SECTION\s*/i, '');
+        if (sVal) {
+          section = sVal;
+          sectionSet.add(section);
+        }
+      }
+      if (studyYearCol >= 0 && cells[studyYearCol]) {
+        currentYear = cells[studyYearCol].trim();
+        yearSet.add(currentYear);
+      }
+      if (yearCol >= 0 && cells[yearCol]) {
+        academicYear = cells[yearCol].trim().replace(/\s+/g, '').replace('/', '-');
+        yearSet.add(academicYear);
+      }
+      if (dobCol >= 0 && cells[dobCol]) {
+        const dVal = cells[dobCol].trim();
+        const dateMatch = dVal.match(/(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})/) || dVal.match(/(\d{4}[./-]\d{1,2}[./-]\d{1,2})/);
+        if (dateMatch) dob = dateMatch[1].replace(/[-/]/g, '.');
+      }
+      if (solvedCol >= 0 && cells[solvedCol]) {
+        const num = parseInt(cells[solvedCol].replace(/\D/g, ''), 10);
+        if (!isNaN(num)) solvedCount = num;
+      }
+    }
 
     // Search cells by pattern
     for (let c = 0; c < cells.length; c++) {
