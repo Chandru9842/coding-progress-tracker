@@ -350,9 +350,9 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
         }
       }
 
-      // 5. Check for Register Number: 8-18 digits/characters with numbers (e.g. 814723104001, 21CS001, 717821P101)
+      // 5. Check for Register Number: 4-25 digits/characters with numbers (e.g. 814723104001, 21CS001, 717821P101, 21CS01)
       const digitsOnly = cell.replace(/\s+/g, '');
-      if (!regNo && digitsOnly.length >= 8 && digitsOnly.length <= 18 && /^[0-9A-Za-z]+$/.test(digitsOnly) && /\d/.test(digitsOnly) && !cell.includes('/')) {
+      if (!regNo && digitsOnly.length >= 4 && digitsOnly.length <= 25 && /^[0-9A-Za-z_-]+$/.test(digitsOnly) && /\d/.test(digitsOnly) && !cell.includes('/')) {
         regNo = digitsOnly.toUpperCase();
         continue;
       }
@@ -403,7 +403,7 @@ export function analyzeAndParseStudents(csvText: string): ParseResult {
     }
 
     // Fallback based on fixed column positions if pattern matching missed
-    if (!regNo && cells[1] && cells[1].length >= 8 && !cells[1].includes('/')) {
+    if (!regNo && cells[1] && cells[1].trim().length >= 4 && !cells[1].includes('/')) {
       regNo = cells[1].replace(/\s+/g, '').toUpperCase();
     }
     if (!name && cells[2]) {

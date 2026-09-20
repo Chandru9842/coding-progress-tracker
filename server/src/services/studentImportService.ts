@@ -498,10 +498,15 @@ export async function bulkImportStudents(
     const authContext = { userId: user.userId, role: user.role };
     console.log(`[Import-Sync] Fetching initial LeetCode stats for ${newlyCreatedOrUpdatedIds.length} imported student(s)...`);
     
-    // Process in bounded batches of 5 so it completes in ~3-6 seconds
-    const batchSize = 5;
-    const idsToSync = newlyCreatedOrUpdatedIds.slice(0, 35);
+    // Process in bounded batches of 10 with time guard so all imported students (e.g. 56) are synced
+    const batchSize = 10;
+    const idsToSync = newlyCreatedOrUpdatedIds;
+    const syncDeadline = Date.now() + 45000; // 45s safety limit
     for (let i = 0; i < idsToSync.length; i += batchSize) {
+      if (Date.now() > syncDeadline) {
+        console.warn(`[Import-Sync] Time budget reached, synced ${i}/${idsToSync.length} students.`);
+        break;
+      }
       const chunk = idsToSync.slice(i, i + batchSize);
       await Promise.all(
         chunk.map(async (stId) => {

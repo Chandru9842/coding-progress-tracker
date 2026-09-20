@@ -694,35 +694,14 @@ export const StudentsPage: React.FC = () => {
         }
       }
 
-      // Smart Auto-Filter for logged in user (e.g. Dr. A. Muthuraj)
-      let matchedMentorForUser: string | null = null;
-      if (user?.name) {
-        const currentUserStaff = staffList.find((s) => s.id === user.id) || ({ id: user.id, name: user.name, role: user.role } as StaffUser);
-        const matched = result.detectedMentors.find((m) => {
-          if (m === 'Unassigned') return false;
-          return findMatchingStaff(m, [currentUserStaff]) !== null;
-        });
-        if (matched) {
-          matchedMentorForUser = matched;
-        }
-      }
-
-      if (matchedMentorForUser) {
-        setSelectedMentorFilters(new Set([matchedMentorForUser]));
-        // Pre-select only valid rows for this matched mentor
-        setImportRows(result.rows.map((r) => ({
-          ...r,
-          selected: r.isValid && r.cleanMentor === matchedMentorForUser,
-        })));
-        if (isStaff && user?.id) {
-          setImportMentorId(user.id);
-        }
-      } else {
-        setSelectedMentorFilters(new Set(['ALL']));
-        setImportRows(result.rows.map((r) => ({
-          ...r,
-          selected: r.isValid,
-        })));
+      // Default to showing and selecting ALL valid students from the uploaded sheet
+      setSelectedMentorFilters(new Set(['ALL']));
+      setImportRows(result.rows.map((r) => ({
+        ...r,
+        selected: r.isValid,
+      })));
+      if (isStaff && user?.id && !importMentorId) {
+        setImportMentorId(user.id);
       }
     };
 
@@ -935,23 +914,16 @@ export const StudentsPage: React.FC = () => {
   };
 
   const handleExecuteImport = async () => {
-    // CRITICAL: Strictly import ONLY the rows that are matching active mentor filter, visible, AND selected!
-    const filteredRows = getFilteredImportRows();
-    const targetRowsToImport = filteredRows.filter((r) => {
-      if (!r.selected || !r.isValid) return false;
-      if (!selectedMentorFilters.has('ALL') && !selectedMentorFilters.has(r.cleanMentor)) {
-        return false;
-      }
-      return true;
-    });
+    // Import ALL selected and valid rows across the file (guarantees all 56 rows import)
+    const targetRowsToImport = importRows.filter((r) => r.selected && r.isValid);
 
     if (targetRowsToImport.length === 0) {
-      alert('Please select at least one valid student to import from the filtered list.');
+      alert('Please select at least one valid student to import from the list.');
       return;
     }
 
-    if (!importBatchId || (!importSectionId && importSectionId !== 'ALL')) {
-      alert('Please select a target Academic Year (Batch) and Section.');
+    if (!importBatchId) {
+      alert('Please select a target Academic Year (Batch).');
       return;
     }
 
@@ -976,21 +948,23 @@ export const StudentsPage: React.FC = () => {
             rowMentorId = importMentorId;
           }
 
-          // Section resolution
+          // Smart Section resolution: check if row itself specified a section, otherwise use batch default
           let resolvedSectionId = importSectionId;
-          if (importSectionId === 'ALL' || !importSectionId) {
-            if (r.section && targetBatch?.sections) {
-              const cleanSec = r.section.toUpperCase().replace(/^SECTION\s*/i, '').trim();
-              const matchedSec = targetBatch.sections.find(
-                (sec) => sec.name.toUpperCase().trim() === cleanSec || `SECTION ${sec.name}`.toUpperCase() === r.section?.toUpperCase().trim()
-              );
-              if (matchedSec) {
-                resolvedSectionId = matchedSec.id;
-              }
+          if (r.section && targetBatch?.sections && targetBatch.sections.length > 0) {
+            const cleanSec = r.section.toUpperCase().replace(/^SECTION\s*/i, '').trim();
+            const matchedSec = targetBatch.sections.find(
+              (sec) =>
+                sec.name.toUpperCase().trim() === cleanSec ||
+                `SECTION ${sec.name}`.toUpperCase() === r.section?.toUpperCase().trim() ||
+                sec.name.toUpperCase().trim().includes(cleanSec) ||
+                cleanSec.includes(sec.name.toUpperCase().trim())
+            );
+            if (matchedSec) {
+              resolvedSectionId = matchedSec.id;
             }
-            if (resolvedSectionId === 'ALL' && targetBatch?.sections && targetBatch.sections.length > 0) {
-              resolvedSectionId = targetBatch.sections[0].id;
-            }
+          }
+          if ((!resolvedSectionId || resolvedSectionId === 'ALL') && targetBatch?.sections && targetBatch.sections.length > 0) {
+            resolvedSectionId = targetBatch.sections[0].id;
           }
 
           return {
@@ -2785,10 +2759,10 @@ export const StudentsPage: React.FC = () => {
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                       <button
                         type="button"
-                        onClick={() => handleToggleAllVisibleImportRows(true)}
-                        style={{ background: 'none', border: 'none', color: '#818cf8', cursor: 'pointer', fontSize: '0.78rem', textDecoration: 'underline' }}
+                        onClick={() => setImportRows((prev) => prev.map((r) => ({ ...r, selected: r.isValid })))}
+                        style={{ background: 'rgba(99, 102, 241, 0.15)', border: '1px solid rgba(99, 102, 241, 0.3)', borderRadius: '4px', padding: '0.2rem 0.5rem', color: '#818cf8', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600 }}
                       >
-                        Select All Visible
+                        ✓ Select All in File ({importRows.filter((r) => r.isValid).length})
                       </button>
                       <span style={{ color: 'var(--text-muted)' }}>|</span>
                       <button
@@ -3007,10 +2981,7 @@ export const StudentsPage: React.FC = () => {
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                 {importRows.length > 0 && (
                   <span>
-                    Ready to import <strong>{getFilteredImportRows().filter((r) => r.selected && r.isValid).length}</strong> student(s)
-                    {selectedMentorFilters.size === 1 && !selectedMentorFilters.has('ALL') ? ` for mentor ${Array.from(selectedMentorFilters)[0]}` : ''}
-                    {selectedMentorFilters.size > 1 && !selectedMentorFilters.has('ALL') ? ` for ${selectedMentorFilters.size} selected mentors` : ''}
-                    {selectedMentorFilters.has('ALL') ? ' across all mentors' : ''} into selected Batch.
+                    Ready to import <strong>{importRows.filter((r) => r.selected && r.isValid).length}</strong> of {importRows.length} valid student(s) across all mentors into selected Batch.
                   </span>
                 )}
               </div>
@@ -3028,7 +2999,7 @@ export const StudentsPage: React.FC = () => {
                   type="button"
                   className="btn-primary"
                   onClick={handleExecuteImport}
-                  disabled={isImporting || getFilteredImportRows().filter((r) => r.selected && r.isValid).length === 0}
+                  disabled={isImporting || importRows.filter((r) => r.selected && r.isValid).length === 0}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', minWidth: '170px', justifyContent: 'center' }}
                 >
                   {isImporting ? (
@@ -3040,9 +3011,7 @@ export const StudentsPage: React.FC = () => {
                     <>
                       <Upload size={16} />
                       <span>
-                        Import Selected ({getFilteredImportRows().filter((r) => r.selected && r.isValid).length})
-                        {selectedMentorFilters.size === 1 && !selectedMentorFilters.has('ALL') ? ` • ${Array.from(selectedMentorFilters)[0]}` : ''}
-                        {selectedMentorFilters.size > 1 && !selectedMentorFilters.has('ALL') ? ` • ${selectedMentorFilters.size} Mentors` : ''}
+                        Import All Selected ({importRows.filter((r) => r.selected && r.isValid).length})
                       </span>
                     </>
                   )}
