@@ -493,27 +493,32 @@ export async function bulkImportStudents(
     }
   }
 
-  // 4. Trigger initial background LeetCode fetch for all imported students
+  // 4. Synchronously fetch initial LeetCode stats for imported students within time budget
   if (newlyCreatedOrUpdatedIds.length > 0 && process.env.NODE_ENV !== 'test') {
     const authContext = { userId: user.userId, role: user.role };
-    (async () => {
-      console.log(`[Import-Sync] Starting background LeetCode fetch for ${newlyCreatedOrUpdatedIds.length} imported student(s)...`);
-      for (const stId of newlyCreatedOrUpdatedIds) {
-        try {
-          await syncStudentLeetCode(stId, authContext, { skipGoogleSheetSync: true });
-        } catch {
-          // Ignore individual background sync errors
-        }
-        await new Promise((r) => setTimeout(r, 400));
-      }
-      // Once all imported students are synced, push once to all active Google Sheets!
-      try {
-        await syncAllActiveGoogleSheets();
-        console.log(`[Import-Sync] Completed bulk Google Sheet synchronization for imported students.`);
-      } catch (sheetErr: any) {
-        console.warn(`[Import-Sync] Google Sheet bulk sync note:`, sheetErr?.message || sheetErr);
-      }
-    })().catch(() => {});
+    console.log(`[Import-Sync] Fetching initial LeetCode stats for ${newlyCreatedOrUpdatedIds.length} imported student(s)...`);
+    
+    // Process in bounded batches of 5 so it completes in ~3-6 seconds
+    const batchSize = 5;
+    const idsToSync = newlyCreatedOrUpdatedIds.slice(0, 35);
+    for (let i = 0; i < idsToSync.length; i += batchSize) {
+      const chunk = idsToSync.slice(i, i + batchSize);
+      await Promise.all(
+        chunk.map(async (stId) => {
+          try {
+            await syncStudentLeetCode(stId, authContext, { skipGoogleSheetSync: true });
+          } catch {
+            // Ignore individual fetch errors so import always completes
+          }
+        })
+      );
+    }
+
+    try {
+      await syncAllActiveGoogleSheets();
+    } catch (sheetErr: any) {
+      console.warn(`[Import-Sync] Google Sheet bulk sync note:`, sheetErr?.message || sheetErr);
+    }
   }
 
   // Invalidate caches so lists and dashboard metrics update immediately

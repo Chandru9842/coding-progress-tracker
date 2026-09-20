@@ -13,8 +13,14 @@ function attachMentorInfo(st: any) {
   if (!process.env.DATABASE_URL) {
     const ssa = inMemoryStore.staffStudentAssignments.find((a) => a.student_id === st.id);
     const mentorUser = ssa ? inMemoryStore.users.find((u) => u.id === ssa.staff_id) : null;
+    const snaps = inMemoryStore.snapshots
+      .filter((s) => s.student_id === st.id)
+      .sort((a, b) => new Date(b.snapshot_date).getTime() - new Date(a.snapshot_date).getTime());
+    const latestSnapshot = snaps[0] || null;
     return {
       ...st,
+      snapshots: snaps.slice(0, 1),
+      latest_snapshot: latestSnapshot,
       mentor_id: mentorUser?.id || null,
       mentor: mentorUser ? { id: mentorUser.id, name: mentorUser.name, email: mentorUser.email } : null,
     };
@@ -22,6 +28,7 @@ function attachMentorInfo(st: any) {
 
   const ssa = st.staff_student_assignments?.[0];
   const mentorUser = ssa?.staff;
+  const latestSnapshot = st.snapshots?.[0] || null;
   return {
     id: st.id,
     register_number: st.register_number,
@@ -39,6 +46,7 @@ function attachMentorInfo(st: any) {
     section: st.section,
     allocation_batch: st.allocation_batch,
     snapshots: st.snapshots,
+    latest_snapshot: latestSnapshot,
     mentor_id: mentorUser?.id || null,
     mentor: mentorUser ? { id: mentorUser.id, name: mentorUser.name, email: mentorUser.email } : null,
   };
@@ -197,6 +205,17 @@ export async function getStudentsForUser(
         batch: { select: { id: true, batch_name: true, department: true } },
         section: { select: { id: true, name: true } },
         allocation_batch: { select: { id: true, name: true } },
+        snapshots: {
+          take: 1,
+          orderBy: { snapshot_date: 'desc' },
+          select: {
+            snapshot_date: true,
+            total_solved: true,
+            easy_solved: true,
+            medium_solved: true,
+            hard_solved: true,
+          },
+        },
         staff_student_assignments: {
           take: 1,
           select: {

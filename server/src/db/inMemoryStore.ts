@@ -11,6 +11,7 @@ export interface InMemoryUser {
 export interface InMemoryBatch {
   id: string;
   batch_name: string;
+  academic_year?: string;
   start_year: number;
   end_year: number;
   department: string;
@@ -35,6 +36,7 @@ export interface InMemoryStudent {
   id: string;
   register_number: string;
   name: string;
+  email?: string | null;
   department: string;
   batch_id: string;
   section_id: string;

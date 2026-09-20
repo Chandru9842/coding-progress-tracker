@@ -18,6 +18,8 @@ export interface LeetCodeStats {
   hardSolved: number;
   totalSolved: number;
   ranking?: number;
+  contributionPoint?: number;
+  reputation?: number;
   recentSubmissions?: {
     id: string;
     title: string;
@@ -506,13 +508,13 @@ export async function syncStudentLeetCode(
       studentId: student.id,
       studentName: student.name,
       registerNumber: student.register_number,
-      leetcodeUsername: student.leetcode_username,
+      leetcodeUsername: student.leetcode_username || '',
       batchId: student.batch_id,
       batchName: studentBatch?.batch_name,
       department: studentBatch?.department,
       sectionId: student.section_id,
       sectionName: studentSection?.name,
-      errorMessage: fetchError,
+      errorMessage: fetchError || 'Unknown sync error',
     });
 
     let latestSnapshot: any = null;
@@ -1384,21 +1386,32 @@ export async function runDailyMidnightReconciliation(): Promise<{
   // When running around midnight (12:00 AM - 2:00 AM IST), the day that just concluded is yesterday
   const completedISTDate = istHour < 2 ? yesterdayIST : todayIST;
 
-  // Trigger Google Sheets sync and LeetCode auto-sync asynchronously in background
-  // so the HTTP response returns immediately (< 500ms) without hitting serverless execution timeouts
-  setImmediate(() => {
-    runMidnightAutoSync().catch((sheetErr: any) => {
-      console.warn('[Sync] Google Sheets sync notice during reconciliation:', sheetErr?.message || sheetErr);
-    });
-    runPeriodicAutoSync().catch((syncErr: any) => {
-      console.warn('[Sync] Student LeetCode sync notice during reconciliation:', syncErr?.message || syncErr);
-    });
-  });
+  const startTime = Date.now();
+  // 1. Fetch fresh LeetCode stats for all students first
+  let syncResult: any = { totalAttempted: 0, successful: 0, failed: 0 };
+  try {
+    syncResult = await runPeriodicAutoSync();
+  } catch (syncErr: any) {
+    console.warn('[Sync] Student LeetCode sync error during reconciliation:', syncErr?.message || syncErr);
+  }
+
+  // 2. Broadcast updated snapshots to Google Sheets
+  try {
+    await runMidnightAutoSync();
+  } catch (sheetErr: any) {
+    console.warn('[Sync] Google Sheets sync error during reconciliation:', sheetErr?.message || sheetErr);
+  }
+
+  const durationMs = Date.now() - startTime;
 
   return {
-    ...result,
+    totalAttempted: syncResult.totalAttempted,
+    successful: syncResult.successful,
+    failed: syncResult.failed,
+    durationSeconds: Number((durationMs / 1000).toFixed(2)),
     istDate: todayIST,
     completedISTDate,
+    timestamp: new Date().toISOString(),
   };
 }
 

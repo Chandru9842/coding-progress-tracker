@@ -7,11 +7,11 @@ export interface SyncErrorItem {
   studentName: string;
   registerNumber: string;
   leetcodeUsername: string;
-  batchId?: string;
-  batchName?: string;
-  department?: string;
-  sectionId?: string;
-  sectionName?: string;
+  batchId?: string | null;
+  batchName?: string | null;
+  department?: string | null;
+  sectionId?: string | null;
+  sectionName?: string | null;
   errorMessage: string;
   errorType: 'PARSE_ERROR' | 'PROFILE_NOT_FOUND' | 'RATE_LIMITED' | 'NETWORK_TIMEOUT' | 'INVALID_RESPONSE';
   failedAt: string; // ISO
@@ -32,11 +32,11 @@ class SyncErrorService {
     studentName: string;
     registerNumber: string;
     leetcodeUsername: string;
-    batchId?: string;
-    batchName?: string;
-    department?: string;
-    sectionId?: string;
-    sectionName?: string;
+    batchId?: string | null;
+    batchName?: string | null;
+    department?: string | null;
+    sectionId?: string | null;
+    sectionName?: string | null;
     errorMessage: string;
     errorType?: SyncErrorItem['errorType'];
   }): SyncErrorItem {

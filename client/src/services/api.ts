@@ -225,6 +225,7 @@ export interface Student {
   batch?: { id?: string; batch_name: string; start_year?: number; end_year?: number };
   section?: { name: string };
   snapshots?: DailySnapshot[];
+  latest_snapshot?: DailySnapshot | null;
 }
 
 export interface DailySnapshot {
@@ -333,7 +334,10 @@ export const authApi = {
 };
 
 export const statsApi = {
-  getStats: async (): Promise<any> => {
+  getStats: async (bypassCache: boolean = false): Promise<any> => {
+    if (bypassCache) {
+      clearClientCache('stats_dashboard');
+    }
     return fetchWithDedupe('stats_dashboard', async () => {
       const res = await api.get('/stats/dashboard');
       return res.data;
@@ -567,10 +571,12 @@ export const studentApi = {
     mentorId?: string;
     currentYear?: string;
     search?: string;
-  }): Promise<Student[]> => {
+  }, bypassCache: boolean = false): Promise<Student[]> => {
     const key = `students_${JSON.stringify(params || {})}`;
-    const cached = getCachedData<Student[]>(key);
-    if (cached) return cached;
+    if (!bypassCache) {
+      const cached = getCachedData<Student[]>(key);
+      if (cached) return cached;
+    }
     const res = await api.get<{ students: Student[] }>('/students', { params });
     setCachedData(key, res.data.students);
     return res.data.students;

@@ -100,22 +100,12 @@ export async function createStudent(req: AuthenticatedRequest, res: Response): P
 
     if (student && student.leetcode_username) {
       const authUser = { userId: req.user.userId, role: req.user.role as UserRole };
-      const createdStudentId = student.id;
-      const createdStudentName = student.name;
-      const createdUsername = student.leetcode_username;
-
-      // Perform LeetCode sync and Google Sheet sync in background without blocking HTTP response
-      setImmediate(async () => {
-        try {
-          console.log(`[Auto-Sync Background] Asynchronously fetching initial LeetCode details & snapshot for new student ${createdStudentName} (@${createdUsername})...`);
-          await syncStudentLeetCode(createdStudentId, authUser);
-          syncAllActiveGoogleSheets().catch((sheetErr: any) => {
-            console.warn(`[Auto-Sync Background] Google Sheet auto-sync on student create note:`, sheetErr?.message || sheetErr);
-          });
-        } catch (syncErr: any) {
-          console.warn(`[Auto-Sync Background] Initial LeetCode sync for new student ${createdStudentId} note:`, syncErr?.message || syncErr);
-        }
-      });
+      try {
+        await syncStudentLeetCode(student.id, authUser, { skipGoogleSheetSync: true });
+        student = await studentService.getStudentByIdForUser(authUser, student.id);
+      } catch (syncErr: any) {
+        console.warn(`[Auto-Sync] Initial LeetCode sync for new student ${student.id} note:`, syncErr?.message || syncErr);
+      }
     }
 
     res.status(201).json({ message: 'Student created successfully', student });
@@ -168,21 +158,12 @@ export async function updateStudent(req: AuthenticatedRequest, res: Response): P
 
     if (student && student.leetcode_username) {
       const authUser = { userId: req.user.userId, role: req.user.role as UserRole };
-      const updatedStudentId = student.id;
-      const updatedStudentName = student.name;
-      const updatedUsername = student.leetcode_username;
-
-      setImmediate(async () => {
-        try {
-          console.log(`[Auto-Sync Background] Asynchronously syncing LeetCode details for updated student ${updatedStudentName} (@${updatedUsername})...`);
-          await syncStudentLeetCode(updatedStudentId, authUser);
-          syncAllActiveGoogleSheets().catch((sheetErr: any) => {
-            console.warn(`[Auto-Sync Background] Google Sheet auto-sync on student update note:`, sheetErr?.message || sheetErr);
-          });
-        } catch (syncErr: any) {
-          console.warn(`[Auto-Sync Background] LeetCode sync for updated student ${updatedStudentId} note:`, syncErr?.message || syncErr);
-        }
-      });
+      try {
+        await syncStudentLeetCode(student.id, authUser, { skipGoogleSheetSync: true });
+        student = await studentService.getStudentByIdForUser(authUser, student.id);
+      } catch (syncErr: any) {
+        console.warn(`[Auto-Sync] LeetCode sync for updated student ${student.id} note:`, syncErr?.message || syncErr);
+      }
     }
 
     res.status(200).json({ message: 'Student updated successfully', student });

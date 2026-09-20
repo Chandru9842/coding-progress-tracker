@@ -73,44 +73,16 @@ export async function syncReportFiltered(req: AuthenticatedRequest, res: Respons
     const { batchId, sectionId, department, allocationBatchId, staffId, studentId, studentIds, search, leetcodeUsername } = req.body || {};
     const user = { userId: req.user.userId, role: req.user.role };
 
-    // Targeted sync fast-path: if filtered for a specific student, leetcode handle, or small set of <= 5 IDs,
-    // execute live synchronously and return immediate 200 with fresh stats!
-    const isTargeted = Boolean(
-      studentId ||
-      leetcodeUsername ||
-      (Array.isArray(studentIds) && studentIds.length > 0 && studentIds.length <= 5)
+    // Execute live synchronously within the 60s serverless time budget (concurrency 10 ensures completion in 4-8s)
+    const result = await leetcodeService.syncFilteredStudentsLeetCode(
+      { batchId, sectionId, department, allocationBatchId, staffId, studentId, studentIds, search, leetcodeUsername },
+      user
     );
 
-    if (isTargeted) {
-      const result = await leetcodeService.syncFilteredStudentsLeetCode(
-        { batchId, sectionId, department, allocationBatchId, staffId, studentId, studentIds, search, leetcodeUsername },
-        user
-      );
-      res.status(200).json({
-        message: `⚡ Live LeetCode sync completed for targeted student(s): ${result.successful}/${result.totalAttempted} succeeded.`,
-        status: 'COMPLETED',
-        ...result,
-      });
-      return;
-    }
-
-    // Larger batch: respond immediately so the HTTP request never hits serverless timeout.
-    res.status(202).json({
-      message: 'LeetCode sync started in the background. Data will be updated in your database within 20–60 seconds. Please refresh after ~30 seconds.',
-      status: 'ACCEPTED',
-      estimatedDurationSeconds: 30,
-    });
-
-    // Fire-and-forget: run the actual batch sync after response has been sent
-    setImmediate(() => {
-      leetcodeService.syncFilteredStudentsLeetCode(
-        { batchId, sectionId, department, allocationBatchId, staffId, studentId, studentIds, search, leetcodeUsername },
-        user
-      ).then((result) => {
-        console.log(`[BG Sync] Filtered LeetCode sync completed: ${result.successful}/${result.totalAttempted} in ${result.durationSeconds}s`);
-      }).catch((err: any) => {
-        console.warn('[BG Sync] Filtered LeetCode sync error:', err?.message || err);
-      });
+    res.status(200).json({
+      message: `⚡ Live LeetCode sync completed: ${result.successful}/${result.totalAttempted} students synchronized successfully.`,
+      status: 'COMPLETED',
+      ...result,
     });
   } catch (error: any) {
     const statusCode = error.statusCode || 500;

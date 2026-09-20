@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
-import { studentApi, batchApi, staffApi, syncApi, Student, Batch, StaffUser, extractErrorMessage, getCachedData } from '../services/api.js';
+import { studentApi, batchApi, staffApi, syncApi, Student, Batch, StaffUser, extractErrorMessage, getCachedData, clearClientCache } from '../services/api.js';
 import { syncReportStudents } from '../api/reports.js';
 import {
   Users,
@@ -234,7 +234,7 @@ export const StudentsPage: React.FC = () => {
     return () => clearTimeout(handler);
   }, [search]);
 
-  const fetchStudents = async (showLoadingSpinner: boolean = false) => {
+  const fetchStudents = async (showLoadingSpinner: boolean = false, bypassCache: boolean = false) => {
     try {
       setError(null);
       const params = {
@@ -247,14 +247,18 @@ export const StudentsPage: React.FC = () => {
         search: debouncedSearch || undefined,
       };
       const cacheKey = `students_${JSON.stringify(params)}`;
-      const cached = getCachedData<Student[]>(cacheKey);
-      if (cached) {
-        setStudents(cached);
-        setLoading(false);
-      } else if (showLoadingSpinner || students.length === 0) {
+      if (!bypassCache) {
+        const cached = getCachedData<Student[]>(cacheKey);
+        if (cached) {
+          setStudents(cached);
+          setLoading(false);
+          return;
+        }
+      }
+      if (showLoadingSpinner || students.length === 0) {
         setLoading(true);
       }
-      const data = await studentApi.getStudents(params);
+      const data = await studentApi.getStudents(params, bypassCache);
       setStudents(data);
     } catch (err: any) {
       setError(extractErrorMessage(err, 'Failed to load student roster'));
@@ -389,9 +393,11 @@ export const StudentsPage: React.FC = () => {
       setSyncingStudentId(student.id);
       setSyncNotice(null);
       const res = await syncApi.syncStudent(student.id);
-      const solved = res.data?.stats?.totalSolved ?? res.data?.totalSolved;
+      const statsObj = res.data?.data?.stats || res.data?.stats || res.data?.data;
+      const solved = statsObj?.totalSolved ?? statsObj?.total_solved ?? res.data?.totalSolved;
       setSyncNotice(`⚡ Live LeetCode sync completed for ${student.name} (@${student.leetcode_username}): ${solved !== undefined ? `${solved} problems solved` : 'data updated'}!`);
-      fetchStudents(false);
+      clearClientCache('students_');
+      await fetchStudents(false, true);
     } catch (err: any) {
       alert(extractErrorMessage(err, `Failed to live sync LeetCode stats for @${student.leetcode_username}`));
     } finally {
@@ -1353,13 +1359,14 @@ export const StudentsPage: React.FC = () => {
                       <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Allocation Batch</th>
                       <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>Mentor (Staff)</th>
                       <th style={{ padding: '1rem', whiteSpace: 'nowrap' }}>LeetCode Handle</th>
+                      <th style={{ padding: '1rem', whiteSpace: 'nowrap', textAlign: 'center' }}>Problems Solved</th>
                       {canManage && <th style={{ padding: '1rem', textAlign: 'right', whiteSpace: 'nowrap' }}>Actions</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {totalStudents === 0 ? (
                       <tr>
-                        <td colSpan={canManage ? 12 : 10} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                        <td colSpan={canManage ? 13 : 11} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
                           {search || filterBatchId ? 'No students match your filter criteria.' : 'No students yet.'}
                         </td>
                       </tr>
@@ -1447,7 +1454,60 @@ export const StudentsPage: React.FC = () => {
                               )}
                             </td>
                             <td style={{ padding: '1rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                              {student.leetcode_username ? `@${student.leetcode_username}` : 'Not linked'}
+                              {student.leetcode_username ? (
+                                <a
+                                  href={`https://leetcode.com/${student.leetcode_username.replace(/^@/, '')}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '0.25rem',
+                                    padding: '0.2rem 0.5rem',
+                                    borderRadius: '4px',
+                                    backgroundColor: 'rgba(249, 115, 22, 0.1)',
+                                    color: '#fb923c',
+                                    fontWeight: 600,
+                                    textDecoration: 'none',
+                                    fontSize: '0.82rem',
+                                  }}
+                                  title="Open LeetCode Profile in new tab"
+                                >
+                                  <span>@{student.leetcode_username.replace(/^@/, '')}</span>
+                                </a>
+                              ) : (
+                                <span style={{ color: 'var(--text-muted)' }}>Not linked</span>
+                              )}
+                            </td>
+                            <td style={{ padding: '1rem', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                              {(() => {
+                                const snap = (student as any).latest_snapshot || (student.snapshots && student.snapshots[0]);
+                                if (!snap) {
+                                  return (
+                                    <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                                      {student.leetcode_username ? 'Pending sync' : '-'}
+                                    </span>
+                                  );
+                                }
+                                const total = snap.total_solved || 0;
+                                return (
+                                  <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '0.15rem' }}>
+                                    <span style={{ fontWeight: 800, color: total > 0 ? '#10b981' : 'var(--text-muted)', fontSize: '0.95rem' }}>
+                                      {total}
+                                    </span>
+                                    {total > 0 && (
+                                      <div style={{ display: 'flex', gap: '0.25rem', fontSize: '0.7rem' }}>
+                                        <span style={{ color: '#34d399', fontWeight: 600 }}>{snap.easy_solved || 0}E</span>
+                                        <span style={{ color: 'var(--text-muted)' }}>·</span>
+                                        <span style={{ color: '#facc15', fontWeight: 600 }}>{snap.medium_solved || 0}M</span>
+                                        <span style={{ color: 'var(--text-muted)' }}>·</span>
+                                        <span style={{ color: '#f87171', fontWeight: 600 }}>{snap.hard_solved || 0}H</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </td>
                             {canManage && (
                               <td style={{ padding: '1rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
