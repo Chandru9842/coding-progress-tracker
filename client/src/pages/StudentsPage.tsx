@@ -25,13 +25,19 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  Sliders,
+  Settings2,
 } from 'lucide-react';
 import { SyncStatus } from '../components/SyncStatus.js';
 import {
   analyzeAndParseStudents,
   downloadSampleCSVFile,
+  downloadSampleExcelFile,
   ParsedImportRow,
   ParseResult,
+  AvailableColumn,
+  ActiveColumnMapping,
+  ColumnMappingConfig,
 } from '../utils/studentImportUtils.js';
 import * as XLSX from 'xlsx';
 
@@ -225,6 +231,15 @@ export const StudentsPage: React.FC = () => {
     errors?: Array<{ register_number: string; error: string }>;
   } | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [workbookInstance, setWorkbookInstance] = useState<XLSX.WorkBook | null>(null);
+  const [workbookSheets, setWorkbookSheets] = useState<string[]>([]);
+  const [selectedExcelSheet, setSelectedExcelSheet] = useState<string>('');
+  const [rawFileMatrix, setRawFileMatrix] = useState<(string | number)[][] | null>(null);
+  const [rawCsvText, setRawCsvText] = useState<string>('');
+  const [availableColumns, setAvailableColumns] = useState<AvailableColumn[]>([]);
+  const [columnMapping, setColumnMapping] = useState<ColumnMappingConfig>({});
+  const [activeMapping, setActiveMapping] = useState<ActiveColumnMapping | null>(null);
+  const [showColumnMappingPanel, setShowColumnMappingPanel] = useState<boolean>(false);
 
   const [debouncedSearch, setDebouncedSearch] = useState<string>('');
 
@@ -644,6 +659,73 @@ export const StudentsPage: React.FC = () => {
     setImportDuplicateCount(0);
     setQuickAssignStaffId('');
     setImportResult(null);
+    setWorkbookInstance(null);
+    setWorkbookSheets([]);
+    setSelectedExcelSheet('');
+    setRawFileMatrix(null);
+    setRawCsvText('');
+    setAvailableColumns([]);
+    setColumnMapping({});
+    setActiveMapping(null);
+    setShowColumnMappingPanel(false);
+  };
+
+  const applyParsing = (
+    dataInput: string | (string | number)[][],
+    configOverride?: ColumnMappingConfig
+  ) => {
+    const config = configOverride !== undefined ? configOverride : columnMapping;
+    const result = analyzeAndParseStudents(dataInput, config);
+
+    setImportRows(result.rows);
+    setDetectedMentors(result.detectedMentors);
+    setDetectedYears(result.detectedYears || []);
+    setDetectedSections(result.detectedSections || []);
+    setSelectedYearFilter('ALL');
+    setSelectedSectionFilter('ALL');
+    setImportDuplicateCount(result.duplicateCount);
+    setAvailableColumns(result.availableColumns || []);
+    setActiveMapping(result.activeMapping || null);
+
+    // Auto-populate mentorMappings for each detected mentor from the sheet against staffList created by admin
+    const autoMappings: Record<string, string> = { ...mentorMappings };
+    result.detectedMentors.forEach((mName) => {
+      if (mName === 'Unassigned') {
+        if (!autoMappings[mName]) autoMappings[mName] = 'NONE';
+        return;
+      }
+      if (!autoMappings[mName]) {
+        const matched = findMatchingStaff(mName, staffList);
+        autoMappings[mName] = matched ? matched.id : 'AUTO';
+      }
+    });
+    setMentorMappings(autoMappings);
+
+    // Auto-detect matching batch if not explicitly picked yet
+    const sampleYear = result.rows.find((r) => r.academicYear)?.academicYear;
+    if (sampleYear && batches.length > 0 && !importBatchId) {
+      const matchedB = batches.find((b) => `${b.start_year}-${b.end_year}`.includes(sampleYear) || b.batch_name.includes(sampleYear));
+      if (matchedB) {
+        setImportBatchId(matchedB.id);
+        if (matchedB.sections && matchedB.sections.length > 0) {
+          const firstS = matchedB.sections[0];
+          setImportSectionId(firstS.id);
+          if (firstS.allocation_batches && firstS.allocation_batches.length > 0) {
+            setImportAllocBatches(firstS.allocation_batches);
+          }
+        }
+      }
+    }
+
+    // Default to showing and selecting ALL valid students from the uploaded sheet
+    setSelectedMentorFilters(new Set(['ALL']));
+    setImportRows(result.rows.map((r) => ({
+      ...r,
+      selected: r.isValid,
+    })));
+    if (isStaff && user?.id && !importMentorId) {
+      setImportMentorId(user.id);
+    }
   };
 
   const handleFileProcess = (file: File) => {
@@ -653,69 +735,26 @@ export const StudentsPage: React.FC = () => {
 
     const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
 
-    const processCsvContent = (csvText: string) => {
-      const result = analyzeAndParseStudents(csvText);
-      setImportRows(result.rows);
-      setDetectedMentors(result.detectedMentors);
-      setDetectedYears(result.detectedYears || []);
-      setDetectedSections(result.detectedSections || []);
-      setSelectedYearFilter('ALL');
-      setSelectedSectionFilter('ALL');
-      setImportDuplicateCount(result.duplicateCount);
-
-      // Auto-populate mentorMappings for each detected mentor from the sheet against staffList created by admin
-      const autoMappings: Record<string, string> = {};
-      result.detectedMentors.forEach((mName) => {
-        if (mName === 'Unassigned') {
-          autoMappings[mName] = 'NONE';
-          return;
-        }
-        const matched = findMatchingStaff(mName, staffList);
-        if (matched) {
-          autoMappings[mName] = matched.id;
-        } else {
-          autoMappings[mName] = 'AUTO';
-        }
-      });
-      setMentorMappings(autoMappings);
-
-      // Auto-detect matching batch if not explicitly picked yet
-      const sampleYear = result.rows.find((r) => r.academicYear)?.academicYear;
-      if (sampleYear && batches.length > 0) {
-        const matchedB = batches.find((b) => `${b.start_year}-${b.end_year}`.includes(sampleYear) || b.batch_name.includes(sampleYear));
-        if (matchedB) {
-          setImportBatchId(matchedB.id);
-          if (matchedB.sections && matchedB.sections.length > 0) {
-            const firstS = matchedB.sections[0];
-            setImportSectionId(firstS.id);
-            if (firstS.allocation_batches && firstS.allocation_batches.length > 0) {
-              setImportAllocBatches(firstS.allocation_batches);
-            }
-          }
-        }
-      }
-
-      // Default to showing and selecting ALL valid students from the uploaded sheet
-      setSelectedMentorFilters(new Set(['ALL']));
-      setImportRows(result.rows.map((r) => ({
-        ...r,
-        selected: r.isValid,
-      })));
-      if (isStaff && user?.id && !importMentorId) {
-        setImportMentorId(user.id);
-      }
-    };
-
     if (isExcel) {
       const reader = new FileReader();
       reader.onload = (e) => {
         try {
           const data = new Uint8Array(e.target?.result as ArrayBuffer);
           const workbook = XLSX.read(data, { type: 'array' });
-          const firstSheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[firstSheetName];
-          const csvText = XLSX.utils.sheet_to_csv(worksheet);
-          processCsvContent(csvText);
+          setWorkbookInstance(workbook);
+          setWorkbookSheets(workbook.SheetNames);
+          const initialSheet = workbook.SheetNames[0] || '';
+          setSelectedExcelSheet(initialSheet);
+
+          const worksheet = workbook.Sheets[initialSheet];
+          const rawMatrix: (string | number)[][] = XLSX.utils.sheet_to_json(worksheet, {
+            header: 1,
+            raw: false,
+            defval: '',
+          });
+          setRawFileMatrix(rawMatrix);
+          setRawCsvText('');
+          applyParsing(rawMatrix);
         } catch (excelErr: any) {
           console.error('Failed to parse Excel file:', excelErr);
           alert('Failed to parse Excel file. Please ensure it is a valid .xlsx or .xls file.');
@@ -727,9 +766,48 @@ export const StudentsPage: React.FC = () => {
       reader.onload = (e) => {
         const text = e.target?.result as string;
         if (!text) return;
-        processCsvContent(text);
+        setRawCsvText(text);
+        setRawFileMatrix(null);
+        setWorkbookInstance(null);
+        setWorkbookSheets([]);
+        setSelectedExcelSheet('');
+        applyParsing(text);
       };
       reader.readAsText(file);
+    }
+  };
+
+  const handleSheetChange = (newSheetName: string) => {
+    if (!workbookInstance) return;
+    setSelectedExcelSheet(newSheetName);
+    const worksheet = workbookInstance.Sheets[newSheetName];
+    if (!worksheet) return;
+    const rawMatrix: (string | number)[][] = XLSX.utils.sheet_to_json(worksheet, {
+      header: 1,
+      raw: false,
+      defval: '',
+    });
+    setRawFileMatrix(rawMatrix);
+    applyParsing(rawMatrix, columnMapping);
+  };
+
+  const handleColumnMappingChange = (field: keyof ColumnMappingConfig, colIdx: number) => {
+    const nextConfig: ColumnMappingConfig = {
+      ...columnMapping,
+      [field]: colIdx,
+    };
+    setColumnMapping(nextConfig);
+    const sourceData = rawFileMatrix || rawCsvText;
+    if (sourceData) {
+      applyParsing(sourceData, nextConfig);
+    }
+  };
+
+  const handleResetColumnMapping = () => {
+    setColumnMapping({});
+    const sourceData = rawFileMatrix || rawCsvText;
+    if (sourceData) {
+      applyParsing(sourceData, {});
     }
   };
 
@@ -2152,6 +2230,68 @@ export const StudentsPage: React.FC = () => {
                 </div>
               </div>
 
+              {/* Template Download & Universal Compatibility Bar */}
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '0.65rem 1rem',
+                borderRadius: '8px',
+                backgroundColor: 'rgba(15, 23, 42, 0.5)',
+                border: '1px solid var(--border-subtle)',
+                flexWrap: 'wrap',
+                gap: '0.5rem',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  <FileSpreadsheet size={16} style={{ color: '#818cf8' }} />
+                  <span>Works with <strong>ANY Excel spreadsheet</strong> (.xlsx, .xls) or CSV file with any column arrangement</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    onClick={downloadSampleExcelFile}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.35rem',
+                      padding: '0.25rem 0.6rem',
+                      borderRadius: '6px',
+                      backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                      border: '1px solid rgba(16, 185, 129, 0.35)',
+                      color: '#34d399',
+                      fontSize: '0.74rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                    title="Download clean Excel (.xlsx) template"
+                  >
+                    <Download size={13} />
+                    <span>Sample Excel (.xlsx)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={downloadSampleCSVFile}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.35rem',
+                      padding: '0.25rem 0.6rem',
+                      borderRadius: '6px',
+                      backgroundColor: 'rgba(99, 102, 241, 0.12)',
+                      border: '1px solid rgba(99, 102, 241, 0.35)',
+                      color: '#818cf8',
+                      fontSize: '0.74rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                    title="Download clean CSV template"
+                  >
+                    <Download size={13} />
+                    <span>Sample CSV</span>
+                  </button>
+                </div>
+              </div>
+
               {/* Upload Dropzone */}
               <div
                 onDragOver={(e) => {
@@ -2277,6 +2417,278 @@ export const StudentsPage: React.FC = () => {
                       </span>
                     )}
                   </div>
+
+                  {/* Multi-Sheet Selector if Excel file has multiple sheets */}
+                  {workbookSheets.length > 1 && (
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '0.6rem 0.9rem',
+                      borderRadius: '8px',
+                      backgroundColor: 'rgba(30, 41, 59, 0.8)',
+                      border: '1px solid rgba(56, 189, 248, 0.35)',
+                      flexWrap: 'wrap',
+                      gap: '0.5rem',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', fontWeight: 600, color: '#38bdf8' }}>
+                        <FileSpreadsheet size={16} />
+                        <span>Multi-Sheet Excel Workbook:</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Choose Sheet to Import:</span>
+                        <select
+                          className="form-input"
+                          value={selectedExcelSheet}
+                          onChange={(e) => handleSheetChange(e.target.value)}
+                          style={{ fontSize: '0.78rem', height: '30px', minWidth: '180px', borderColor: '#38bdf8' }}
+                        >
+                          {workbookSheets.map((sName) => (
+                            <option key={sName} value={sName}>
+                              📄 {sName}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Universal Column Mapping Panel (Works with ANY Excel/CSV column order) */}
+                  {availableColumns.length > 0 && (
+                    <div style={{
+                      borderRadius: '8px',
+                      backgroundColor: 'rgba(30, 41, 59, 0.75)',
+                      border: '1px solid rgba(99, 102, 241, 0.3)',
+                      overflow: 'hidden',
+                    }}>
+                      <div
+                        onClick={() => setShowColumnMappingPanel(!showColumnMappingPanel)}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '0.6rem 0.9rem',
+                          backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                          cursor: 'pointer',
+                          userSelect: 'none',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          <Sliders size={16} style={{ color: '#818cf8' }} />
+                          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                            Universal Column Mapping
+                          </span>
+                          <span style={{
+                            fontSize: '0.7rem',
+                            color: '#34d399',
+                            backgroundColor: 'rgba(52, 211, 153, 0.12)',
+                            padding: '0.1rem 0.4rem',
+                            borderRadius: '4px',
+                            fontWeight: 600,
+                          }}>
+                            ✓ Auto-Detected
+                          </span>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                            (Works with ANY Excel column format &amp; order)
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                          <span style={{ fontSize: '0.74rem', color: '#818cf8', fontWeight: 600 }}>
+                            {showColumnMappingPanel ? '▲ Hide Mapping' : '⚙️ Customize Column Mapping ▼'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Mapping Controls Grid */}
+                      {showColumnMappingPanel && (
+                        <div style={{ padding: '0.9rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                              Match columns from your uploaded Excel sheet to the system. The preview below updates instantly.
+                            </span>
+                            <button
+                              type="button"
+                              onClick={handleResetColumnMapping}
+                              style={{
+                                background: 'rgba(239, 68, 68, 0.12)',
+                                border: '1px solid rgba(239, 68, 68, 0.3)',
+                                color: '#f87171',
+                                borderRadius: '4px',
+                                padding: '0.2rem 0.5rem',
+                                fontSize: '0.72rem',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              🔄 Reset to Auto-Detected
+                            </button>
+                          </div>
+
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem' }}>
+                            {/* Header Row Index */}
+                            <div>
+                              <label style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>
+                                📌 Header Row
+                              </label>
+                              <select
+                                className="form-input"
+                                value={columnMapping.headerRowIndex ?? activeMapping?.headerRowIndex ?? 0}
+                                onChange={(e) => handleColumnMappingChange('headerRowIndex', parseInt(e.target.value, 10))}
+                                style={{ fontSize: '0.75rem', height: '30px' }}
+                              >
+                                <option value="-1">No Header (First row is student data)</option>
+                                <option value="0">Row 1 (First row contains column titles)</option>
+                                <option value="1">Row 2 (Titles are on row 2)</option>
+                                <option value="2">Row 3 (Titles are on row 3)</option>
+                              </select>
+                            </div>
+
+                            {/* Register Number Column */}
+                            <div>
+                              <label style={{ fontSize: '0.74rem', fontWeight: 600, color: '#fbbf24', display: 'block', marginBottom: '0.25rem' }}>
+                                🏷️ Register Number Column *
+                              </label>
+                              <select
+                                className="form-input"
+                                value={columnMapping.regNoCol ?? activeMapping?.regNoCol ?? -1}
+                                onChange={(e) => handleColumnMappingChange('regNoCol', parseInt(e.target.value, 10))}
+                                style={{ fontSize: '0.75rem', height: '30px', borderColor: '#fbbf24' }}
+                              >
+                                <option value="-1">🔍 Auto-Detect</option>
+                                {availableColumns.map((col) => (
+                                  <option key={col.index} value={col.index}>
+                                    Col {col.letter}: {col.headerName} {col.sampleValues.length > 0 ? `(${col.sampleValues[0]})` : ''}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Student Name Column */}
+                            <div>
+                              <label style={{ fontSize: '0.74rem', fontWeight: 600, color: '#38bdf8', display: 'block', marginBottom: '0.25rem' }}>
+                                👤 Student Name Column *
+                              </label>
+                              <select
+                                className="form-input"
+                                value={columnMapping.nameCol ?? activeMapping?.nameCol ?? -1}
+                                onChange={(e) => handleColumnMappingChange('nameCol', parseInt(e.target.value, 10))}
+                                style={{ fontSize: '0.75rem', height: '30px', borderColor: '#38bdf8' }}
+                              >
+                                <option value="-1">🔍 Auto-Detect</option>
+                                {availableColumns.map((col) => (
+                                  <option key={col.index} value={col.index}>
+                                    Col {col.letter}: {col.headerName} {col.sampleValues.length > 0 ? `(${col.sampleValues[0]})` : ''}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* LeetCode Profile / URL Column */}
+                            <div>
+                              <label style={{ fontSize: '0.74rem', fontWeight: 600, color: '#fb923c', display: 'block', marginBottom: '0.25rem' }}>
+                                💻 LeetCode Profile / URL Column *
+                              </label>
+                              <select
+                                className="form-input"
+                                value={columnMapping.leetcodeCol ?? activeMapping?.leetcodeCol ?? -1}
+                                onChange={(e) => handleColumnMappingChange('leetcodeCol', parseInt(e.target.value, 10))}
+                                style={{ fontSize: '0.75rem', height: '30px', borderColor: '#fb923c' }}
+                              >
+                                <option value="-1">🔍 Auto-Detect</option>
+                                {availableColumns.map((col) => (
+                                  <option key={col.index} value={col.index}>
+                                    Col {col.letter}: {col.headerName} {col.sampleValues.length > 0 ? `(${col.sampleValues[0]})` : ''}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Mentor Name Column */}
+                            <div>
+                              <label style={{ fontSize: '0.74rem', fontWeight: 600, color: '#818cf8', display: 'block', marginBottom: '0.25rem' }}>
+                                🎓 Mentor Name Column (Optional)
+                              </label>
+                              <select
+                                className="form-input"
+                                value={columnMapping.mentorCol ?? activeMapping?.mentorCol ?? -1}
+                                onChange={(e) => handleColumnMappingChange('mentorCol', parseInt(e.target.value, 10))}
+                                style={{ fontSize: '0.75rem', height: '30px' }}
+                              >
+                                <option value="-1">🔍 Auto-Detect from Sheet</option>
+                                <option value="-2">❌ No Mentor Column (Keep Unassigned)</option>
+                                {availableColumns.map((col) => (
+                                  <option key={col.index} value={col.index}>
+                                    Col {col.letter}: {col.headerName} {col.sampleValues.length > 0 ? `(${col.sampleValues[0]})` : ''}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Department Column */}
+                            <div>
+                              <label style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>
+                                🏛️ Department Column (Optional)
+                              </label>
+                              <select
+                                className="form-input"
+                                value={columnMapping.deptCol ?? activeMapping?.deptCol ?? -1}
+                                onChange={(e) => handleColumnMappingChange('deptCol', parseInt(e.target.value, 10))}
+                                style={{ fontSize: '0.75rem', height: '30px' }}
+                              >
+                                <option value="-1">🔍 Auto-Detect / Default (CSE)</option>
+                                {availableColumns.map((col) => (
+                                  <option key={col.index} value={col.index}>
+                                    Col {col.letter}: {col.headerName}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Section Column */}
+                            <div>
+                              <label style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>
+                                📁 Section Column (Optional)
+                              </label>
+                              <select
+                                className="form-input"
+                                value={columnMapping.secCol ?? activeMapping?.secCol ?? -1}
+                                onChange={(e) => handleColumnMappingChange('secCol', parseInt(e.target.value, 10))}
+                                style={{ fontSize: '0.75rem', height: '30px' }}
+                              >
+                                <option value="-1">🔍 Auto-Detect from Sheet</option>
+                                {availableColumns.map((col) => (
+                                  <option key={col.index} value={col.index}>
+                                    Col {col.letter}: {col.headerName}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Academic / Study Year Column */}
+                            <div>
+                              <label style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>
+                                📅 Academic / Study Year Column (Optional)
+                              </label>
+                              <select
+                                className="form-input"
+                                value={columnMapping.yearCol ?? activeMapping?.yearCol ?? -1}
+                                onChange={(e) => handleColumnMappingChange('yearCol', parseInt(e.target.value, 10))}
+                                style={{ fontSize: '0.75rem', height: '30px' }}
+                              >
+                                <option value="-1">🔍 Auto-Detect from Sheet</option>
+                                {availableColumns.map((col) => (
+                                  <option key={col.index} value={col.index}>
+                                    Col {col.letter}: {col.headerName}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Mentor to Staff Assignment Mapping */}
                   {detectedMentors.filter((m) => m !== 'Unassigned').length > 0 && (
