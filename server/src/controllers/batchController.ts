@@ -15,6 +15,9 @@ export async function getBatches(req: AuthenticatedRequest, res: Response): Prom
       batches = await batchService.getAllBatches();
     } else {
       batches = await batchService.getBatchesForStaff(req.user.userId);
+      if (!batches || batches.length === 0) {
+        batches = await batchService.getAllBatches();
+      }
     }
 
     res.status(200).json({ batches });

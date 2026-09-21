@@ -76,9 +76,10 @@ export async function createStudent(req: AuthenticatedRequest, res: Response): P
       return;
     }
 
-    // STAFF scope enforcement: validate the target section is within their responsibility
+    // STAFF scope enforcement: validate the target section is within their responsibility OR they are assigning themselves as mentor
     if (req.user.role === 'STAFF') {
-      const authorized = await isStaffAuthorizedForSection(req.user.userId, section_id);
+      const isSelfMentor = mentor_id === req.user.userId;
+      const authorized = isSelfMentor || (await isStaffAuthorizedForSection(req.user.userId, section_id));
       if (!authorized) {
         res.status(403).json({ error: 'Forbidden: You are not authorized to create students in this section' });
         return;
@@ -133,9 +134,10 @@ export async function updateStudent(req: AuthenticatedRequest, res: Response): P
         return;
       }
 
-      // If changing section, validate that the destination section is also within scope
+      // If changing section, validate that the destination section is also within scope or staff is mentor
       if (section_id) {
-        const authorizedDest = await isStaffAuthorizedForSection(req.user.userId, section_id);
+        const isSelfMentor = mentor_id === req.user.userId;
+        const authorizedDest = isSelfMentor || (await isStaffAuthorizedForSection(req.user.userId, section_id));
         if (!authorizedDest) {
           res.status(403).json({ error: 'Forbidden: You are not authorized to move students to this section' });
           return;

@@ -127,6 +127,7 @@ export async function seedInitialAdmin(): Promise<void> {
     ];
 
     const defaultStaffPassHash = await bcrypt.hash('StaffPass123!', 10);
+    const demoBatchId = 'batch-cse-2022-2026';
     for (const f of defaultFacultyStaff) {
       if (!inMemoryStore.users.some((u) => u.email === f.email || u.name.toLowerCase() === f.name.toLowerCase())) {
         inMemoryStore.users.push({
@@ -136,6 +137,14 @@ export async function seedInitialAdmin(): Promise<void> {
           password_hash: defaultStaffPassHash,
           role: 'STAFF',
           is_active: true,
+          created_at: new Date(),
+        });
+      }
+      if (!inMemoryStore.staffBatchAssignments.some((sba) => sba.staff_id === f.id && sba.batch_id === demoBatchId)) {
+        inMemoryStore.staffBatchAssignments.push({
+          id: `sba_${f.id}_${demoBatchId}`,
+          staff_id: f.id,
+          batch_id: demoBatchId,
           created_at: new Date(),
         });
       }
@@ -178,8 +187,10 @@ export async function seedInitialAdmin(): Promise<void> {
     ];
 
     const defaultStaffPass = await bcrypt.hash('StaffPass123!', 10);
+    const firstBatch = await prisma.batch.findFirst({ orderBy: { created_at: 'desc' } });
+
     for (const f of defaultFacultyStaff) {
-      const existingStaff = await prisma.user.findFirst({
+      let staffUser = await prisma.user.findFirst({
         where: {
           OR: [
             { email: { equals: f.email, mode: 'insensitive' } },
@@ -187,8 +198,8 @@ export async function seedInitialAdmin(): Promise<void> {
           ],
         },
       });
-      if (!existingStaff) {
-        await prisma.user.create({
+      if (!staffUser) {
+        staffUser = await prisma.user.create({
           data: {
             name: f.name,
             email: f.email,
@@ -198,6 +209,17 @@ export async function seedInitialAdmin(): Promise<void> {
           },
         });
         console.log(`[Seed] Initial faculty staff created: ${f.name} (${f.email})`);
+      }
+
+      if (firstBatch && staffUser) {
+        const hasBatch = await prisma.staffBatchAssignment.findFirst({
+          where: { staff_id: staffUser.id, batch_id: firstBatch.id },
+        });
+        if (!hasBatch) {
+          await prisma.staffBatchAssignment.create({
+            data: { staff_id: staffUser.id, batch_id: firstBatch.id },
+          });
+        }
       }
     }
   } catch (error) {
