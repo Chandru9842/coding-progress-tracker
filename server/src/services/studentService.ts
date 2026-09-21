@@ -92,10 +92,15 @@ export async function getStudentsForUser(
         list = list.filter((st) => (st.current_year || '').toLowerCase().includes(yr));
       }
       if (filters?.mentorId) {
-        const mentorAssignments = inMemoryStore.staffStudentAssignments
-          .filter((ssa) => ssa.staff_id === filters.mentorId)
-          .map((ssa) => ssa.student_id);
-        list = list.filter((st) => mentorAssignments.includes(st.id));
+        if (filters.mentorId === 'UNASSIGNED' || filters.mentorId === 'NONE') {
+          const assignedIds = new Set(inMemoryStore.staffStudentAssignments.map((ssa) => ssa.student_id));
+          list = list.filter((st) => !assignedIds.has(st.id));
+        } else {
+          const mentorAssignments = inMemoryStore.staffStudentAssignments
+            .filter((ssa) => ssa.staff_id === filters.mentorId)
+            .map((ssa) => ssa.student_id);
+          list = list.filter((st) => mentorAssignments.includes(st.id));
+        }
       }
       if (filters?.search) {
         const s = filters.search.toLowerCase();
@@ -134,11 +139,19 @@ export async function getStudentsForUser(
     }
 
     if (filters?.mentorId) {
-      andClauses.push({
-        staff_student_assignments: {
-          some: { staff_id: filters.mentorId },
-        },
-      });
+      if (filters.mentorId === 'UNASSIGNED' || filters.mentorId === 'NONE') {
+        andClauses.push({
+          staff_student_assignments: {
+            none: {},
+          },
+        });
+      } else {
+        andClauses.push({
+          staff_student_assignments: {
+            some: { staff_id: filters.mentorId },
+          },
+        });
+      }
     }
 
     if (filters?.allocationBatchId) {

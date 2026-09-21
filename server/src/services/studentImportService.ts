@@ -337,24 +337,27 @@ export async function bulkImportStudents(
     }
 
     // Resolve Mentor:
-    // 1. Explicit unassignment ('NONE')
+    // 1. Explicit unassignment ('NONE' or 'UNASSIGNED')
     // 2. Direct row.mentor_id (from mapped staff selector or explicit selection)
     // 3. Matched from row.mentor_name using smart fuzzy matching against staffList
     // 4. targetScope.mentor_id (only if row has no mentor name or unassigned, and admin picked a target scope mentor)
     // 5. Default to logged-in user if role === 'STAFF' and row had NO mentor specified in the sheet
-    const isExplicitlyUnassigned = row.mentor_id === 'NONE' || (!row.mentor_id && !row.mentor_name && targetScope?.mentor_id === 'NONE');
+    const isExplicitlyUnassigned =
+      row.mentor_id === 'NONE' ||
+      row.mentor_id === 'UNASSIGNED' ||
+      (!row.mentor_id && (!row.mentor_name || row.mentor_name === 'Unassigned') && (targetScope?.mentor_id === 'NONE' || targetScope?.mentor_id === 'UNASSIGNED'));
     let resolvedMentorId: string | null = null;
 
     if (!isExplicitlyUnassigned) {
-      if (row.mentor_id && row.mentor_id !== 'AUTO') {
+      if (row.mentor_id && row.mentor_id !== 'AUTO' && row.mentor_id !== 'NONE' && row.mentor_id !== 'UNASSIGNED') {
         resolvedMentorId = row.mentor_id;
       } else if (row.mentor_name && row.mentor_name !== 'Unassigned') {
         resolvedMentorId = findBestStaffMatch(row.mentor_name, staffList);
-        // If row mentor name didn't match any staff in DB, fallback to targetScope only if targetScope is set
-        if (!resolvedMentorId && targetScope?.mentor_id && targetScope.mentor_id !== 'AUTO') {
+        // If row mentor name didn't match any staff in DB, fallback to targetScope only if targetScope is set to a valid staff
+        if (!resolvedMentorId && targetScope?.mentor_id && targetScope.mentor_id !== 'AUTO' && targetScope.mentor_id !== 'NONE' && targetScope.mentor_id !== 'UNASSIGNED') {
           resolvedMentorId = targetScope.mentor_id;
         }
-      } else if (targetScope?.mentor_id && targetScope.mentor_id !== 'AUTO') {
+      } else if (targetScope?.mentor_id && targetScope.mentor_id !== 'AUTO' && targetScope.mentor_id !== 'NONE' && targetScope.mentor_id !== 'UNASSIGNED') {
         resolvedMentorId = targetScope.mentor_id;
       } else if (user.role === 'STAFF') {
         resolvedMentorId = user.userId;

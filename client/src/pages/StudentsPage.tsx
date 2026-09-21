@@ -176,6 +176,7 @@ export const StudentsPage: React.FC = () => {
 
   // Selection & Bulk Action States
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
+  const [tableQuickAssignStaffId, setTableQuickAssignStaffId] = useState<string>('');
   const [syncingStudentId, setSyncingStudentId] = useState<string | null>(null);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState<boolean>(false);
   const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
@@ -319,6 +320,29 @@ export const StudentsPage: React.FC = () => {
     } catch (err: any) {
       fetchStudents(false);
       alert(err.response?.data?.error || 'Failed to delete selected students');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleTableBulkMentorAssignment = async () => {
+    if (!tableQuickAssignStaffId || selectedStudentIds.size === 0) return;
+    try {
+      setSubmitting(true);
+      const studentIds = Array.from(selectedStudentIds);
+      const isUnpair = tableQuickAssignStaffId === 'NONE';
+      await Promise.all(
+        studentIds.map((id) =>
+          studentApi.updateStudent(id, {
+            mentor_id: isUnpair ? '' : tableQuickAssignStaffId,
+          })
+        )
+      );
+      setTableQuickAssignStaffId('');
+      setSelectedStudentIds(new Set());
+      await fetchStudents(false, true);
+    } catch (err: any) {
+      alert(extractErrorMessage(err, 'Failed to update mentor for selected students'));
     } finally {
       setSubmitting(false);
     }
@@ -696,7 +720,8 @@ export const StudentsPage: React.FC = () => {
       }
       if (!autoMappings[mName]) {
         const matched = findMatchingStaff(mName, staffList);
-        autoMappings[mName] = matched ? matched.id : 'AUTO';
+        // If matched to registered staff use staff id, otherwise default to 'NONE' (unpaired) so user has clear visibility
+        autoMappings[mName] = matched ? matched.id : 'NONE';
       }
     });
     setMentorMappings(autoMappings);
@@ -816,19 +841,8 @@ export const StudentsPage: React.FC = () => {
     let nextSet: Set<string>;
     if (mentor === 'ALL') {
       nextSet = new Set(['ALL']);
-      if (!isStaff) {
-        setImportMentorId('AUTO');
-      }
     } else {
       nextSet = new Set([mentor]);
-      if (mentorMappings[mentor] && mentorMappings[mentor] !== 'AUTO') {
-        setImportMentorId(mentorMappings[mentor]);
-      } else {
-        const matched = findMatchingStaff(mentor, staffList);
-        if (matched) {
-          setImportMentorId(matched.id);
-        }
-      }
     }
     setSelectedMentorFilters(nextSet);
   };
@@ -885,29 +899,9 @@ export const StudentsPage: React.FC = () => {
     setImportRows((prev) => prev.map((r) => ({ ...r, selected: false })));
   };
 
-  // Top Target Scope Mentor dropdown handler with automatic matching & filter sync
+  // Top Target Scope Mentor dropdown handler
   const handleImportMentorChange = (newMentorId: string) => {
     setImportMentorId(newMentorId);
-    if (!newMentorId || newMentorId === 'AUTO') {
-      handleSelectOnlyMentor('ALL');
-      return;
-    }
-    if (newMentorId === 'NONE') {
-      if (detectedMentors.includes('Unassigned')) {
-        handleSelectOnlyMentor('Unassigned');
-      }
-      return;
-    }
-    const stf = staffList.find((s) => s.id === newMentorId);
-    if (stf) {
-      const match = detectedMentors.find((m) => {
-        if (m === 'Unassigned') return false;
-        return findMatchingStaff(m, [stf]) !== null;
-      });
-      if (match) {
-        handleSelectOnlyMentor(match);
-      }
-    }
   };
 
   const handleToggleImportRow = (rowId: string) => {
@@ -1006,8 +1000,6 @@ export const StudentsPage: React.FC = () => {
       setImportResult(null);
 
       const targetBatch = batches.find((b) => b.id === importBatchId);
-      const isSingleMentorFilter = selectedMentorFilters.size === 1 && !selectedMentorFilters.has('ALL');
-      const activeSingleMentor = isSingleMentorFilter ? Array.from(selectedMentorFilters)[0] : null;
 
       const payload = {
         students: targetRowsToImport.map((r) => {
@@ -1017,8 +1009,6 @@ export const StudentsPage: React.FC = () => {
           } else if (mentorMappings[r.cleanMentor] && mentorMappings[r.cleanMentor] !== 'AUTO') {
             rowMentorId = mentorMappings[r.cleanMentor];
           } else if (r.cleanMentor === 'Unassigned' && importMentorId && importMentorId !== 'AUTO') {
-            rowMentorId = importMentorId;
-          } else if (isSingleMentorFilter && r.cleanMentor === activeSingleMentor && importMentorId && importMentorId !== 'AUTO') {
             rowMentorId = importMentorId;
           }
 
@@ -1062,7 +1052,7 @@ export const StudentsPage: React.FC = () => {
           allocation_batch_id: importAllocBatchId || undefined,
           sub_batch: importSubBatchCustom || undefined,
           current_year: importCurrentYear || undefined,
-          mentor_id: (isSingleMentorFilter && importMentorId && importMentorId !== 'AUTO') ? importMentorId : undefined,
+          mentor_id: (importMentorId && importMentorId !== 'AUTO' && importMentorId !== 'NONE') ? importMentorId : undefined,
         },
       };
 
@@ -1287,12 +1277,15 @@ export const StudentsPage: React.FC = () => {
             className="form-input"
             value={filterMentorId}
             onChange={(e) => setFilterMentorId(e.target.value)}
-            style={{ flex: '1 1 140px' }}
+            style={{ flex: '1 1 150px' }}
           >
-            <option value="">Mentor (All Staff)</option>
-            {staffList.map((stf) => (
-              <option key={stf.id} value={stf.id}>{stf.name}</option>
-            ))}
+            <option value="">Mentor (All Students)</option>
+            <option value="UNASSIGNED">⚠️ Unpaired / No Mentor</option>
+            <optgroup label="Assigned Staff Mentors">
+              {staffList.map((stf) => (
+                <option key={stf.id} value={stf.id}>{stf.name}</option>
+              ))}
+            </optgroup>
           </select>
         </div>
 
@@ -1329,6 +1322,42 @@ export const StudentsPage: React.FC = () => {
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {/* Quick Bulk Mentor Assign / Unpair Selector */}
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                <select
+                  className="form-input"
+                  value={tableQuickAssignStaffId}
+                  onChange={(e) => setTableQuickAssignStaffId(e.target.value)}
+                  style={{ fontSize: '0.8rem', padding: '0.3rem 0.5rem', height: '32px', minWidth: '185px' }}
+                >
+                  <option value="">⚡ Assign Mentor to Selected...</option>
+                  <option value="NONE">❌ Unpair Selected (Remove Mentor)</option>
+                  <optgroup label="Pair with Staff Mentor">
+                    {staffList.map((stf) => (
+                      <option key={stf.id} value={stf.id}>
+                        👤 {stf.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                </select>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleTableBulkMentorAssignment}
+                  disabled={!tableQuickAssignStaffId || submitting}
+                  style={{
+                    fontSize: '0.8rem',
+                    padding: '0.35rem 0.75rem',
+                    opacity: !tableQuickAssignStaffId ? 0.6 : 1,
+                    cursor: !tableQuickAssignStaffId ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  Apply
+                </button>
+              </div>
+
+              <span style={{ color: 'var(--border-subtle)', margin: '0 0.25rem' }}>|</span>
+
               <button
                 type="button"
                 className="btn-secondary"
@@ -2690,12 +2719,12 @@ export const StudentsPage: React.FC = () => {
                     </div>
                   )}
 
-                  {/* Mentor to Staff Assignment Mapping */}
-                  {detectedMentors.filter((m) => m !== 'Unassigned').length > 0 && (
+                  {/* Mentor to Staff Assignment & Unpair Mapping */}
+                  {importRows.length > 0 && (
                     <div style={{
                       display: 'flex',
                       flexDirection: 'column',
-                      gap: '0.5rem',
+                      gap: '0.65rem',
                       padding: '0.85rem 1rem',
                       borderRadius: '8px',
                       backgroundColor: 'rgba(30, 41, 59, 0.75)',
@@ -2704,16 +2733,16 @@ export const StudentsPage: React.FC = () => {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-primary)' }}>
                           <UserCheck size={16} style={{ color: '#818cf8' }} />
-                          <span>Map CSV Sheet Mentors to Admin-Created Staff:</span>
+                          <span>Map CSV Sheet Mentors to Registered Staff / Unpair Options:</span>
                         </div>
                         <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                          Automatically matches detected sheet mentors or allows manual staff override
+                          Matches registered staff or allows setting to Unpaired (No Mentor)
                         </span>
                       </div>
 
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.65rem' }}>
-                        {/* Unassigned / Non-Mentor Students Mapping Card */}
-                        {importRows.some((r) => r.cleanMentor === 'Unassigned') && (
+                        {/* Unpaired / Non-Mentor Students Mapping Card */}
+                        {(importRows.some((r) => r.cleanMentor === 'Unassigned') || detectedMentors.length === 0) && (
                           <div
                             style={{
                               display: 'inline-flex',
@@ -2727,7 +2756,7 @@ export const StudentsPage: React.FC = () => {
                             }}
                           >
                             <div style={{ fontWeight: 600, color: '#fbbf24', whiteSpace: 'nowrap' }}>
-                              ⚠️ Non-Mentor Students ({importRows.filter((r) => r.cleanMentor === 'Unassigned').length}) &rarr;
+                              ⚠️ Unpaired / No Mentor ({importRows.filter((r) => r.cleanMentor === 'Unassigned').length || importRows.length}) &rarr;
                             </div>
                             <select
                               className="form-input"
@@ -2750,12 +2779,12 @@ export const StudentsPage: React.FC = () => {
                                 fontSize: '0.75rem',
                                 padding: '0.2rem 0.4rem',
                                 height: '28px',
-                                minWidth: '160px',
+                                minWidth: '165px',
                                 borderColor: mentorMappings['Unassigned'] && mentorMappings['Unassigned'] !== 'NONE' ? '#818cf8' : undefined,
                               }}
                             >
-                              <option value="NONE">❌ Keep Unassigned</option>
-                              <optgroup label="Assign to Admin-Created Staff">
+                              <option value="NONE">❌ Keep Unpaired / Unassigned</option>
+                              <optgroup label="Pair with Registered Staff...">
                                 {staffList.map((stf) => (
                                   <option key={stf.id} value={stf.id}>
                                     👤 {stf.name} ({(stf.role || 'staff').toLowerCase()})
@@ -2768,10 +2797,11 @@ export const StudentsPage: React.FC = () => {
 
                         {detectedMentors.filter((m) => m !== 'Unassigned').map((mentorName) => {
                           const studentCount = importRows.filter((r) => r.cleanMentor === mentorName).length;
-                          const currentMappedVal = mentorMappings[mentorName] || 'AUTO';
-                          const mappedStaff = (currentMappedVal !== 'AUTO' && currentMappedVal !== 'NONE')
+                          const currentMappedVal = mentorMappings[mentorName] || 'NONE';
+                          const matchedStaff = (currentMappedVal !== 'AUTO' && currentMappedVal !== 'NONE')
                             ? staffList.find((s) => s.id === currentMappedVal)
-                            : null;
+                            : (currentMappedVal === 'AUTO' ? findMatchingStaff(mentorName, staffList) : null);
+                          const hasDirectStaffMatch = findMatchingStaff(mentorName, staffList) !== null;
 
                           return (
                             <div
@@ -2782,13 +2812,18 @@ export const StudentsPage: React.FC = () => {
                                 gap: '0.45rem',
                                 padding: '0.35rem 0.65rem',
                                 borderRadius: '6px',
-                                backgroundColor: mappedStaff ? 'rgba(99, 102, 241, 0.14)' : 'rgba(15, 23, 42, 0.7)',
-                                border: mappedStaff ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid var(--border-subtle)',
+                                backgroundColor: matchedStaff
+                                  ? 'rgba(99, 102, 241, 0.14)'
+                                  : (currentMappedVal === 'NONE' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(15, 23, 42, 0.7)'),
+                                border: matchedStaff
+                                  ? '1px solid rgba(99, 102, 241, 0.35)'
+                                  : (currentMappedVal === 'NONE' ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid var(--border-subtle)'),
                                 fontSize: '0.78rem',
                               }}
                             >
                               <div style={{ fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
-                                👤 {mentorName} <span style={{ color: 'var(--text-muted)', fontWeight: 'normal' }}>({studentCount})</span> &rarr;
+                                {hasDirectStaffMatch ? '👤' : '⚠️'} {mentorName}{' '}
+                                <span style={{ color: 'var(--text-muted)', fontWeight: 'normal' }}>({studentCount})</span> &rarr;
                               </div>
                               <select
                                 className="form-input"
@@ -2801,13 +2836,13 @@ export const StudentsPage: React.FC = () => {
                                   fontSize: '0.75rem',
                                   padding: '0.2rem 0.4rem',
                                   height: '28px',
-                                  minWidth: '150px',
-                                  borderColor: mappedStaff ? '#818cf8' : undefined,
+                                  minWidth: '165px',
+                                  borderColor: matchedStaff ? '#818cf8' : (currentMappedVal === 'NONE' ? '#f87171' : undefined),
                                 }}
                               >
-                                <option value="AUTO">🔍 Auto-Match Staff</option>
-                                <option value="NONE">❌ Keep Unassigned</option>
-                                <optgroup label="Staff Created by Admin">
+                                <option value="NONE">❌ Unpair (No Mentor)</option>
+                                {hasDirectStaffMatch && <option value="AUTO">🔍 Auto-Match Staff</option>}
+                                <optgroup label="Assign to Registered Staff">
                                   {staffList.map((stf) => (
                                     <option key={stf.id} value={stf.id}>
                                       👤 {stf.name} ({(stf.role || 'staff').toLowerCase()})
@@ -2815,6 +2850,9 @@ export const StudentsPage: React.FC = () => {
                                   ))}
                                 </optgroup>
                               </select>
+                              {!hasDirectStaffMatch && currentMappedVal === 'NONE' && (
+                                <span style={{ fontSize: '0.7rem', color: '#f87171', fontWeight: 600 }}>Unpaired</span>
+                              )}
                             </div>
                           );
                         })}
@@ -2901,10 +2939,10 @@ export const StudentsPage: React.FC = () => {
                                 cursor: 'pointer',
                                 transition: 'all 0.15s ease',
                               }}
-                              title={isMultiMentorMode ? `Click to toggle ${mentor} in/out` : `Click to select ONLY ${mentor}'s students`}
+                              title={isMultiMentorMode ? `Click to toggle ${mentor} in/out` : `Click to filter preview to ONLY ${mentor}'s students`}
                             >
                               <span>{isActive ? '✓' : '○'}</span>
-                              <span>{isUnassigned ? '⚠️ Non-Mentor' : `👤 ${mentor}`}</span>
+                              <span>{isUnassigned ? '⚠️ Unpaired / No Mentor' : `👤 ${mentor}`}</span>
                               <span style={{ opacity: 0.85, fontSize: '0.7rem' }}>({count})</span>
                             </button>
                           );
