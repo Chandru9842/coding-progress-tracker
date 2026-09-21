@@ -11,6 +11,7 @@ export async function isStaffAuthorizedForStudent(
 
     const student = inMemoryStore.students.find((s) => s.id === studentId);
     if (!student) return false;
+    if (student.mentor_id === staffId) return true;
 
     const secAssign = inMemoryStore.staffSectionAssignments.find((sa) => {
       if (sa.staff_id !== staffId || sa.section_id !== student.section_id) return false;
@@ -78,7 +79,7 @@ export async function isStaffAuthorizedForBatch(
     if (hasSecInBatch) return true;
 
     const assignedStudentIds = inMemoryStore.staffStudentAssignments.filter((s) => s.staff_id === staffId).map((s) => s.student_id);
-    const hasStudentInBatch = inMemoryStore.students.some((st) => assignedStudentIds.includes(st.id) && st.batch_id === batchId);
+    const hasStudentInBatch = inMemoryStore.students.some((st) => (assignedStudentIds.includes(st.id) || st.mentor_id === staffId) && st.batch_id === batchId);
     return hasStudentInBatch;
   }
 
@@ -121,7 +122,7 @@ export async function isStaffAuthorizedForSection(
     }
 
     const assignedSts = inMemoryStore.staffStudentAssignments.filter((s) => s.staff_id === staffId).map((s) => s.student_id);
-    return inMemoryStore.students.some((st) => assignedSts.includes(st.id) && st.section_id === sectionId);
+    return inMemoryStore.students.some((st) => (assignedSts.includes(st.id) || st.mentor_id === staffId) && st.section_id === sectionId);
   }
 
   const sectionAssignment = await prisma.staffSectionAssignment.findFirst({
@@ -184,6 +185,9 @@ export async function getAuthorizedStudentIdsForStaff(
 
     const batchStudents = inMemoryStore.students.filter((st) => batchIds.includes(st.batch_id));
     batchStudents.forEach((st) => studentIds.add(st.id));
+
+    const mentoredStudents = inMemoryStore.students.filter((st) => st.mentor_id === staffId);
+    mentoredStudents.forEach((st) => studentIds.add(st.id));
 
     return Array.from(studentIds);
   }

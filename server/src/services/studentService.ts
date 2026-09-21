@@ -12,7 +12,9 @@ function attachMentorInfo(st: any) {
   if (!st) return st;
   if (!process.env.DATABASE_URL) {
     const ssa = inMemoryStore.staffStudentAssignments.find((a) => a.student_id === st.id);
-    const mentorUser = ssa ? inMemoryStore.users.find((u) => u.id === ssa.staff_id) : null;
+    const mentorUser = ssa
+      ? inMemoryStore.users.find((u) => u.id === ssa.staff_id)
+      : (st.mentor_id ? inMemoryStore.users.find((u) => u.id === st.mentor_id) : null);
     const snaps = inMemoryStore.snapshots
       .filter((s) => s.student_id === st.id)
       .sort((a, b) => new Date(b.snapshot_date).getTime() - new Date(a.snapshot_date).getTime());
@@ -21,7 +23,7 @@ function attachMentorInfo(st: any) {
       ...st,
       snapshots: snaps.slice(0, 1),
       latest_snapshot: latestSnapshot,
-      mentor_id: mentorUser?.id || null,
+      mentor_id: mentorUser?.id || st.mentor_id || null,
       mentor: mentorUser ? { id: mentorUser.id, name: mentorUser.name, email: mentorUser.email } : null,
     };
   }
@@ -94,12 +96,12 @@ export async function getStudentsForUser(
       if (filters?.mentorId) {
         if (filters.mentorId === 'UNASSIGNED' || filters.mentorId === 'NONE') {
           const assignedIds = new Set(inMemoryStore.staffStudentAssignments.map((ssa) => ssa.student_id));
-          list = list.filter((st) => !assignedIds.has(st.id));
+          list = list.filter((st) => !assignedIds.has(st.id) && !st.mentor_id);
         } else {
           const mentorAssignments = inMemoryStore.staffStudentAssignments
             .filter((ssa) => ssa.staff_id === filters.mentorId)
             .map((ssa) => ssa.student_id);
-          list = list.filter((st) => mentorAssignments.includes(st.id));
+          list = list.filter((st) => mentorAssignments.includes(st.id) || st.mentor_id === filters.mentorId);
         }
       }
       if (filters?.search) {
@@ -586,6 +588,10 @@ export async function updateStudent(
           student_id: studentId,
           created_at: new Date(),
         });
+      }
+      const st = inMemoryStore.students.find((s) => s.id === studentId);
+      if (st) {
+        st.mentor_id = data.mentor_id || null;
       }
     } else {
       await prisma.staffStudentAssignment.deleteMany({

@@ -100,6 +100,70 @@ export const LoginPage: React.FC = () => {
           </div>
         )}
 
+        {/* Quick Fill Credentials Helper */}
+        <div style={{
+          display: 'flex',
+          gap: '0.6rem',
+          marginBottom: '1.25rem',
+        }}>
+          <button
+            type="button"
+            onClick={() => {
+              setEmail('admin@college.edu');
+              setPassword('AdminPass123!');
+              setError(null);
+            }}
+            disabled={submitting}
+            style={{
+              flex: 1,
+              padding: '0.45rem 0.5rem',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              backgroundColor: 'rgba(99, 102, 241, 0.12)',
+              border: '1px solid rgba(99, 102, 241, 0.3)',
+              borderRadius: 'var(--radius-sm)',
+              color: '#818cf8',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.35rem',
+              transition: 'all 0.15s ease',
+            }}
+            title="Auto-fill Admin credentials (admin@college.edu)"
+          >
+            <span>👑 Fill Admin</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setEmail('devi@college.edu');
+              setPassword('StaffPass123!');
+              setError(null);
+            }}
+            disabled={submitting}
+            style={{
+              flex: 1,
+              padding: '0.45rem 0.5rem',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              backgroundColor: 'rgba(16, 185, 129, 0.12)',
+              border: '1px solid rgba(16, 185, 129, 0.3)',
+              borderRadius: 'var(--radius-sm)',
+              color: '#34d399',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.35rem',
+              transition: 'all 0.15s ease',
+            }}
+            title="Auto-fill Faculty Staff credentials (devi@college.edu)"
+          >
+            <span>👩‍🏫 Fill Staff</span>
+          </button>
+        </div>
+
         {/* Form */}
         <form onSubmit={handleSubmit}>
           <div className="form-group">

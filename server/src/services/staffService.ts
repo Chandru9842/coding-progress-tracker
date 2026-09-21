@@ -608,6 +608,8 @@ export async function assignStudentsToStaff(staffId: string, sectionId: string, 
         student_id: stId,
         created_at: new Date(),
       });
+      const st = inMemoryStore.students.find((s) => s.id === stId);
+      if (st) st.mentor_id = staffId;
     });
     return { message: 'Student assignments updated successfully' };
   }
@@ -648,6 +650,7 @@ export async function assignStudentsToStaff(staffId: string, sectionId: string, 
       data: {
         staff_id: staffId,
         section_id: sectionId,
+        allocation_batch_id: null,
         assignment_mode: 'SELECTED',
       },
     });
@@ -666,6 +669,10 @@ export async function removeStudentAssignmentFromStaff(staffId: string, studentI
     inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter(
       (ssa) => !(ssa.staff_id === staffId && ssa.student_id === studentId)
     );
+    const st = inMemoryStore.students.find((s) => s.id === studentId);
+    if (st && st.mentor_id === staffId) {
+      st.mentor_id = null;
+    }
     return { message: 'Student assignment removed successfully' };
   }
 
@@ -684,10 +691,11 @@ export async function getStaffAssignedScopes(staffId: string) {
     const secAssigns = inMemoryStore.staffSectionAssignments.filter((ssa) => ssa.staff_id === staffId);
     const batchAssigns = inMemoryStore.staffBatchAssignments.filter((sba) => sba.staff_id === staffId);
     const studentAssigns = inMemoryStore.staffStudentAssignments.filter((ssa) => ssa.staff_id === staffId);
+    const mentoredStudents = inMemoryStore.students.filter((st) => st.mentor_id === staffId);
 
     const sectionIds = Array.from(new Set(secAssigns.map((sa) => sa.section_id)));
     const batchIds = Array.from(new Set(batchAssigns.map((ba) => ba.batch_id)));
-    const studentIds = Array.from(new Set(studentAssigns.map((sa) => sa.student_id)));
+    const studentIds = Array.from(new Set([...studentAssigns.map((sa) => sa.student_id), ...mentoredStudents.map((st) => st.id)]));
 
     const assignedStudents = inMemoryStore.students.filter((st) => studentIds.includes(st.id));
     const studentSecIds = assignedStudents.map((st) => st.section_id).filter(Boolean);
