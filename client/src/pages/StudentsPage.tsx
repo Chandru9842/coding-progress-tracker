@@ -486,6 +486,7 @@ export const StudentsPage: React.FC = () => {
       leetcode_username: '',
       mentor_id: isStaff && user ? (user.id || (user as any).userId || '') : '',
     });
+    staffApi.getAllStaff(true, true).then(setStaffList).catch(console.error);
     setShowStudentModal(true);
   };
 
@@ -504,6 +505,7 @@ export const StudentsPage: React.FC = () => {
       leetcode_username: student.leetcode_username || '',
       mentor_id: student.mentor_id || student.mentor?.id || '',
     });
+    staffApi.getAllStaff(true, true).then(setStaffList).catch(console.error);
     setShowStudentModal(true);
   };
 
@@ -598,6 +600,7 @@ export const StudentsPage: React.FC = () => {
     setMentorMappings({});
     setImportDuplicateCount(0);
     setImportResult(null);
+    staffApi.getAllStaff(true, true).then(setStaffList).catch(console.error);
 
     // Intelligently preselect active/first batch and section
     const activeBatch = batches.find((b) => b.id === filterBatchId) || (batches.length > 0 ? batches[0] : null);
@@ -2005,14 +2008,16 @@ export const StudentsPage: React.FC = () => {
                   value={studentForm.mentor_id}
                   onChange={(e) => setStudentForm({ ...studentForm, mentor_id: e.target.value })}
                 >
-                  <option value="">Select Mentor</option>
-                  {staffList
-                    .filter((stf) => stf.is_active || stf.isActive)
-                    .map((stf) => (
-                      <option key={stf.id} value={stf.id}>
-                        {stf.name}
-                      </option>
-                    ))}
+                  <option value="">❌ None / Unassigned (No Mentor)</option>
+                  <optgroup label="Available Faculty Mentors (Created by Admin)">
+                    {staffList
+                      .filter((stf) => stf.is_active || stf.isActive)
+                      .map((stf) => (
+                        <option key={stf.id} value={stf.id}>
+                          👤 {stf.name} ({(stf.role || 'staff').toLowerCase()})
+                        </option>
+                      ))}
+                  </optgroup>
                 </select>
               </div>
 

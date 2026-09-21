@@ -346,10 +346,14 @@ export const statsApi = {
 };
 
 export const staffApi = {
-  getStaffList: async (activeOnly?: boolean): Promise<StaffUser[]> => {
+  getStaffList: async (activeOnly?: boolean, bypassCache: boolean = false): Promise<StaffUser[]> => {
     const key = `staff_list_${activeOnly ? 'active' : 'all'}`;
-    const cached = getCachedData<StaffUser[]>(key);
-    if (cached) return cached;
+    if (bypassCache) {
+      clearClientCache('staff_');
+    } else {
+      const cached = getCachedData<StaffUser[]>(key);
+      if (cached) return cached;
+    }
     const res = await api.get<{ staff: any[] }>('/staff', {
       params: activeOnly ? { active: 'true' } : undefined,
     });
@@ -358,10 +362,14 @@ export const staffApi = {
     return normalized;
   },
 
-  getAllStaff: async (activeOnly?: boolean): Promise<StaffUser[]> => {
+  getAllStaff: async (activeOnly?: boolean, bypassCache: boolean = false): Promise<StaffUser[]> => {
     const key = `staff_${activeOnly ? 'active' : 'all'}`;
-    const cached = getCachedData<StaffUser[]>(key);
-    if (cached) return cached;
+    if (bypassCache) {
+      clearClientCache('staff_');
+    } else {
+      const cached = getCachedData<StaffUser[]>(key);
+      if (cached) return cached;
+    }
     const res = await api.get<{ staff: any[] }>('/staff', {
       params: activeOnly ? { active: 'true' } : undefined,
     });
@@ -382,10 +390,12 @@ export const staffApi = {
 
   createStaff: async (data: { name: string; email: string; password: string; isActive?: boolean }): Promise<StaffUser> => {
     clearClientCache('staff_');
+    clearClientCache('students_');
     const res = await api.post<{ staff: any }>('/staff', {
       name: data.name,
       email: data.email,
       password: data.password,
+      isActive: data.isActive,
     });
     const created = normalizeStaffUser(res.data.staff);
     if (data.isActive !== undefined && data.isActive !== created.is_active) {
@@ -396,35 +406,41 @@ export const staffApi = {
 
   updateStaff: async (staffId: string, data: { name?: string; email?: string; password?: string; assignedBatchIds?: string[] }): Promise<void> => {
     clearClientCache('staff_');
+    clearClientCache('students_');
     await api.patch(`/staff/${staffId}`, data);
   },
 
   deleteStaff: async (staffId: string): Promise<void> => {
     clearClientCache('staff_');
+    clearClientCache('students_');
     await api.delete(`/staff/${staffId}`);
   },
 
   bulkDeleteStaff: async (staffIds: string[]): Promise<void> => {
     clearClientCache('staff_');
+    clearClientCache('students_');
     await api.post('/staff/bulk-delete', { staffIds });
   },
 
-
   updateStatus: async (staffId: string, isActive: boolean): Promise<void> => {
     clearClientCache('staff_');
+    clearClientCache('students_');
     await api.patch(`/staff/${staffId}/status`, { isActive });
   },
-
 
   resetPassword: async (staffId: string, password: string): Promise<void> => {
     await api.patch(`/staff/${staffId}/password`, { password });
   },
 
   assignBatches: async (staffId: string, batchIds: string[]): Promise<void> => {
+    clearClientCache('staff_');
+    clearClientCache('students_');
     await api.post(`/staff/${staffId}/batches`, { batchIds });
   },
 
   assignSection: async (staffId: string, sectionId: string, assignmentMode: 'ALL' | 'SELECTED', studentIds?: string[], allocationBatchId?: string): Promise<void> => {
+    clearClientCache('staff_');
+    clearClientCache('students_');
     await api.post(`/staff/${staffId}/sections`, { sectionId, assignmentMode, allocationBatchId });
     if (assignmentMode === 'SELECTED' && studentIds && studentIds.length > 0) {
       await api.post(`/staff/${staffId}/students`, { sectionId, studentIds });
@@ -432,6 +448,8 @@ export const staffApi = {
   },
 
   removeSection: async (staffId: string, sectionId: string, allocationBatchId?: string): Promise<void> => {
+    clearClientCache('staff_');
+    clearClientCache('students_');
     const url = allocationBatchId
       ? `/staff/${staffId}/sections/${sectionId}?allocationBatchId=${encodeURIComponent(allocationBatchId)}`
       : `/staff/${staffId}/sections/${sectionId}`;
@@ -439,10 +457,14 @@ export const staffApi = {
   },
 
   assignStudents: async (staffId: string, studentIds: string[]): Promise<void> => {
+    clearClientCache('staff_');
+    clearClientCache('students_');
     await api.post(`/staff/${staffId}/students`, { studentIds });
   },
 
   removeStudent: async (staffId: string, studentId: string): Promise<void> => {
+    clearClientCache('staff_');
+    clearClientCache('students_');
     await api.delete(`/staff/${staffId}/students/${studentId}`);
   },
 

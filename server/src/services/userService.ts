@@ -117,6 +117,30 @@ export async function seedInitialAdmin(): Promise<void> {
 
       console.log('[Seed] Demo batch and active LeetCode students seeded to in-memory store.');
     }
+
+    // Seed default faculty mentors in in-memory mode if not already present
+    const defaultFacultyStaff = [
+      { id: 'staff-devi-01', name: 'Mrs. K. Devi', email: 'devi@college.edu' },
+      { id: 'staff-muthuraj-02', name: 'Dr. A. Muthuraj', email: 'muthuraj@college.edu' },
+      { id: 'staff-shyamsundar-03', name: 'Mr. Shyam Sundar', email: 'shyamsundar@college.edu' },
+      { id: 'staff-chandru-04', name: 'Chandru M', email: 'chandru@college.edu' },
+    ];
+
+    const defaultStaffPassHash = await bcrypt.hash('StaffPass123!', 10);
+    for (const f of defaultFacultyStaff) {
+      if (!inMemoryStore.users.some((u) => u.email === f.email || u.name.toLowerCase() === f.name.toLowerCase())) {
+        inMemoryStore.users.push({
+          id: f.id,
+          name: f.name,
+          email: f.email,
+          password_hash: defaultStaffPassHash,
+          role: 'STAFF',
+          is_active: true,
+          created_at: new Date(),
+        });
+      }
+    }
+
     return;
   }
 
@@ -142,6 +166,38 @@ export async function seedInitialAdmin(): Promise<void> {
           },
         });
         console.log(`[Seed] Initial Admin user created successfully: ${adminEmail}`);
+      }
+    }
+
+    // Seed default faculty staff mentors in database if not existing
+    const defaultFacultyStaff = [
+      { name: 'Mrs. K. Devi', email: 'devi@college.edu' },
+      { name: 'Dr. A. Muthuraj', email: 'muthuraj@college.edu' },
+      { name: 'Mr. Shyam Sundar', email: 'shyamsundar@college.edu' },
+      { name: 'Chandru M', email: 'chandru@college.edu' },
+    ];
+
+    const defaultStaffPass = await bcrypt.hash('StaffPass123!', 10);
+    for (const f of defaultFacultyStaff) {
+      const existingStaff = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { email: { equals: f.email, mode: 'insensitive' } },
+            { name: { equals: f.name, mode: 'insensitive' } },
+          ],
+        },
+      });
+      if (!existingStaff) {
+        await prisma.user.create({
+          data: {
+            name: f.name,
+            email: f.email,
+            password_hash: defaultStaffPass,
+            role: 'STAFF',
+            is_active: true,
+          },
+        });
+        console.log(`[Seed] Initial faculty staff created: ${f.name} (${f.email})`);
       }
     }
   } catch (error) {

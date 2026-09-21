@@ -306,10 +306,10 @@ async function validateActiveStaffMentor(mentorId?: string) {
   if (!mentorId) return;
   if (!process.env.DATABASE_URL) {
     const stf = inMemoryStore.users.find(
-      (u) => u.id === mentorId && u.role === 'STAFF' && u.is_active
+      (u) => u.id === mentorId && (u.role === 'STAFF' || u.role === 'ADMIN') && u.is_active
     );
     if (!stf) {
-      const err: any = new Error('Invalid mentor: Selected mentor must be an active STAFF member');
+      const err: any = new Error('Invalid mentor: Selected mentor must be an active staff member');
       err.statusCode = 400;
       throw err;
     }
@@ -317,12 +317,11 @@ async function validateActiveStaffMentor(mentorId?: string) {
     const stf = await prisma.user.findFirst({
       where: {
         id: mentorId,
-        role: 'STAFF',
         is_active: true,
       },
     });
     if (!stf) {
-      const err: any = new Error('Invalid mentor: Selected mentor must be an active STAFF member');
+      const err: any = new Error('Invalid mentor: Selected mentor must be an active staff member');
       err.statusCode = 400;
       throw err;
     }

@@ -47,17 +47,21 @@ export const App: React.FC = () => {
               {/* Public Route */}
               <Route path="/login" element={<LoginPage />} />
 
-              {/* Protected Routes */}
+              {/* Protected Routes (Admin & Staff) */}
               <Route element={<ProtectedRoute />}>
                 <Route path="/dashboard" element={<DashboardPage />} />
-                <Route path="/staff-management" element={<StaffManagementPage />} />
                 <Route path="/batches" element={<BatchesPage />} />
                 <Route path="/batches/:batchId" element={<BatchDetailPage />} />
                 <Route path="/students" element={<StudentsPage />} />
                 <Route path="/students/:studentId" element={<StudentDetailPage />} />
                 <Route path="/reports" element={<ReportsPage />} />
-                <Route path="/diagnostics" element={<DiagnosticsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
+              </Route>
+
+              {/* Admin Only Protected Routes */}
+              <Route element={<ProtectedRoute requiredRole="ADMIN" />}>
+                <Route path="/staff-management" element={<StaffManagementPage />} />
+                <Route path="/diagnostics" element={<DiagnosticsPage />} />
               </Route>
 
               {/* Dedicated 404 Route */}

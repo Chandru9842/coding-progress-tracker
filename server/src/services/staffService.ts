@@ -57,6 +57,7 @@ export async function getAllStaff(activeOnly: boolean = false) {
       id: s.id,
       name: s.name,
       email: s.email,
+      role: s.role || 'STAFF',
       isActive: s.is_active,
       createdAt: s.created_at.toISOString(),
       assignedBatchesCount: s.staff_batch_assignments.length,
@@ -181,6 +182,7 @@ export async function createStaff(data: {
   isActive?: boolean;
 }) {
   serverCache.invalidate('staff_');
+  serverCache.invalidate('students_');
   serverCache.invalidate('stats_');
   const emailNorm = data.email.trim().toLowerCase();
   const passwordToUse = data.password || 'StaffPass123!';
@@ -246,6 +248,7 @@ export async function createStaff(data: {
 
 export async function updateStaffStatus(staffId: string, isActive: boolean) {
   serverCache.invalidate('staff_');
+  serverCache.invalidate('students_');
   serverCache.invalidate('stats_');
 
   if (!process.env.DATABASE_URL) {
@@ -282,6 +285,7 @@ export async function updateStaffDetails(
   data: { name?: string; email?: string; password?: string; assignedBatchIds?: string[] }
 ) {
   serverCache.invalidate('staff_');
+  serverCache.invalidate('students_');
   serverCache.invalidate('stats_');
   serverCache.invalidate('batch');
 
@@ -331,6 +335,7 @@ export async function updateStaffDetails(
 
 export async function deleteStaff(staffId: string) {
   serverCache.invalidate('staff_');
+  serverCache.invalidate('students_');
   serverCache.invalidate('stats_');
   serverCache.invalidate('batch');
 
@@ -361,6 +366,7 @@ export async function deleteStaff(staffId: string) {
 
 export async function bulkDeleteStaff(staffIds: string[]) {
   serverCache.invalidate('staff_');
+  serverCache.invalidate('students_');
   serverCache.invalidate('stats_');
   serverCache.invalidate('batch');
 
