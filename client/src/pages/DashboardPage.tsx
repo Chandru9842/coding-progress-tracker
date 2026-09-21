@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Sparkles,
   Award,
+  ExternalLink,
 } from 'lucide-react';
 import { SyncStatus } from '../components/SyncStatus.js';
 
@@ -458,19 +459,31 @@ export const DashboardPage: React.FC = () => {
                           {student.name}
                         </td>
                         <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)' }}>
-                          <span style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '0.25rem',
-                            padding: '0.2rem 0.5rem',
-                            borderRadius: '4px',
-                            backgroundColor: 'rgba(249, 115, 22, 0.1)',
-                            color: '#fb923c',
-                            fontWeight: 600,
-                            fontSize: '0.8rem',
-                          }}>
-                            @{student.leetcode_username}
-                          </span>
+                          <a
+                            href={`https://leetcode.com/u/${student.leetcode_username.replace(/^@/, '')}/`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.35rem',
+                              padding: '0.2rem 0.55rem',
+                              borderRadius: '4px',
+                              backgroundColor: 'rgba(249, 115, 22, 0.12)',
+                              color: '#fb923c',
+                              fontWeight: 600,
+                              fontSize: '0.82rem',
+                              textDecoration: 'none',
+                              cursor: 'pointer',
+                              transition: 'all 0.15s ease',
+                              border: '1px solid rgba(249, 115, 22, 0.25)',
+                            }}
+                            title={`Open ${student.leetcode_username}'s LeetCode profile in new tab`}
+                          >
+                            <span>@{student.leetcode_username.replace(/^@/, '')}</span>
+                            <ExternalLink size={12} />
+                          </a>
                         </td>
                         <td style={{ padding: '0.85rem 1rem', textAlign: 'center' }}>
                           <div style={{ display: 'inline-flex', gap: '0.35rem', alignItems: 'center' }}>

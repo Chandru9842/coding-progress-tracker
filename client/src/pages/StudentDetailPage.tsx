@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
 import { studentApi, syncApi, Student, DailySnapshot, extractErrorMessage, getCachedData } from '../services/api.js';
-import { ArrowLeft, User, ShieldAlert, Code2, GraduationCap, Layers, Loader2, Activity, RefreshCw, CheckCircle2, Trash2, ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
+import { ArrowLeft, User, ShieldAlert, Code2, GraduationCap, Layers, Loader2, Activity, RefreshCw, CheckCircle2, Trash2, ChevronLeft, ChevronRight, Calendar, ExternalLink } from 'lucide-react';
 import { SyncStatus } from '../components/SyncStatus.js';
 
 export const StudentDetailPage: React.FC = () => {
@@ -513,9 +513,30 @@ export const StudentDetailPage: React.FC = () => {
                   <Code2 size={20} style={{ color: 'var(--text-muted)' }} />
                   <div>
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block' }}>LeetCode Handle</span>
-                    <span style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                      {student.leetcode_username ? `@${student.leetcode_username}` : 'Not linked'}
-                    </span>
+                    {student.leetcode_username ? (
+                      <a
+                        href={`https://leetcode.com/u/${student.leetcode_username.replace(/^@/, '')}/`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          fontSize: '0.95rem',
+                          fontWeight: 600,
+                          color: '#818cf8',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.35rem',
+                          textDecoration: 'none',
+                        }}
+                        title={`Open @${student.leetcode_username}'s LeetCode Profile in new tab`}
+                      >
+                        <span>@{student.leetcode_username.replace(/^@/, '')}</span>
+                        <ExternalLink size={13} />
+                      </a>
+                    ) : (
+                      <span style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                        Not linked
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>

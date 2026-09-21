@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { RefreshCw, FileSpreadsheet, Download, Trash2, CheckCircle2, AlertCircle, X, Layers, AlertTriangle } from 'lucide-react';
+import { RefreshCw, FileSpreadsheet, Download, Trash2, CheckCircle2, AlertCircle, X, Layers, AlertTriangle, ExternalLink } from 'lucide-react';
 import { Layout } from '../components/Layout.js';
 import { getCachedData } from '../services/api.js';
 import { GoogleSheetsIntegration } from '../components/GoogleSheetsIntegration.js';
@@ -1912,9 +1912,25 @@ export default function ReportsPage() {
                       <td style={{ padding: '0.85rem 1rem', fontWeight: 600, color: 'var(--text-main)' }}>
                         {st.name}
                         {st.leetcode_username && (
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block' }}>
-                            @{st.leetcode_username}
-                          </span>
+                          <a
+                            href={`https://leetcode.com/u/${st.leetcode_username.replace(/^@/, '')}/`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                              fontSize: '0.75rem',
+                              color: '#818cf8',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.2rem',
+                              textDecoration: 'none',
+                              marginTop: '0.15rem',
+                            }}
+                            title={`Open @${st.leetcode_username}'s LeetCode Profile in new tab`}
+                          >
+                            <span>@{st.leetcode_username.replace(/^@/, '')}</span>
+                            <ExternalLink size={10} />
+                          </a>
                         )}
                       </td>
                       <td style={{ padding: '0.85rem 1rem', color: 'var(--text-secondary)' }}>

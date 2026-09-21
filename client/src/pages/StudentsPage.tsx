@@ -24,6 +24,7 @@ import {
   Sparkles,
   ChevronLeft,
   ChevronRight,
+  ExternalLink,
 } from 'lucide-react';
 import { SyncStatus } from '../components/SyncStatus.js';
 import {
@@ -732,7 +733,7 @@ export const StudentsPage: React.FC = () => {
     }
   };
 
-  // Single-Select: Select ONLY this mentor and deselect all others
+  // Single-Select: Filter preview table to ONLY this mentor (does NOT deselect other students!)
   const handleSelectOnlyMentor = (mentor: string) => {
     let nextSet: Set<string>;
     if (mentor === 'ALL') {
@@ -752,18 +753,6 @@ export const StudentsPage: React.FC = () => {
       }
     }
     setSelectedMentorFilters(nextSet);
-
-    // Strictly select ONLY rows matching this active mentor filter, and deselect all others!
-    setImportRows((prev) =>
-      prev.map((r) => {
-        if (!r.isValid) return { ...r, selected: false };
-        const matches = nextSet.has('ALL') || nextSet.has(r.cleanMentor);
-        return {
-          ...r,
-          selected: matches,
-        };
-      })
-    );
   };
 
   // Toggle mentor filter
@@ -797,18 +786,25 @@ export const StudentsPage: React.FC = () => {
     }
 
     setSelectedMentorFilters(nextSet);
+  };
 
-    // Automatically select all valid rows matching the active filter, deselect others
+  // Explicit Selection Helpers so user has total control over what is imported
+  const handleSelectAllStudents = () => {
+    setImportRows((prev) => prev.map((r) => ({ ...r, selected: r.isValid })));
+  };
+
+  const handleSelectOnlyVisibleStudents = () => {
+    const visibleIds = new Set(getFilteredImportRows().map((r) => r.id));
     setImportRows((prev) =>
-      prev.map((r) => {
-        if (!r.isValid) return { ...r, selected: false };
-        const matches = nextSet.has('ALL') || nextSet.has(r.cleanMentor);
-        return {
-          ...r,
-          selected: matches,
-        };
-      })
+      prev.map((r) => ({
+        ...r,
+        selected: r.isValid && visibleIds.has(r.id),
+      }))
     );
+  };
+
+  const handleDeselectAllStudents = () => {
+    setImportRows((prev) => prev.map((r) => ({ ...r, selected: false })));
   };
 
   // Top Target Scope Mentor dropdown handler with automatic matching & filter sync
@@ -1427,17 +1423,17 @@ export const StudentsPage: React.FC = () => {
                                 <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Unassigned</span>
                               )}
                             </td>
-                            <td style={{ padding: '1rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                            <td style={{ padding: '1rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
                               {student.leetcode_username ? (
                                 <a
-                                  href={`https://leetcode.com/${student.leetcode_username.replace(/^@/, '')}`}
+                                  href={`https://leetcode.com/u/${student.leetcode_username.replace(/^@/, '')}/`}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   onClick={(e) => e.stopPropagation()}
                                   style={{
                                     display: 'inline-flex',
                                     alignItems: 'center',
-                                    gap: '0.25rem',
+                                    gap: '0.35rem',
                                     padding: '0.2rem 0.5rem',
                                     borderRadius: '4px',
                                     backgroundColor: 'rgba(249, 115, 22, 0.1)',
@@ -1445,10 +1441,13 @@ export const StudentsPage: React.FC = () => {
                                     fontWeight: 600,
                                     textDecoration: 'none',
                                     fontSize: '0.82rem',
+                                    transition: 'all 0.15s ease',
+                                    border: '1px solid rgba(249, 115, 22, 0.2)',
                                   }}
-                                  title="Open LeetCode Profile in new tab"
+                                  title={`Open @${student.leetcode_username}'s LeetCode Profile in new tab`}
                                 >
                                   <span>@{student.leetcode_username.replace(/^@/, '')}</span>
+                                  <ExternalLink size={12} />
                                 </a>
                               ) : (
                                 <span style={{ color: 'var(--text-muted)' }}>Not linked</span>
@@ -2541,43 +2540,74 @@ export const StudentsPage: React.FC = () => {
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        padding: '0.4rem 0.75rem',
+                        padding: '0.45rem 0.75rem',
                         borderRadius: '6px',
-                        backgroundColor: selectedMentorFilters.size === 1 ? 'rgba(99, 102, 241, 0.12)' : 'rgba(16, 185, 129, 0.12)',
-                        border: selectedMentorFilters.size === 1 ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid rgba(16, 185, 129, 0.3)',
-                        fontSize: '0.78rem',
+                        backgroundColor: 'rgba(99, 102, 241, 0.12)',
+                        border: '1px solid rgba(99, 102, 241, 0.3)',
+                        fontSize: '0.8rem',
                         flexWrap: 'wrap',
                         gap: '0.5rem',
                       }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                          <span>{selectedMentorFilters.size === 1 ? '🎯' : '👥'}</span>
+                          <span>🎯</span>
                           <span style={{ color: 'var(--text-primary)' }}>
-                            {selectedMentorFilters.size === 1 ? (
-                              <>
-                                <strong>Single Mentor Selected:</strong> Importing only students of <strong>{Array.from(selectedMentorFilters)[0]}</strong> ({getFilteredImportRows().filter((r) => r.selected && r.isValid).length} students). Other mentors are excluded.
-                              </>
-                            ) : (
-                              <>
-                                <strong>{selectedMentorFilters.size} Mentors Selected:</strong> {Array.from(selectedMentorFilters).join(', ')} ({getFilteredImportRows().filter((r) => r.selected && r.isValid).length} students). Other mentors are excluded.
-                              </>
-                            )}
+                            Viewing Mentor: <strong>{Array.from(selectedMentorFilters).join(', ')}</strong> ({getFilteredImportRows().length} students visible).
+                            <span style={{ marginLeft: '0.5rem', color: '#34d399', fontWeight: 600 }}>
+                              Total selected for import: {importRows.filter((r) => r.selected && r.isValid).length} of {importRows.filter((r) => r.isValid).length} valid students across all mentors.
+                            </span>
                           </span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleSelectOnlyMentor('ALL')}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: selectedMentorFilters.size === 1 ? '#818cf8' : '#34d399',
-                            fontSize: '0.75rem',
-                            fontWeight: 600,
-                            textDecoration: 'underline',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Show All Mentors ({importRows.length})
-                        </button>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <button
+                            type="button"
+                            onClick={handleSelectOnlyVisibleStudents}
+                            style={{
+                              background: 'rgba(245, 158, 11, 0.15)',
+                              border: '1px solid rgba(245, 158, 11, 0.4)',
+                              color: '#fbbf24',
+                              borderRadius: '4px',
+                              padding: '0.15rem 0.45rem',
+                              fontSize: '0.72rem',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                            title="Only import the students visible under this mentor filter"
+                          >
+                            Select Only This Mentor ({getFilteredImportRows().filter((r) => r.isValid).length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleSelectAllStudents}
+                            style={{
+                              background: 'rgba(16, 185, 129, 0.15)',
+                              border: '1px solid rgba(16, 185, 129, 0.4)',
+                              color: '#34d399',
+                              borderRadius: '4px',
+                              padding: '0.15rem 0.45rem',
+                              fontSize: '0.72rem',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                            title="Keep all students from all mentors selected for import"
+                          >
+                            ✓ Keep All {importRows.filter((r) => r.isValid).length} Selected
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSelectOnlyMentor('ALL')}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#818cf8',
+                              fontSize: '0.75rem',
+                              fontWeight: 600,
+                              textDecoration: 'underline',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Show All Mentors
+                          </button>
+                        </div>
                       </div>
                     )}
 
