@@ -23,7 +23,8 @@ type SyncStatusListener = (status: SyncStatusState) => void;
 class AutoSyncManager {
   private queue: string[] = [];
   private queuedSet = new Set<string>();
-  private cooldownMap = new Map<string, number>(); // studentId -> timestamp
+  private cooldownMap = new Map<string, number>(); // studentId -> timestamp of last sync attempt
+  private knownStudentsMap = new Map<string, SyncCandidate>();
   private isRunning = false;
   private isManualSyncActive = false;
   private listeners: Set<SyncStatusListener> = new Set();
@@ -36,7 +37,7 @@ class AutoSyncManager {
         const isSyncing = e.detail?.isSyncing ?? false;
         this.isManualSyncActive = isSyncing;
         if (isSyncing) {
-          // Pause queue processing immediately when manual sync begins
+          // Pause queue processing immediately when manual interactive sync begins
           this.pause();
         } else {
           // Resume background auto-sync 3 seconds after manual sync finishes
@@ -65,7 +66,7 @@ class AutoSyncManager {
     });
   }
 
-  public getStatus() {
+  public getStatus(): SyncStatusState {
     return {
       isAutoSyncing: this.isRunning,
       pendingCount: this.queue.length,
@@ -83,19 +84,29 @@ class AutoSyncManager {
   }
 
   public resume() {
-    if (this.queue.length > 0 && !this.isRunning && !this.isManualSyncActive) {
-      this.startRunner();
+    if (!this.isRunning && !this.isManualSyncActive) {
+      if (this.queue.length > 0) {
+        this.startRunner();
+      } else {
+        this.refillFromKnownStudents();
+      }
     }
   }
 
   /**
    * Enqueue a list of students loaded from StudentsPage, ReportsPage, or DashboardPage.
-   * Prioritizes students with NO snapshots or 0 total solved.
+   * Prioritizes students with NO snapshots or 0 total solved, but includes all students
+   * in continuous round-robin background auto-sync.
    */
   public enqueueStudents(students: SyncCandidate[]): number {
     if (!Array.isArray(students) || students.length === 0) return 0;
     const now = Date.now();
-    const COOLDOWN_MS = 20 * 60 * 1000; // 20 minutes cooldown
+    const COOLDOWN_MS = 25 * 1000; // 25 seconds cooldown between checks for same student
+
+    for (const s of students) {
+      if (!s.id || !s.leetcode_username || !s.leetcode_username.trim()) continue;
+      this.knownStudentsMap.set(s.id, s);
+    }
 
     const candidatesNeedingSync: { id: string; priority: number }[] = [];
 
@@ -124,17 +135,19 @@ class AutoSyncManager {
       }
 
       if (hasNoSnapshot) {
-        candidatesNeedingSync.push({ id: s.id, priority: 1 }); // Highest priority: Pending sync
+        candidatesNeedingSync.push({ id: s.id, priority: 1 }); // Highest priority: Pending first sync
       } else if (isZeroSolved) {
         candidatesNeedingSync.push({ id: s.id, priority: 2 }); // High priority: 0 solved
       } else if (isStale) {
         candidatesNeedingSync.push({ id: s.id, priority: 3 }); // Normal priority: Stale
+      } else {
+        candidatesNeedingSync.push({ id: s.id, priority: 4 }); // Evergreen: Continuous round-robin
       }
     }
 
     if (candidatesNeedingSync.length === 0) return 0;
 
-    // Sort by priority (1 -> 2 -> 3)
+    // Sort by priority (1 -> 2 -> 3 -> 4)
     candidatesNeedingSync.sort((a, b) => a.priority - b.priority);
 
     for (const c of candidatesNeedingSync) {
@@ -150,7 +163,7 @@ class AutoSyncManager {
   public enqueueStudentIds(studentIds: string[]): number {
     if (!Array.isArray(studentIds) || studentIds.length === 0) return 0;
     const now = Date.now();
-    const COOLDOWN_MS = 20 * 60 * 1000;
+    const COOLDOWN_MS = 25 * 1000;
     let added = 0;
 
     for (const id of studentIds) {
@@ -172,9 +185,9 @@ class AutoSyncManager {
   }
 
   /**
-   * Fetch unsynced candidates directly from backend API
+   * Fetch candidates directly from backend API for continuous auto-sync
    */
-  public async fetchServerCandidates(limit = 60): Promise<number> {
+  public async fetchServerCandidates(limit = 100): Promise<number> {
     try {
       const res = await api.get<{ candidates: Array<{ id: string; name: string; leetcode_username: string }> }>(
         `/sync/unsynced-candidates?limit=${limit}`
@@ -193,7 +206,7 @@ class AutoSyncManager {
     if (this.isRunning || this.isManualSyncActive) return;
     this.isRunning = true;
     this.notify();
-    this.scheduleNextStep(800);
+    this.scheduleNextStep(500);
   }
 
   private scheduleNextStep(delayMs: number) {
@@ -204,14 +217,24 @@ class AutoSyncManager {
   }
 
   private async processNextBatch() {
-    if (this.isManualSyncActive || this.queue.length === 0) {
+    if (this.isManualSyncActive) {
       this.isRunning = false;
       this.notify();
       return;
     }
 
-    // Process micro-batch of 2 students
-    const batchSize = 2;
+    // If queue is empty, refill from known students in continuous round-robin
+    if (this.queue.length === 0) {
+      this.refillFromKnownStudents();
+      if (this.queue.length === 0) {
+        this.isRunning = false;
+        this.notify();
+        return;
+      }
+    }
+
+    // Process micro-batch of 1 student per step (smooth continuous heartbeat without rate limits)
+    const batchSize = 1;
     const chunkIds: string[] = [];
 
     while (chunkIds.length < batchSize && this.queue.length > 0) {
@@ -229,12 +252,17 @@ class AutoSyncManager {
     const now = Date.now();
     chunkIds.forEach((id) => this.cooldownMap.set(id, now));
 
+    const targetStudent = this.knownStudentsMap.get(chunkIds[0]);
+    if (targetStudent) {
+      this.lastSyncedName = targetStudent.name || targetStudent.leetcode_username || undefined;
+    }
+
     try {
-      // Execute low-priority micro-batch
+      // Execute low-priority background sync
       const res = await syncReportStudents({ studentIds: chunkIds });
 
       if (res?.results && Array.isArray(res.results)) {
-        // Broadcast in-place update event to all components & open pages
+        // Broadcast in-place update event to all components & open pages (Reports, Students, Dashboard)
         if (typeof window !== 'undefined') {
           window.dispatchEvent(
             new CustomEvent('student-synced', {
@@ -250,12 +278,50 @@ class AutoSyncManager {
 
     this.notify();
 
-    // Schedule next micro-batch after safe delay of 6.5s to completely avoid any LeetCode rate limits
-    if (this.queue.length > 0 && !this.isManualSyncActive) {
-      this.scheduleNextStep(6500);
+    // Schedule next student after 1.8 seconds (continuous heartbeat)
+    if (!this.isManualSyncActive) {
+      this.scheduleNextStep(1800);
     } else {
       this.isRunning = false;
       this.notify();
+    }
+  }
+
+  private refillFromKnownStudents() {
+    if (this.isManualSyncActive) return;
+
+    if (this.knownStudentsMap.size === 0) {
+      // Proactively fetch candidates from server to discover registered students
+      this.fetchServerCandidates(100);
+      return;
+    }
+
+    const now = Date.now();
+    const COOLDOWN_MS = 25 * 1000; // 25s cooldown before re-syncing the same student
+
+    // Order known students by least recently attempted
+    const all = Array.from(this.knownStudentsMap.values());
+    all.sort((a, b) => {
+      const aTime = this.cooldownMap.get(a.id) || 0;
+      const bTime = this.cooldownMap.get(b.id) || 0;
+      return aTime - bTime;
+    });
+
+    for (const s of all) {
+      const lastAttempt = this.cooldownMap.get(s.id);
+      if (lastAttempt && now - lastAttempt < COOLDOWN_MS) continue;
+      if (!this.queuedSet.has(s.id)) {
+        this.queue.push(s.id);
+        this.queuedSet.add(s.id);
+      }
+    }
+
+    // If cooldown has not elapsed yet for students, schedule next heartbeat pass in 4 seconds
+    if (this.queue.length === 0 && all.length > 0) {
+      this.scheduleNextStep(4000);
+    } else if (this.queue.length > 0) {
+      this.notify();
+      this.startRunner();
     }
   }
 }

@@ -366,25 +366,46 @@ export default function ReportsPage() {
       if (statsMap.size === 0) return;
 
       setReportData((prev) => {
-        if (!prev) return prev;
+        if (!prev || !prev.students) return prev;
+        const updatedStudents = prev.students.map((st) => {
+          const newStats = statsMap.get(st.id);
+          if (!newStats) return st;
+          return {
+            ...st,
+            total_solved: newStats.totalSolved ?? st.total_solved,
+            easy_solved: newStats.easySolved ?? st.easy_solved,
+            medium_solved: newStats.mediumSolved ?? st.medium_solved,
+            hard_solved: newStats.hardSolved ?? st.hard_solved,
+            overall_total: newStats.totalSolved ?? st.overall_total,
+            overall_easy: newStats.easySolved ?? st.overall_easy,
+            overall_medium: newStats.mediumSolved ?? st.overall_medium,
+            overall_hard: newStats.hardSolved ?? st.overall_hard,
+            has_activity: (newStats.totalSolved ?? 0) > 0,
+          };
+        });
+
+        const totalEasy = updatedStudents.reduce((sum, s) => sum + (s.easy_solved || 0), 0);
+        const totalMedium = updatedStudents.reduce((sum, s) => sum + (s.medium_solved || 0), 0);
+        const totalHard = updatedStudents.reduce((sum, s) => sum + (s.hard_solved || 0), 0);
+        const totalProblems = updatedStudents.reduce((sum, s) => sum + (s.total_solved || 0), 0);
+        const activeCount = updatedStudents.filter((s) => s.has_activity).length;
+
         return {
           ...prev,
-          students: prev.students.map((st) => {
-            const newStats = statsMap.get(st.id);
-            if (!newStats) return st;
-            return {
-              ...st,
-              total_solved: newStats.totalSolved ?? st.total_solved,
-              easy_solved: newStats.easySolved ?? st.easy_solved,
-              medium_solved: newStats.mediumSolved ?? st.medium_solved,
-              hard_solved: newStats.hardSolved ?? st.hard_solved,
-              overall_total: newStats.totalSolved ?? st.overall_total,
-              overall_easy: newStats.easySolved ?? st.overall_easy,
-              overall_medium: newStats.mediumSolved ?? st.overall_medium,
-              overall_hard: newStats.hardSolved ?? st.overall_hard,
-              has_activity: (newStats.totalSolved ?? 0) > 0,
-            };
-          }),
+          summary: {
+            ...prev.summary,
+            totalEasy,
+            totalMedium,
+            totalHard,
+            totalProblems,
+            overallTotalEasy: totalEasy,
+            overallTotalMedium: totalMedium,
+            overallTotalHard: totalHard,
+            overallTotalProblems: totalProblems,
+            activeStudentsCount: activeCount,
+            noActivityCount: updatedStudents.length - activeCount,
+          },
+          students: updatedStudents,
         };
       });
     };
@@ -512,6 +533,9 @@ export default function ReportsPage() {
         activityStatus: 'all',
       });
       setReportData(data);
+      if (data?.students && data.students.length > 0) {
+        autoSyncService.enqueueStudents(data.students);
+      }
 
       const reps = await getReportsList();
       setReportsList(reps);

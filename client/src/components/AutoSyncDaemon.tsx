@@ -12,12 +12,12 @@ export const AutoSyncDaemon: React.FC = () => {
     });
 
     // Proactively fetch unsynced candidates from the server upon app load
-    autoSyncService.fetchServerCandidates(50);
+    autoSyncService.fetchServerCandidates(100);
 
-    // Periodic check every 8 minutes
+    // Periodic check every 30 seconds to pick up any new students or changes
     const interval = setInterval(() => {
-      autoSyncService.fetchServerCandidates(50);
-    }, 8 * 60 * 1000);
+      autoSyncService.fetchServerCandidates(100);
+    }, 30 * 1000);
 
     return () => {
       unsubscribe();
@@ -25,7 +25,7 @@ export const AutoSyncDaemon: React.FC = () => {
     };
   }, []);
 
-  // If not currently auto-syncing or queue is empty, keep daemon completely invisible
+  // If not currently auto-syncing and queue is empty, keep daemon hidden
   if (!status.isAutoSyncing && status.pendingCount === 0) {
     return null;
   }
@@ -37,18 +37,18 @@ export const AutoSyncDaemon: React.FC = () => {
         bottom: '1rem',
         right: '1rem',
         zIndex: 999,
-        background: 'rgba(15, 23, 42, 0.92)',
+        background: 'rgba(15, 23, 42, 0.94)',
         backdropFilter: 'blur(8px)',
-        border: '1px solid rgba(16, 185, 129, 0.35)',
+        border: '1px solid rgba(16, 185, 129, 0.45)',
         borderRadius: '9999px',
-        padding: '0.4rem 0.85rem',
+        padding: '0.42rem 0.95rem',
         display: 'inline-flex',
         alignItems: 'center',
-        gap: '0.5rem',
-        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.35)',
+        gap: '0.55rem',
+        boxShadow: '0 4px 14px rgba(0, 0, 0, 0.4)',
         color: '#f8fafc',
         fontSize: '0.78rem',
-        fontWeight: 500,
+        fontWeight: 600,
         pointerEvents: 'none',
         transition: 'all 0.3s ease',
       }}
@@ -57,11 +57,13 @@ export const AutoSyncDaemon: React.FC = () => {
         size={13}
         color="#34d399"
         style={{
-          animation: 'spin 2s linear infinite',
+          animation: 'spin 1.5s linear infinite',
         }}
       />
       <span>
-        Auto-syncing background ({status.pendingCount} student{status.pendingCount !== 1 ? 's' : ''} queued)
+        {status.lastSyncedName
+          ? `⚡ Auto-syncing: ${status.lastSyncedName} (${status.pendingCount} queued)`
+          : `⚡ Auto-syncing background (${status.pendingCount} queued)`}
       </span>
       <style>{`
         @keyframes spin {

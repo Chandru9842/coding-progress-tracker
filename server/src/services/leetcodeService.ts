@@ -1448,7 +1448,7 @@ export async function getUnsyncedStudentCandidates(limit: number = 60): Promise<
   name: string;
   register_number: string;
   leetcode_username: string;
-  reason: 'NO_SNAPSHOT' | 'ZERO_SOLVED' | 'STALE';
+  reason: 'NO_SNAPSHOT' | 'ZERO_SOLVED' | 'STALE' | 'REFRESH';
 }>> {
   if (!process.env.DATABASE_URL) {
     const todayStr = getISTDateString(0);
@@ -1463,6 +1463,7 @@ export async function getUnsyncedStudentCandidates(limit: number = 60): Promise<
           register_number: s.register_number,
           leetcode_username: s.leetcode_username,
           reason: 'NO_SNAPSHOT',
+          lastUpdated: 0,
         });
       } else {
         const latest = snaps.sort((a, b) => new Date(b.snapshot_date).getTime() - new Date(a.snapshot_date).getTime())[0];
@@ -1473,6 +1474,7 @@ export async function getUnsyncedStudentCandidates(limit: number = 60): Promise<
             register_number: s.register_number,
             leetcode_username: s.leetcode_username,
             reason: 'ZERO_SOLVED',
+            lastUpdated: 1,
           });
         } else if (toISTDateString(latest.snapshot_date) !== todayStr) {
           unsynced.push({
@@ -1481,12 +1483,28 @@ export async function getUnsyncedStudentCandidates(limit: number = 60): Promise<
             register_number: s.register_number,
             leetcode_username: s.leetcode_username,
             reason: 'STALE',
+            lastUpdated: new Date(latest.snapshot_date).getTime(),
+          });
+        } else {
+          unsynced.push({
+            id: s.id,
+            name: s.name,
+            register_number: s.register_number,
+            leetcode_username: s.leetcode_username,
+            reason: 'REFRESH',
+            lastUpdated: new Date(latest.snapshot_date).getTime(),
           });
         }
       }
-      if (unsynced.length >= limit) break;
     }
-    return unsynced;
+    unsynced.sort((a, b) => {
+      const order: Record<string, number> = { NO_SNAPSHOT: 0, ZERO_SOLVED: 1, STALE: 2, REFRESH: 3 };
+      if (order[a.reason] !== order[b.reason]) {
+        return (order[a.reason] ?? 4) - (order[b.reason] ?? 4);
+      }
+      return (a.lastUpdated || 0) - (b.lastUpdated || 0);
+    });
+    return unsynced.slice(0, limit);
   }
 
   const todayStr = getISTDateString(0);
@@ -1516,6 +1534,7 @@ export async function getUnsyncedStudentCandidates(limit: number = 60): Promise<
         register_number: st.register_number,
         leetcode_username: st.leetcode_username,
         reason: 'NO_SNAPSHOT',
+        lastUpdated: 0,
       });
     } else if (snap.total_solved === 0) {
       candidates.push({
@@ -1524,6 +1543,7 @@ export async function getUnsyncedStudentCandidates(limit: number = 60): Promise<
         register_number: st.register_number,
         leetcode_username: st.leetcode_username,
         reason: 'ZERO_SOLVED',
+        lastUpdated: 1,
       });
     } else if (toISTDateString(snap.snapshot_date) !== todayStr) {
       candidates.push({
@@ -1532,13 +1552,26 @@ export async function getUnsyncedStudentCandidates(limit: number = 60): Promise<
         register_number: st.register_number,
         leetcode_username: st.leetcode_username,
         reason: 'STALE',
+        lastUpdated: new Date(snap.snapshot_date).getTime(),
+      });
+    } else {
+      candidates.push({
+        id: st.id,
+        name: st.name,
+        register_number: st.register_number,
+        leetcode_username: st.leetcode_username,
+        reason: 'REFRESH',
+        lastUpdated: new Date(snap.snapshot_date).getTime(),
       });
     }
   }
 
   candidates.sort((a, b) => {
-    const order: Record<string, number> = { NO_SNAPSHOT: 0, ZERO_SOLVED: 1, STALE: 2 };
-    return (order[a.reason] ?? 3) - (order[b.reason] ?? 3);
+    const order: Record<string, number> = { NO_SNAPSHOT: 0, ZERO_SOLVED: 1, STALE: 2, REFRESH: 3 };
+    if (order[a.reason] !== order[b.reason]) {
+      return (order[a.reason] ?? 4) - (order[b.reason] ?? 4);
+    }
+    return (a.lastUpdated || 0) - (b.lastUpdated || 0);
   });
 
   return candidates.slice(0, limit);

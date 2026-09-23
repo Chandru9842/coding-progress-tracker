@@ -367,6 +367,10 @@ export const StudentsPage: React.FC = () => {
             };
             return {
               ...st,
+              total_solved: match.totalSolved ?? (st as any).total_solved,
+              easy_solved: match.easySolved ?? (st as any).easy_solved,
+              medium_solved: match.mediumSolved ?? (st as any).medium_solved,
+              hard_solved: match.hardSolved ?? (st as any).hard_solved,
               snapshots: [newSnap as any],
               latest_snapshot: newSnap as any,
             };
