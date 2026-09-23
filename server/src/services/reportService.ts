@@ -48,13 +48,9 @@ export async function getReportFilterOptions(user: { userId: string; role: UserR
         new Set(batches.map((b) => b.department))
       ).sort();
 
-      let staff = inMemoryStore.users
+      const staff = inMemoryStore.users
         .filter((u) => u.role === 'STAFF')
         .map((u) => ({ id: u.id, name: u.name, email: u.email }));
-
-      if (user.role === 'STAFF') {
-        staff = staff.filter((u) => u.id === user.userId);
-      }
 
       return {
         academicYears,
@@ -108,13 +104,8 @@ export async function getReportFilterOptions(user: { userId: string; role: UserR
       new Set(batches.map((b) => b.department))
     ).sort();
 
-    let staffWhere: any = { role: 'STAFF' };
-    if (user.role === 'STAFF') {
-      staffWhere.id = user.userId;
-    }
-
     const staff = await prisma.user.findMany({
-      where: staffWhere,
+      where: { role: 'STAFF', is_active: true },
       select: { id: true, name: true, email: true },
       orderBy: { name: 'asc' },
     });
@@ -343,11 +334,6 @@ export async function getReportData(
 
   // STAFF Scope Validation
   if (user.role === 'STAFF') {
-    if (staffId && staffId !== user.userId) {
-      const err: any = new Error('Forbidden: You are not authorized to view reports for other staff members');
-      err.statusCode = 403;
-      throw err;
-    }
     const authChecks: Promise<boolean>[] = [];
     const checkNames: string[] = [];
 
@@ -389,8 +375,6 @@ export async function getReportData(
     let authorizedStudentIds: string[] | null = null;
     if (user.role === 'STAFF') {
       authorizedStudentIds = await getAuthorizedStudentIdsForStaff(user.userId);
-    } else if (staffId) {
-      authorizedStudentIds = await getAuthorizedStudentIdsForStaff(staffId);
     }
 
     let studentsList: any[] = [];
@@ -400,6 +384,22 @@ export async function getReportData(
 
       if (authorizedStudentIds !== null) {
         rawStudents = rawStudents.filter((st) => authorizedStudentIds!.includes(st.id));
+      }
+
+      if (staffId) {
+        if (staffId === 'UNASSIGNED') {
+          rawStudents = rawStudents.filter((st) => {
+            const hasMentor = inMemoryStore.staffStudentAssignments.some((a) => a.student_id === st.id) || !!st.mentor_id;
+            return !hasMentor;
+          });
+        } else {
+          rawStudents = rawStudents.filter((st) => {
+            const matchesAssignment = inMemoryStore.staffStudentAssignments.some(
+              (a) => a.student_id === st.id && a.staff_id === staffId
+            );
+            return matchesAssignment || st.mentor_id === staffId;
+          });
+        }
       }
 
       if (batchId) {
@@ -480,6 +480,14 @@ export async function getReportData(
 
       if (authorizedStudentIds !== null) {
         where.id = { in: authorizedStudentIds };
+      }
+
+      if (staffId) {
+        if (staffId === 'UNASSIGNED') {
+          where.staff_student_assignments = { none: {} };
+        } else {
+          where.staff_student_assignments = { some: { staff_id: staffId } };
+        }
       }
 
       if (batchId) {

@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { RefreshCw, FileSpreadsheet, Download, Trash2, CheckCircle2, AlertCircle, X, Layers, AlertTriangle, ExternalLink } from 'lucide-react';
 import { Layout } from '../components/Layout.js';
-import { getCachedData } from '../services/api.js';
+import { getCachedData, staffApi } from '../services/api.js';
 import { GoogleSheetsIntegration } from '../components/GoogleSheetsIntegration.js';
 import { SyncErrorsView } from '../components/SyncErrorsView.js';
+import { SearchableMentorSelect } from '../components/SearchableMentorSelect.js';
 import {
   getReportFilters,
   getReportData,
@@ -59,6 +60,7 @@ export default function ReportsPage() {
   const [sectionId, setSectionId] = useState<string>('');
   const [allocationBatchId, setAllocationBatchId] = useState<string>('');
   const [staffId, setStaffId] = useState<string>('');
+  const [staffList, setStaffList] = useState<Array<{ id: string; name: string; email?: string }>>([]);
   const [studentSearchQuery, setStudentSearchQuery] = useState<string>('');
   const [syncingStudentId, setSyncingStudentId] = useState<string | null>(null);
   const [fromDate, setFromDate] = useState<string>('');
@@ -430,8 +432,21 @@ export default function ReportsPage() {
     }
     setError(null);
     try {
-      const filters = await getReportFilters();
-      setFilterOptions(filters);
+      const [filtersRes, staffRes] = await Promise.allSettled([
+        getReportFilters(),
+        staffApi.getAllStaff(true),
+      ]);
+
+      if (filtersRes.status === 'fulfilled') {
+        setFilterOptions(filtersRes.value);
+        if (filtersRes.value.staff && filtersRes.value.staff.length > 0) {
+          setStaffList(filtersRes.value.staff);
+        }
+      }
+
+      if (staffRes.status === 'fulfilled' && Array.isArray(staffRes.value) && staffRes.value.length > 0) {
+        setStaffList(staffRes.value.map((s) => ({ id: s.id, name: s.name, email: s.email })));
+      }
 
       const data = await getReportData({
         sortBy: 'total',
@@ -787,6 +802,17 @@ export default function ReportsPage() {
   const selectedSectionObj = availableSections.find((sec) => sec.id === sectionId);
   const availableAllocationBatches = selectedSectionObj?.allocation_batches || [];
   const isCustomDateInvalid = datePreset === 'custom' && !!fromDate && !!toDate && fromDate > toDate;
+
+  const allMentors = React.useMemo(() => {
+    const map = new Map<string, { id: string; name: string; email?: string }>();
+    staffList.forEach((s) => {
+      if (s.id) map.set(s.id, { id: s.id, name: s.name, email: s.email });
+    });
+    (filterOptions.staff || []).forEach((s) => {
+      if (s.id && !map.has(s.id)) map.set(s.id, { id: s.id, name: s.name, email: s.email });
+    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [staffList, filterOptions.staff]);
 
   return (
     <Layout title="Reports & Sync">
@@ -1244,33 +1270,21 @@ export default function ReportsPage() {
               </select>
             </div>
 
-            {/* Staff Member Filter (Admin only view) */}
-            {filterOptions.staff.length > 1 && (
-              <div>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
-                  Staff Member
-                </label>
-                <select
-                  id="filter-staff"
-                  value={staffId}
-                  onChange={(e) => setStaffId(e.target.value)}
-                  style={{
-                    width: '100%',
-                    backgroundColor: 'var(--bg-input, #0f172a)',
-                    border: '1px solid var(--border-subtle)',
-                    color: 'var(--text-main)',
-                    padding: '0.6rem 0.75rem',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: '0.875rem',
-                  }}
-                >
-                  <option value="">All Staff Responsibility</option>
-                  {filterOptions.staff.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name} ({s.email})</option>
-                  ))}
-                </select>
-              </div>
-            )}
+            {/* Mentor / Faculty Filter (Fast Searchable Combobox, 100+ mentors support, lag-free) */}
+            <div>
+              <SearchableMentorSelect
+                id="filter-mentor"
+                label="Mentor (Staff)"
+                mentors={allMentors}
+                value={staffId}
+                onChange={(selectedId) => {
+                  setStaffId(selectedId);
+                  fetchWithParams({ staffId: selectedId });
+                }}
+                placeholder="All Mentors / Staff"
+                includeUnassigned={true}
+              />
+            </div>
 
             {/* Date Range Mode Selector */}
             <div style={{ gridColumn: '1 / -1', borderTop: '1px solid var(--border-subtle)', paddingTop: '1rem', marginTop: '0.5rem' }}>
