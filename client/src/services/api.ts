@@ -334,12 +334,33 @@ export const authApi = {
 };
 
 export const statsApi = {
-  getStats: async (bypassCache: boolean = false): Promise<any> => {
+  getStats: async (
+    filters?: {
+      department?: string;
+      batchId?: string;
+      sectionId?: string;
+      allocationBatchId?: string;
+      mentorId?: string;
+      currentYear?: string;
+    },
+    bypassCache: boolean = false
+  ): Promise<any> => {
+    const filterKey = JSON.stringify(filters || {});
+    const cacheKey = `stats_dashboard_${filterKey}`;
     if (bypassCache) {
       clearClientCache('stats_dashboard');
     }
-    return fetchWithDedupe('stats_dashboard', async () => {
-      const res = await api.get('/stats/dashboard');
+    return fetchWithDedupe(cacheKey, async () => {
+      const cleanParams: any = {};
+      if (filters) {
+        if (filters.department && filters.department !== 'ALL') cleanParams.department = filters.department;
+        if (filters.batchId && filters.batchId !== 'ALL') cleanParams.batchId = filters.batchId;
+        if (filters.sectionId && filters.sectionId !== 'ALL') cleanParams.sectionId = filters.sectionId;
+        if (filters.allocationBatchId && filters.allocationBatchId !== 'ALL') cleanParams.allocationBatchId = filters.allocationBatchId;
+        if (filters.mentorId) cleanParams.mentorId = filters.mentorId;
+        if (filters.currentYear && filters.currentYear !== 'ALL') cleanParams.currentYear = filters.currentYear;
+      }
+      const res = await api.get('/stats/dashboard', { params: cleanParams });
       return res.data;
     });
   },
@@ -647,14 +668,12 @@ export const studentApi = {
   },
 
   deleteStudent: async (studentId: string): Promise<void> => {
-    clearClientCache('students_');
-    clearClientCache('reports_');
+    clearClientCache();
     await api.delete(`/students/${studentId}`);
   },
 
   bulkDeleteStudents: async (studentIds: string[]): Promise<void> => {
-    clearClientCache('students_');
-    clearClientCache('reports_');
+    clearClientCache();
     await api.post('/students/bulk-delete', { studentIds });
   },
 

@@ -2,6 +2,7 @@ export type UserRole = 'ADMIN' | 'STAFF';
 
 export interface User {
   id: string;
+  userId?: string;
   name: string;
   email: string;
   role: UserRole;
@@ -24,6 +25,7 @@ export interface LeetCodeDashboardStats {
     leetcode_username: string;
     department?: string;
     batch_name?: string;
+    mentor_name?: string;
     total_solved: number;
     easy_solved: number;
     medium_solved: number;

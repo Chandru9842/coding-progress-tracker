@@ -644,40 +644,38 @@ export async function updateStudent(
 }
 
 export async function deleteStudent(studentId: string) {
-  serverCache.invalidate('students_');
-  serverCache.invalidate('student_');
-  serverCache.invalidate('stats_');
-  serverCache.invalidate('batch');
-  serverCache.invalidate('report_');
+  serverCache.invalidate();
 
   if (!process.env.DATABASE_URL) {
     inMemoryStore.students = inMemoryStore.students.filter((s) => s.id !== studentId);
     inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter((sa) => sa.student_id !== studentId);
+    inMemoryStore.snapshots = inMemoryStore.snapshots.filter((s) => s.student_id !== studentId);
     return { message: 'Student deleted successfully' };
   }
 
-  await prisma.student.delete({
-    where: { id: studentId },
-  });
+  await prisma.$transaction([
+    prisma.dailyCodingSnapshot.deleteMany({ where: { student_id: studentId } }),
+    prisma.staffStudentAssignment.deleteMany({ where: { student_id: studentId } }),
+    prisma.student.delete({ where: { id: studentId } }),
+  ]);
   return { message: 'Student deleted successfully' };
 }
 
 export async function bulkDeleteStudents(studentIds: string[]) {
-  serverCache.invalidate('students_');
-  serverCache.invalidate('student_');
-  serverCache.invalidate('stats_');
-  serverCache.invalidate('batch');
-  serverCache.invalidate('report_');
+  serverCache.invalidate();
 
   if (!process.env.DATABASE_URL) {
     inMemoryStore.students = inMemoryStore.students.filter((s) => !studentIds.includes(s.id));
     inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter((sa) => !studentIds.includes(sa.student_id));
+    inMemoryStore.snapshots = inMemoryStore.snapshots.filter((s) => !studentIds.includes(s.student_id));
     return { message: `${studentIds.length} students deleted successfully` };
   }
 
-  await prisma.student.deleteMany({
-    where: { id: { in: studentIds } },
-  });
+  await prisma.$transaction([
+    prisma.dailyCodingSnapshot.deleteMany({ where: { student_id: { in: studentIds } } }),
+    prisma.staffStudentAssignment.deleteMany({ where: { student_id: { in: studentIds } } }),
+    prisma.student.deleteMany({ where: { id: { in: studentIds } } }),
+  ]);
   return { message: `${studentIds.length} students deleted successfully` };
 }
 
