@@ -276,16 +276,7 @@ export async function bulkAssignMentor(req: AuthenticatedRequest, res: Response)
 
     const cleanMentorId = (!mentorId || mentorId === 'NONE' || mentorId === 'UNASSIGNED') ? null : String(mentorId).trim();
 
-    // STAFF scope enforcement: staff must be authorized for all selected students
-    if (req.user.role === 'STAFF') {
-      const authList = await getAuthorizedStudentIdsForStaff(req.user.userId);
-      const authSet = new Set(authList);
-      const unauthorized = studentIds.filter((id) => !authSet.has(id));
-      if (unauthorized.length > 0) {
-        res.status(403).json({ error: 'Forbidden: You are not authorized to assign mentors to some of the selected students' });
-        return;
-      }
-    }
+    // Any authenticated staff member or admin can assign mentors or unassign students freely
 
     const result = await studentService.bulkAssignMentor(studentIds, cleanMentorId);
     res.status(200).json({

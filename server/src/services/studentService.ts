@@ -622,6 +622,7 @@ export async function updateStudent(
       batch: { id: st.batch_id, batch_name: b?.batch_name || 'Batch' },
       section: { id: st.section_id, name: sec?.name || 'A' },
     };
+    serverCache.invalidate();
     return attachMentorInfo(base);
   }
 
@@ -638,6 +639,7 @@ export async function updateStudent(
       },
     },
   });
+  serverCache.invalidate();
   return attachMentorInfo(updated);
 }
 
@@ -713,6 +715,7 @@ export async function bulkAssignMentor(studentIds: string[], mentorId: string | 
       }
     });
 
+    serverCache.invalidate();
     return { success: true, count: studentIds.length, mentor_id: mentorId };
   }
 
@@ -731,6 +734,9 @@ export async function bulkAssignMentor(studentIds: string[], mentorId: string | 
       skipDuplicates: true,
     });
   }
+
+  // Invalidate all server caches so all users (Admin, Staff, Ajay) see fresh data immediately
+  serverCache.invalidate();
 
   return { success: true, count: studentIds.length, mentor_id: mentorId };
 }

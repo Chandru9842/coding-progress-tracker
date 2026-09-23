@@ -464,6 +464,29 @@ export const StudentsPage: React.FC = () => {
     }
   };
 
+  const handleInlineMentorChange = async (studentId: string, newMentorId: string) => {
+    const targetMentorId = !newMentorId || newMentorId === 'NONE' || newMentorId === 'UNASSIGNED' ? null : newMentorId;
+    const targetStaff = staffList.find((s) => s.id === targetMentorId);
+
+    // Instant optimistic update in local table
+    setStudents((prev) =>
+      prev.map((s) => (s.id === studentId ? {
+        ...s,
+        mentor_id: targetMentorId,
+        mentor: targetStaff ? { id: targetStaff.id, name: targetStaff.name, email: targetStaff.email } : null,
+      } : s))
+    );
+
+    try {
+      await studentApi.bulkAssignMentor([studentId], targetMentorId);
+      setSyncNotice(targetMentorId ? `Assigned mentor to ${targetStaff?.name || 'Staff'}` : 'Unassigned mentor');
+      await fetchStudents(false, true);
+    } catch (err: any) {
+      await fetchStudents(false, true);
+      alert(extractErrorMessage(err, 'Failed to update mentor'));
+    }
+  };
+
   const handleOpenDeleteStudent = (student: Student, e: React.MouseEvent) => {
     e.stopPropagation();
     setStudentToDelete(student);
@@ -2060,8 +2083,34 @@ export const StudentsPage: React.FC = () => {
                                 {student.allocation_batch?.name || student.sub_batch || '-'}
                               </span>
                             </td>
-                            <td style={{ padding: '1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                              {student.mentor?.name ? (
+                            <td style={{ padding: '0.65rem 1rem', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
+                              {canManage ? (
+                                <select
+                                  value={student.mentor_id || ''}
+                                  onChange={(e) => handleInlineMentorChange(student.id, e.target.value)}
+                                  className="form-input"
+                                  style={{
+                                    fontSize: '0.8rem',
+                                    padding: '0.2rem 0.45rem',
+                                    height: '28px',
+                                    borderRadius: '6px',
+                                    backgroundColor: student.mentor_id ? 'rgba(99, 102, 241, 0.12)' : 'rgba(255, 255, 255, 0.04)',
+                                    color: student.mentor_id ? '#818cf8' : 'var(--text-muted)',
+                                    border: student.mentor_id ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid var(--border-subtle)',
+                                    cursor: 'pointer',
+                                    maxWidth: '170px',
+                                    fontWeight: 500,
+                                  }}
+                                  title="Change mentor for this student"
+                                >
+                                  <option value="">⚠️ Unassigned</option>
+                                  {staffList.map((stf) => (
+                                    <option key={stf.id} value={stf.id}>
+                                      👤 {stf.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : student.mentor?.name ? (
                                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', backgroundColor: 'rgba(99, 102, 241, 0.12)', color: '#818cf8', padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600 }}>
                                   <UserCheck size={13} />
                                   <span>{student.mentor.name}</span>
