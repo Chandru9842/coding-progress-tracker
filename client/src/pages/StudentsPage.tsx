@@ -27,6 +27,8 @@ import {
   ExternalLink,
   Sliders,
   Settings2,
+  Clock,
+  Hourglass,
 } from 'lucide-react';
 import { SyncStatus } from '../components/SyncStatus.js';
 import {
@@ -40,6 +42,12 @@ import {
   ColumnMappingConfig,
 } from '../utils/studentImportUtils.js';
 import * as XLSX from 'xlsx';
+
+function formatTimer(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}s`;
+}
 
 function formatStudyYear(currentYear?: string | null, batchName?: string | null, startYear?: number | null): string {
   if (currentYear) {
@@ -159,6 +167,34 @@ export const StudentsPage: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(initialStudents.length === 0);
   const [syncingAll, setSyncingAll] = useState<boolean>(false);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  const [syncCompletedSummary, setSyncCompletedSummary] = useState<string | null>(null);
+  const [syncProgress, setSyncProgress] = useState<{
+    active: boolean;
+    total: number;
+    current: number;
+    successCount: number;
+    errorCount: number;
+    currentStudentName: string;
+    elapsedSeconds: number;
+    estimatedRemainingSeconds: number;
+    percentage: number;
+  }>({
+    active: false,
+    total: 0,
+    current: 0,
+    successCount: 0,
+    errorCount: 0,
+    currentStudentName: '',
+    elapsedSeconds: 0,
+    estimatedRemainingSeconds: 0,
+    percentage: 0,
+  });
+
+  const pendingSyncCount = React.useMemo(() => {
+    return students.filter(
+      (s) => s.leetcode_username && !s.latest_snapshot && (!s.snapshots || s.snapshots.length === 0)
+    ).length;
+  }, [students]);
   const [search, setSearch] = useState<string>('');
   const [filterBatchId, setFilterBatchId] = useState<string>('');
   const [filterSectionId, setFilterSectionId] = useState<string>('');
@@ -426,61 +462,201 @@ export const StudentsPage: React.FC = () => {
   const handleLiveSyncStudent = async (student: Student, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!student.leetcode_username) {
-      alert(`Student ${student.name} does not have a LeetCode username configured.`);
+      setError(`Student ${student.name} does not have a LeetCode username configured.`);
       return;
     }
     try {
       setSyncingStudentId(student.id);
       setSyncNotice(null);
-      const res = await syncApi.syncStudent(student.id);
-      const statsObj = res.data?.data?.stats || res.data?.stats || res.data?.data;
-      const solved = statsObj?.totalSolved ?? statsObj?.total_solved ?? res.data?.totalSolved;
-      setSyncNotice(`⚡ Live LeetCode sync completed for ${student.name} (@${student.leetcode_username}): ${solved !== undefined ? `${solved} problems solved` : 'data updated'}!`);
+      setError(null);
+      const res = await syncReportStudents({ studentIds: [student.id] });
+      const match = res.results?.find((r: any) => r.studentId === student.id && r.success);
+      const stats = match?.stats;
+      const solved = stats?.totalSolved;
+      if (stats) {
+        setStudents((prev) =>
+          prev.map((s) => {
+            if (s.id === student.id) {
+              const snap = {
+                id: `live_${s.id}_${Date.now()}`,
+                student_id: s.id,
+                snapshot_date: new Date().toISOString(),
+                total_solved: stats.totalSolved ?? 0,
+                easy_solved: stats.easySolved ?? 0,
+                medium_solved: stats.mediumSolved ?? 0,
+                hard_solved: stats.hardSolved ?? 0,
+                ranking: stats.ranking ?? 0,
+              };
+              return {
+                ...s,
+                snapshots: [snap as any],
+                latest_snapshot: snap as any,
+              };
+            }
+            return s;
+          })
+        );
+      }
+      setSyncCompletedSummary(`⚡ Live LeetCode sync completed for ${student.name} (@${student.leetcode_username.replace(/^@/, '')}): ${solved !== undefined ? `${solved} problems solved` : 'data updated'}!`);
       clearClientCache('students_');
       await fetchStudents(false, true);
+      window.dispatchEvent(new CustomEvent('student-synced'));
     } catch (err: any) {
-      alert(extractErrorMessage(err, `Failed to live sync LeetCode stats for @${student.leetcode_username}`));
+      setError(extractErrorMessage(err, `Failed to live sync LeetCode stats for @${student.leetcode_username}`));
     } finally {
       setSyncingStudentId(null);
     }
   };
 
-  const handleSyncBatchOrAll = async () => {
+  const handleSyncBatchOrAll = async (pendingOnly: boolean = false) => {
+    let targetIds: string[] = [];
+    if (selectedStudentIds.size > 0) {
+      targetIds = Array.from(selectedStudentIds);
+    } else if (pendingOnly) {
+      targetIds = students
+        .filter((s) => s.leetcode_username && !s.latest_snapshot && (!s.snapshots || s.snapshots.length === 0))
+        .map((s) => s.id);
+    } else {
+      targetIds = students.filter((s) => s.leetcode_username).map((s) => s.id);
+    }
+
+    if (targetIds.length === 0) {
+      setSyncCompletedSummary(pendingOnly ? 'No pending students found to sync.' : 'No students with LeetCode usernames found to sync.');
+      return;
+    }
+
+    const totalToSync = targetIds.length;
+    const batchSize = 3; // Safe chunks of 3 (each chunk ~1.2s - 1.8s, completely avoiding Vercel 10s ceiling)
+    const startTime = Date.now();
+
+    setSyncingAll(true);
+    setSyncCompletedSummary(null);
+    setSyncNotice(null);
+    setError(null);
+
+    // Initialize interactive live progress state
+    setSyncProgress({
+      active: true,
+      total: totalToSync,
+      current: 0,
+      successCount: 0,
+      errorCount: 0,
+      currentStudentName: '',
+      elapsedSeconds: 0,
+      estimatedRemainingSeconds: Math.ceil(totalToSync * 0.6),
+      percentage: 0,
+    });
+
+    // Start 1-second live countdown / elapsed timer interval
+    const timerInterval = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      setSyncProgress((prev) => {
+        if (!prev.active) return prev;
+        const current = prev.current;
+        const remaining = current > 0
+          ? Math.max(0, Math.round(((totalToSync - current) / current) * elapsed))
+          : Math.max(0, Math.ceil(totalToSync * 0.6) - elapsed);
+        return {
+          ...prev,
+          elapsedSeconds: elapsed,
+          estimatedRemainingSeconds: remaining,
+        };
+      });
+    }, 1000);
+
+    let totalSuccess = 0;
+    let totalErrors = 0;
+
     try {
-      setSyncingAll(true);
-      setSyncNotice(null);
-      let targetIds: string[] = [];
-      if (selectedStudentIds.size > 0) {
-        targetIds = Array.from(selectedStudentIds);
-      } else {
-        targetIds = students.filter((s) => s.leetcode_username).map((s) => s.id);
+      for (let i = 0; i < totalToSync; i += batchSize) {
+        const chunk = targetIds.slice(i, i + batchSize);
+        const currentProcessed = Math.min(i + chunk.length, totalToSync);
+        const percent = Math.round((currentProcessed / totalToSync) * 100);
+
+        // Identify student usernames in current chunk
+        const chunkStudentNames = students
+          .filter((s) => chunk.includes(s.id))
+          .map((s) => `@${(s.leetcode_username || '').replace(/^@/, '')}`)
+          .join(', ');
+
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const remaining = i > 0
+          ? Math.max(0, Math.round(((totalToSync - i) / i) * elapsed))
+          : Math.max(0, Math.ceil((totalToSync - currentProcessed) * 0.6));
+
+        setSyncProgress((prev) => ({
+          ...prev,
+          current: i,
+          percentage: percent,
+          currentStudentName: chunkStudentNames,
+          elapsedSeconds: elapsed,
+          estimatedRemainingSeconds: remaining,
+        }));
+
+        try {
+          const res = await syncReportStudents({ studentIds: chunk });
+          const successfulInChunk = (res.successful ?? chunk.length);
+          totalSuccess += successfulInChunk;
+
+          // LIVE IN-PLACE STATE MUTATION:
+          // Immediately update local students array so table rows turn from 'Pending sync' to green counts in real time!
+          if (Array.isArray(res.results)) {
+            setStudents((prevList) =>
+              prevList.map((st) => {
+                const match = res.results.find((r: any) => r.studentId === st.id && r.success && r.stats);
+                if (match) {
+                  const newSnap = {
+                    id: `live_${st.id}_${Date.now()}`,
+                    student_id: st.id,
+                    snapshot_date: new Date().toISOString(),
+                    total_solved: match.stats.totalSolved ?? 0,
+                    easy_solved: match.stats.easySolved ?? 0,
+                    medium_solved: match.stats.mediumSolved ?? 0,
+                    hard_solved: match.stats.hardSolved ?? 0,
+                    ranking: match.stats.ranking ?? 0,
+                  };
+                  return {
+                    ...st,
+                    snapshots: [newSnap as any],
+                    latest_snapshot: newSnap as any,
+                  };
+                }
+                return st;
+              })
+            );
+          }
+        } catch (chunkErr) {
+          totalErrors += chunk.length;
+          console.warn(`[Sync Chunk Warning] Batch ${Math.floor(i / batchSize) + 1}:`, chunkErr);
+        }
+
+        // Update progress count after chunk
+        setSyncProgress((prev) => ({
+          ...prev,
+          current: currentProcessed,
+          percentage: percent,
+          successCount: totalSuccess,
+          errorCount: totalErrors,
+        }));
       }
 
-      if (targetIds.length > 0) {
-        const batchSize = 4;
-        let totalSuccess = 0;
-        for (let i = 0; i < targetIds.length; i += batchSize) {
-          const chunk = targetIds.slice(i, i + batchSize);
-          const currentProcessed = Math.min(i + chunk.length, targetIds.length);
-          const percent = Math.round((currentProcessed / targetIds.length) * 100);
-          setSyncNotice(`⚡ Live syncing LeetCode stats: ${currentProcessed}/${targetIds.length} students (${percent}%)... Please wait.`);
-          try {
-            const res = await syncReportStudents({ studentIds: chunk });
-            totalSuccess += (res.successful ?? chunk.length);
-          } catch (chunkErr) {
-            console.warn(`[Sync Chunk Warning] Batch ${Math.floor(i / batchSize) + 1} note:`, chunkErr);
-          }
-        }
-        setSyncNotice(`⚡ Live LeetCode sync completed! ${totalSuccess}/${targetIds.length} student records synchronized.`);
-      } else {
-        setSyncNotice('No students with LeetCode usernames found to sync.');
-      }
+      const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
+      setSyncCompletedSummary(
+        `🎉 Live Sync Complete! ${totalSuccess} / ${totalToSync} students synchronized in ${totalElapsed}s. All student solve counts updated!`
+      );
+      clearClientCache('students_');
       await fetchStudents(false, true);
       window.dispatchEvent(new CustomEvent('student-synced'));
     } catch (err: any) {
-      alert(extractErrorMessage(err, 'Failed to sync LeetCode data'));
+      setError(extractErrorMessage(err, 'Failed to complete student synchronization'));
     } finally {
+      clearInterval(timerInterval);
       setSyncingAll(false);
+      setSyncProgress((prev) => ({
+        ...prev,
+        active: false,
+        percentage: 100,
+      }));
     }
   };
 
@@ -1112,9 +1288,31 @@ export const StudentsPage: React.FC = () => {
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
             <SyncStatus variant="badge" align="left" />
 
+            {pendingSyncCount > 0 && (
+              <button
+                className="btn-secondary"
+                onClick={() => handleSyncBatchOrAll(true)}
+                disabled={syncingAll}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  borderColor: 'rgba(245, 158, 11, 0.45)',
+                  backgroundColor: 'rgba(245, 158, 11, 0.12)',
+                  color: '#fbbf24',
+                  fontWeight: 700,
+                  boxShadow: '0 0 12px rgba(245, 158, 11, 0.2)',
+                }}
+                title={`Fast sync only the ${pendingSyncCount} students currently showing 'Pending sync'`}
+              >
+                <RefreshCw size={15} className={syncingAll ? 'animate-spin' : ''} />
+                <span>⚡ Sync Pending ({pendingSyncCount})</span>
+              </button>
+            )}
+
             <button
               className="btn-secondary"
-              onClick={handleSyncBatchOrAll}
+              onClick={() => handleSyncBatchOrAll(false)}
               disabled={syncingAll}
               style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
             >
@@ -1128,7 +1326,7 @@ export const StudentsPage: React.FC = () => {
                   ? `⚡ Live Sync: "${search.trim()}"`
                   : filterBatchId
                   ? 'Sync Active Batch'
-                  : 'Sync All Students'}
+                  : `Sync All Students (${students.filter((s) => s.leetcode_username).length})`}
               </span>
             </button>
 
@@ -1163,6 +1361,179 @@ export const StudentsPage: React.FC = () => {
             )}
           </div>
         </div>
+
+        {/* Interactive Live Sync Progress Card with Timer & Real-Time Progress */}
+        {syncProgress.active && (
+          <div
+            className="glass-panel"
+            style={{
+              padding: '1.25rem 1.5rem',
+              background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.9))',
+              border: '1px solid rgba(59, 130, 246, 0.4)',
+              borderRadius: '12px',
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.35), 0 0 15px rgba(59, 130, 246, 0.15)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.85rem',
+              animation: 'fadeIn 0.25s ease-in-out',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div
+                  style={{
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '8px',
+                    backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                    color: '#60a5fa',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <RefreshCw size={20} className="animate-spin" />
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '0.98rem', color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span>⚡ Live LeetCode Sync in Progress</span>
+                    <span
+                      style={{
+                        fontSize: '0.72rem',
+                        padding: '0.15rem 0.5rem',
+                        borderRadius: '999px',
+                        backgroundColor: 'rgba(16, 185, 129, 0.2)',
+                        color: '#34d399',
+                        fontWeight: 700,
+                        border: '1px solid rgba(16, 185, 129, 0.35)',
+                      }}
+                    >
+                      ● Live Active
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                    {syncProgress.currentStudentName ? (
+                      <span>Fetching profiles for: <strong style={{ color: '#93c5fd' }}>{syncProgress.currentStudentName}</strong></span>
+                    ) : (
+                      'Connecting to LeetCode API...'
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Timers & Counters */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', fontSize: '0.85rem' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                    padding: '0.35rem 0.75rem',
+                    borderRadius: '6px',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                  }}
+                  title="Elapsed execution time"
+                >
+                  <Clock size={14} style={{ color: '#38bdf8' }} />
+                  <span style={{ color: 'var(--text-muted)' }}>Elapsed:</span>
+                  <span style={{ fontWeight: 700, color: '#f8fafc', fontFamily: 'monospace' }}>
+                    {formatTimer(syncProgress.elapsedSeconds)}
+                  </span>
+                </div>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                    padding: '0.35rem 0.75rem',
+                    borderRadius: '6px',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                  }}
+                  title="Estimated time remaining"
+                >
+                  <Hourglass size={14} style={{ color: '#fbbf24' }} />
+                  <span style={{ color: 'var(--text-muted)' }}>Est. Remaining:</span>
+                  <span style={{ fontWeight: 700, color: '#fbbf24', fontFamily: 'monospace' }}>
+                    ~{formatTimer(syncProgress.estimatedRemainingSeconds)}
+                  </span>
+                </div>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                    padding: '0.35rem 0.75rem',
+                    borderRadius: '6px',
+                    border: '1px solid rgba(16, 185, 129, 0.3)',
+                    color: '#34d399',
+                    fontWeight: 700,
+                  }}
+                >
+                  <span>{syncProgress.current} / {syncProgress.total}</span>
+                  <span style={{ fontSize: '0.78rem', opacity: 0.85 }}>({syncProgress.percentage}%)</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Smooth Shimmer Animated Progress Bar */}
+            <div
+              style={{
+                width: '100%',
+                height: '8px',
+                backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                borderRadius: '999px',
+                overflow: 'hidden',
+                position: 'relative',
+              }}
+            >
+              <div
+                style={{
+                  height: '100%',
+                  width: `${syncProgress.percentage}%`,
+                  background: 'linear-gradient(90deg, #38bdf8, #3b82f6, #10b981)',
+                  borderRadius: '999px',
+                  transition: 'width 0.4s ease',
+                  boxShadow: '0 0 12px rgba(56, 189, 248, 0.6)',
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Completion Banner */}
+        {syncCompletedSummary && (
+          <div
+            style={{
+              padding: '0.85rem 1.25rem',
+              backgroundColor: 'rgba(16, 185, 129, 0.15)',
+              border: '1px solid rgba(16, 185, 129, 0.35)',
+              borderRadius: '10px',
+              color: '#34d399',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              fontSize: '0.9rem',
+              boxShadow: '0 4px 16px rgba(16, 185, 129, 0.1)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+              <CheckCircle2 size={18} />
+              <span style={{ fontWeight: 600 }}>{syncCompletedSummary}</span>
+            </div>
+            <button
+              onClick={() => setSyncCompletedSummary(null)}
+              style={{ background: 'none', border: 'none', color: '#34d399', cursor: 'pointer', padding: '0.2rem' }}
+              title="Dismiss"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
 
         {syncNotice && (
           <div style={{

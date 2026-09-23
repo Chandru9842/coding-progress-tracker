@@ -577,16 +577,22 @@ export default function ReportsPage() {
 
     try {
       if (candidateIds.length > 0) {
-        // Chunk into safe batches of 4 students (each chunk takes 2-3s, completely avoiding Vercel 10s timeout)
-        const batchSize = 4;
+        // Chunk into safe batches of 3 students (each chunk takes 1.2-1.8s, completely avoiding Vercel 10s timeout)
+        const batchSize = 3;
         let totalSuccess = 0;
         const totalToSync = candidateIds.length;
+        const startTime = Date.now();
 
         for (let i = 0; i < totalToSync; i += batchSize) {
           const chunk = candidateIds.slice(i, i + batchSize);
           const currentProcessed = Math.min(i + chunk.length, totalToSync);
           const percent = Math.round((currentProcessed / totalToSync) * 100);
-          setSuccessMsg(`⚡ Live syncing LeetCode stats: ${currentProcessed} / ${totalToSync} students (${percent}%)... Please wait.`);
+          const elapsed = Math.floor((Date.now() - startTime) / 1000);
+          const estRemaining = i > 0
+            ? Math.max(0, Math.round(((totalToSync - i) / i) * elapsed))
+            : Math.max(0, Math.ceil((totalToSync - currentProcessed) * 0.6));
+
+          setSuccessMsg(`⚡ Live syncing LeetCode stats: ${currentProcessed} / ${totalToSync} students (${percent}%) • Elapsed: ${elapsed}s • Remaining: ~${estRemaining}s... Please wait.`);
 
           try {
             const chunkRes = await syncReportStudents({
@@ -598,7 +604,8 @@ export default function ReportsPage() {
           }
         }
 
-        setSuccessMsg(`✅ Live LeetCode sync completed! ${totalSuccess} / ${totalToSync} student records synchronized.`);
+        const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
+        setSuccessMsg(`✅ Live LeetCode sync completed! ${totalSuccess} / ${totalToSync} student records synchronized in ${totalElapsed}s.`);
       } else {
         // Fallback for when no students are loaded in state yet
         const res = await syncReportStudents({
