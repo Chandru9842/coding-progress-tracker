@@ -260,6 +260,7 @@ export const StudentsPage: React.FC = () => {
   const [importSearch, setImportSearch] = useState<string>('');
   const [quickAssignStaffId, setQuickAssignStaffId] = useState<string>('');
   const [isImporting, setIsImporting] = useState<boolean>(false);
+  const [importProgressText, setImportProgressText] = useState<string>('');
   const [importResult, setImportResult] = useState<{
     success: boolean;
     message: string;
@@ -1370,79 +1371,115 @@ export const StudentsPage: React.FC = () => {
 
     try {
       setIsImporting(true);
+      setImportProgressText('');
       setImportResult(null);
 
       const targetBatch = batches.find((b) => b.id === importBatchId);
 
-      const payload = {
-        students: targetRowsToImport.map((r) => {
-          let rowMentorId: string | undefined = undefined;
-          if (r.mentorStaffId && r.mentorStaffId !== 'AUTO') {
-            rowMentorId = r.mentorStaffId;
-          } else if (mentorMappings[r.cleanMentor] && mentorMappings[r.cleanMentor] !== 'AUTO') {
-            rowMentorId = mentorMappings[r.cleanMentor];
-          } else if (r.cleanMentor === 'Unassigned' && importMentorId && importMentorId !== 'AUTO') {
-            rowMentorId = importMentorId;
-          }
+      const allStudentPayloads = targetRowsToImport.map((r) => {
+        let rowMentorId: string | undefined = undefined;
+        if (r.mentorStaffId && r.mentorStaffId !== 'AUTO') {
+          rowMentorId = r.mentorStaffId;
+        } else if (mentorMappings[r.cleanMentor] && mentorMappings[r.cleanMentor] !== 'AUTO') {
+          rowMentorId = mentorMappings[r.cleanMentor];
+        } else if (r.cleanMentor === 'Unassigned' && importMentorId && importMentorId !== 'AUTO') {
+          rowMentorId = importMentorId;
+        }
 
-          // Smart Section resolution: check if row itself specified a section, otherwise use batch default
-          let resolvedSectionId = importSectionId;
-          if (r.section && targetBatch?.sections && targetBatch.sections.length > 0) {
-            const cleanSec = r.section.toUpperCase().replace(/^SECTION\s*/i, '').trim();
-            const matchedSec = targetBatch.sections.find(
-              (sec) =>
-                sec.name.toUpperCase().trim() === cleanSec ||
-                `SECTION ${sec.name}`.toUpperCase() === r.section?.toUpperCase().trim() ||
-                sec.name.toUpperCase().trim().includes(cleanSec) ||
-                cleanSec.includes(sec.name.toUpperCase().trim())
-            );
-            if (matchedSec) {
-              resolvedSectionId = matchedSec.id;
-            }
+        // Smart Section resolution: check if row itself specified a section, otherwise use batch default
+        let resolvedSectionId = importSectionId;
+        if (r.section && targetBatch?.sections && targetBatch.sections.length > 0) {
+          const cleanSec = r.section.toUpperCase().replace(/^SECTION\s*/i, '').trim();
+          const matchedSec = targetBatch.sections.find(
+            (sec) =>
+              sec.name.toUpperCase().trim() === cleanSec ||
+              `SECTION ${sec.name}`.toUpperCase() === r.section?.toUpperCase().trim() ||
+              sec.name.toUpperCase().trim().includes(cleanSec) ||
+              cleanSec.includes(sec.name.toUpperCase().trim())
+          );
+          if (matchedSec) {
+            resolvedSectionId = matchedSec.id;
           }
-          if ((!resolvedSectionId || resolvedSectionId === 'ALL') && targetBatch?.sections && targetBatch.sections.length > 0) {
-            resolvedSectionId = targetBatch.sections[0].id;
-          }
+        }
+        if ((!resolvedSectionId || resolvedSectionId === 'ALL') && targetBatch?.sections && targetBatch.sections.length > 0) {
+          resolvedSectionId = targetBatch.sections[0].id;
+        }
 
-          return {
-            register_number: r.cleanRegisterNumber,
-            name: r.name,
-            department: r.department || 'CSE',
-            batch_id: importBatchId,
-            section_id: resolvedSectionId,
-            section_name: r.section || undefined,
-            allocation_batch_id: importAllocBatchId || undefined,
-            sub_batch: importSubBatchCustom || undefined,
-            current_year: r.currentYear || importCurrentYear || undefined,
-            leetcode_username: r.cleanLeetCode,
-            mentor_name: r.cleanMentor !== 'Unassigned' ? r.cleanMentor : undefined,
-            mentor_id: rowMentorId,
-          };
-        }),
-        targetScope: {
+        return {
+          register_number: r.cleanRegisterNumber,
+          name: r.name,
+          department: r.department || 'CSE',
           batch_id: importBatchId,
-          section_id: importSectionId,
+          section_id: resolvedSectionId,
+          section_name: r.section || undefined,
           allocation_batch_id: importAllocBatchId || undefined,
           sub_batch: importSubBatchCustom || undefined,
-          current_year: importCurrentYear || undefined,
-          mentor_id: (importMentorId && importMentorId !== 'AUTO' && importMentorId !== 'NONE') ? importMentorId : undefined,
-        },
+          current_year: r.currentYear || importCurrentYear || undefined,
+          leetcode_username: r.cleanLeetCode,
+          mentor_name: r.cleanMentor !== 'Unassigned' ? r.cleanMentor : undefined,
+          mentor_id: rowMentorId,
+        };
+      });
+
+      const targetScope = {
+        batch_id: importBatchId,
+        section_id: importSectionId,
+        allocation_batch_id: importAllocBatchId || undefined,
+        sub_batch: importSubBatchCustom || undefined,
+        current_year: importCurrentYear || undefined,
+        mentor_id: (importMentorId && importMentorId !== 'AUTO' && importMentorId !== 'NONE') ? importMentorId : undefined,
       };
 
-      const res = await studentApi.bulkImportStudents(payload);
+      // Chunk in safe batches of 25 so Vercel serverless execution limits (10-15s) are never hit
+      const CHUNK_SIZE = 25;
+      const chunks: typeof allStudentPayloads[] = [];
+      for (let i = 0; i < allStudentPayloads.length; i += CHUNK_SIZE) {
+        chunks.push(allStudentPayloads.slice(i, i + CHUNK_SIZE));
+      }
+
+      let totalCreated = 0;
+      let totalUpdated = 0;
+      let totalFailed = 0;
+      const allErrors: Array<{ register_number: string; error: string }> = [];
+      const allUnsyncedIds: string[] = [];
+
+      for (let c = 0; c < chunks.length; c++) {
+        if (chunks.length > 1) {
+          const startNum = c * CHUNK_SIZE + 1;
+          const endNum = Math.min((c + 1) * CHUNK_SIZE, allStudentPayloads.length);
+          setImportProgressText(`Importing (${startNum}-${endNum} of ${allStudentPayloads.length})...`);
+        } else {
+          setImportProgressText(`Importing ${allStudentPayloads.length} student(s)...`);
+        }
+
+        const res = await studentApi.bulkImportStudents({
+          students: chunks[c],
+          targetScope,
+        });
+
+        totalCreated += res.createdCount || 0;
+        totalUpdated += res.updatedCount || 0;
+        totalFailed += res.failedCount || 0;
+        if (Array.isArray(res.errors)) {
+          allErrors.push(...res.errors);
+        }
+        if (Array.isArray(res.unsyncedStudentIds)) {
+          allUnsyncedIds.push(...res.unsyncedStudentIds);
+        }
+      }
 
       setImportResult({
-        success: true,
-        message: res.message,
-        createdCount: res.createdCount,
-        updatedCount: res.updatedCount,
-        failedCount: res.failedCount,
-        errors: res.errors,
+        success: totalFailed === 0,
+        message: `Successfully processed ${allStudentPayloads.length} student(s): ${totalCreated} created, ${totalUpdated} updated${totalFailed > 0 ? `, ${totalFailed} failed` : ''}.`,
+        createdCount: totalCreated,
+        updatedCount: totalUpdated,
+        failedCount: totalFailed,
+        errors: allErrors,
       });
 
       // Enqueue any unsynced imported students into background auto-sync immediately
-      if (Array.isArray(res?.unsyncedStudentIds) && res.unsyncedStudentIds.length > 0) {
-        autoSyncService.enqueueStudentIds(res.unsyncedStudentIds);
+      if (allUnsyncedIds.length > 0) {
+        autoSyncService.enqueueStudentIds(allUnsyncedIds);
       }
 
       // Refresh student roster
@@ -1450,10 +1487,11 @@ export const StudentsPage: React.FC = () => {
     } catch (err: any) {
       setImportResult({
         success: false,
-        message: err.response?.data?.error || err?.message || 'Failed to import students from spreadsheet.',
+        message: extractErrorMessage(err, 'Failed to import students from spreadsheet.'),
       });
     } finally {
       setIsImporting(false);
+      setImportProgressText('');
     }
   };
 
@@ -4117,10 +4155,19 @@ export const StudentsPage: React.FC = () => {
                     }}
                     title="Import ONLY students for the currently selected mentor filter"
                   >
-                    <Upload size={15} />
-                    <span>
-                      Import Filtered ({getFilteredImportRows().filter((r) => r.isValid).length})
-                    </span>
+                    {isImporting ? (
+                      <>
+                        <Loader2 size={15} className="animate-spin" />
+                        <span>{importProgressText || 'Importing Filtered...'}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Upload size={15} />
+                        <span>
+                          Import Filtered ({getFilteredImportRows().filter((r) => r.isValid).length})
+                        </span>
+                      </>
+                    )}
                   </button>
                 )}
 
@@ -4135,7 +4182,7 @@ export const StudentsPage: React.FC = () => {
                   {isImporting ? (
                     <>
                       <Loader2 size={16} className="animate-spin" />
-                      <span>Importing...</span>
+                      <span>{importProgressText || 'Importing...'}</span>
                     </>
                   ) : (
                     <>

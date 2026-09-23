@@ -196,17 +196,101 @@ export async function bulkImportStudents(
     }
   }
 
-  if (defaultBatchId && !defaultSectionId) {
-    if (!process.env.DATABASE_URL) {
+  // Pre-fetch all sections & existing allocation batches for involved batches in one parallel roundtrip
+  const batchIdsToFetch = Array.from(
+    new Set([defaultBatchId, ...students.map((s) => s.batch_id).filter(Boolean)])
+  ) as string[];
+
+  let allSections: Array<{ id: string; batch_id: string; name: string }> = [];
+  let allAllocBatches: Array<{ id: string; section_id: string; name: string }> = [];
+  const existingStudentMap = new Map<string, { id: string; register_number: string; allocation_batch_id: string | null; sub_batch: string | null; current_year: string | null }>();
+
+  if (!process.env.DATABASE_URL) {
+    // In-memory mode (tests / fallback)
+    allSections = inMemoryStore.sections;
+    allAllocBatches = inMemoryStore.allocationBatches;
+    if (defaultBatchId && !defaultSectionId) {
       const s = inMemoryStore.sections.find((sec) => sec.batch_id === defaultBatchId);
       if (s) defaultSectionId = s.id;
-    } else {
-      const s = await prisma.section.findFirst({ where: { batch_id: defaultBatchId } });
+    }
+  } else {
+    // PostgreSQL mode: Pre-fetch sections, existing allocation batches, and existing students in parallel
+    const allRegNos = students
+      .map((s) => (s.register_number ? s.register_number.trim().toUpperCase() : ''))
+      .filter(Boolean);
+
+    const [dbSections, dbExistingStudents] = await Promise.all([
+      prisma.section.findMany({
+        where: batchIdsToFetch.length > 0 ? { batch_id: { in: batchIdsToFetch } } : undefined,
+      }),
+      allRegNos.length > 0
+        ? prisma.student.findMany({
+            where: { register_number: { in: allRegNos, mode: 'insensitive' } },
+            select: {
+              id: true,
+              register_number: true,
+              allocation_batch_id: true,
+              sub_batch: true,
+              current_year: true,
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    allSections = dbSections;
+    for (const st of dbExistingStudents) {
+      existingStudentMap.set(st.register_number.toUpperCase(), st);
+    }
+
+    if (defaultBatchId && !defaultSectionId) {
+      const s = allSections.find((sec) => sec.batch_id === defaultBatchId);
       if (s) defaultSectionId = s.id;
+    }
+
+    const sectionIds = allSections.map((s) => s.id);
+    if (sectionIds.length > 0) {
+      allAllocBatches = await prisma.allocationBatch.findMany({
+        where: { section_id: { in: sectionIds } },
+      });
     }
   }
 
-  // 3. Process each student row
+  const cleanSecStr = (s: string) =>
+    s.toUpperCase().replace(/^(?:SECTION|SEC|CSE|IT|ECE|EEE|MECH|AIDS|AIML)[\s-_]*/i, '').replace(/[\s-_]/g, '');
+
+  const resolveSection = (batchId: string, rowSecName?: string, explicitSecId?: string): string => {
+    if (explicitSecId && explicitSecId !== 'ALL') return explicitSecId;
+    if (rowSecName && batchId) {
+      const targetClean = cleanSecStr(String(rowSecName));
+      const matched = allSections.find(
+        (s) => s.batch_id === batchId &&
+          (s.name.toUpperCase() === String(rowSecName).trim().toUpperCase() ||
+           cleanSecStr(s.name) === targetClean)
+      );
+      if (matched) return matched.id;
+    }
+    if (defaultSectionId && defaultSectionId !== 'ALL') return defaultSectionId;
+    const firstSec = allSections.find((s) => s.batch_id === batchId);
+    return firstSec?.id || '';
+  };
+
+  interface PreparedRow {
+    rawRegNo: string;
+    rawName: string;
+    rawLeetCode: string;
+    effectiveBatchId: string;
+    effectiveSectionId: string;
+    effectiveAllocBatchId: string | null;
+    effectiveSubBatch: string | null;
+    effectiveDept: string;
+    effectiveCurrentYear?: string;
+    resolvedMentorId: string | null;
+    isExplicitlyUnassigned: boolean;
+  }
+
+  const preparedRows: PreparedRow[] = [];
+
+  // 3. Resolve metadata and ensure any new allocation batches exist
   for (const row of students) {
     const rawRegNo = row.register_number ? row.register_number.trim().toUpperCase() : '';
     const rawName = row.name ? row.name.trim() : '';
@@ -231,111 +315,8 @@ export async function bulkImportStudents(
     }
 
     const effectiveBatchId = row.batch_id || defaultBatchId;
-    let effectiveSectionId = (row.section_id && row.section_id !== 'ALL') ? row.section_id : defaultSectionId;
-
-    // Smart resolution if effectiveSectionId is 'ALL' or missing
-    if (!effectiveSectionId || effectiveSectionId === 'ALL') {
-      const rowSecName = (row as any).section_name || (row as any).section;
-      if (rowSecName && effectiveBatchId) {
-        const cleanSecStr = (s: string) =>
-          s.toUpperCase().replace(/^(?:SECTION|SEC|CSE|IT|ECE|EEE|MECH|AIDS|AIML)[\s-_]*/i, '').replace(/[\s-_]/g, '');
-        const targetClean = cleanSecStr(String(rowSecName));
-
-        if (!process.env.DATABASE_URL) {
-          const matched = inMemoryStore.sections.find(
-            (s) => s.batch_id === effectiveBatchId &&
-              (s.name.toUpperCase() === String(rowSecName).trim().toUpperCase() ||
-               cleanSecStr(s.name) === targetClean)
-          );
-          if (matched) effectiveSectionId = matched.id;
-        } else {
-          const sections = await prisma.section.findMany({ where: { batch_id: effectiveBatchId } });
-          const matched = sections.find(
-            (s) => s.name.toUpperCase() === String(rowSecName).trim().toUpperCase() ||
-              cleanSecStr(s.name) === targetClean
-          );
-          if (matched) effectiveSectionId = matched.id;
-        }
-      }
-
-      // If still ALL or missing, fall back to first section of batch
-      if ((!effectiveSectionId || effectiveSectionId === 'ALL') && effectiveBatchId) {
-        if (!process.env.DATABASE_URL) {
-          const firstSec = inMemoryStore.sections.find((s) => s.batch_id === effectiveBatchId);
-          if (firstSec) effectiveSectionId = firstSec.id;
-        } else {
-          const firstSec = await prisma.section.findFirst({ where: { batch_id: effectiveBatchId } });
-          if (firstSec) effectiveSectionId = firstSec.id;
-        }
-      }
-    }
-
-    const effectiveDept = row.department || defaultDept;
-    let effectiveAllocBatchId = row.allocation_batch_id || defaultAllocBatchId || null;
-    let rawSubBatch = row.sub_batch || (row as any).allocation_batch || (row as any).batch_no || defaultSubBatch || null;
-
-    // Normalize sub_batch (e.g. "batc5" -> "Batch-5", "batch-1" -> "Batch-1")
-    let effectiveSubBatch: string | null = null;
-    if (rawSubBatch) {
-      const s = String(rawSubBatch).trim();
-      const m = s.match(/^(?:batch|batc|b)[\s-_]*(\d+)$/i);
-      effectiveSubBatch = m ? `Batch-${m[1]}` : s;
-    }
-
-    // Auto-resolve or create Allocation Batch in target section
-    if (effectiveSectionId && effectiveSubBatch && !effectiveAllocBatchId) {
-      if (!process.env.DATABASE_URL) {
-        const norm = (val: string) => val.toLowerCase().replace(/[\s-_]/g, '').replace(/^batc(?=\d)/, 'batch');
-        const targetNorm = norm(effectiveSubBatch);
-        const existingAb = inMemoryStore.allocationBatches.find(
-          (ab) => ab.section_id === effectiveSectionId &&
-            (ab.name.toLowerCase() === effectiveSubBatch!.toLowerCase() || norm(ab.name) === targetNorm)
-        );
-        if (existingAb) {
-          effectiveAllocBatchId = existingAb.id;
-          effectiveSubBatch = existingAb.name;
-        } else {
-          const newAb = {
-            id: `ab_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-            section_id: effectiveSectionId,
-            name: effectiveSubBatch,
-            created_at: new Date(),
-          };
-          inMemoryStore.allocationBatches.push(newAb);
-          effectiveAllocBatchId = newAb.id;
-        }
-      } else {
-        let existingAb = await prisma.allocationBatch.findFirst({
-          where: {
-            section_id: effectiveSectionId,
-            name: { equals: effectiveSubBatch, mode: 'insensitive' },
-          },
-        });
-        if (!existingAb) {
-          try {
-            existingAb = await prisma.allocationBatch.create({
-              data: {
-                section_id: effectiveSectionId,
-                name: effectiveSubBatch,
-              },
-            });
-          } catch {
-            existingAb = await prisma.allocationBatch.findFirst({
-              where: {
-                section_id: effectiveSectionId,
-                name: { equals: effectiveSubBatch, mode: 'insensitive' },
-              },
-            });
-          }
-        }
-        if (existingAb) {
-          effectiveAllocBatchId = existingAb.id;
-          effectiveSubBatch = existingAb.name;
-        }
-      }
-    }
-
-    const effectiveCurrentYear = row.current_year || targetScope?.current_year || undefined;
+    const rowSecName = (row as any).section_name || (row as any).section;
+    const effectiveSectionId = resolveSection(effectiveBatchId, rowSecName, row.section_id);
 
     if (!effectiveBatchId || !effectiveSectionId) {
       failedCount++;
@@ -346,12 +327,65 @@ export async function bulkImportStudents(
       continue;
     }
 
-    // Resolve Mentor:
-    // 1. Explicit unassignment ('NONE' or 'UNASSIGNED')
-    // 2. Direct row.mentor_id (from mapped staff selector or explicit selection)
-    // 3. Matched from row.mentor_name using smart fuzzy matching against staffList
-    // 4. targetScope.mentor_id (only if row has no mentor name or unassigned, and admin picked a target scope mentor)
-    // 5. Default to logged-in user if role === 'STAFF' and row had NO mentor specified in the sheet
+    const effectiveDept = row.department || defaultDept;
+    let effectiveAllocBatchId = row.allocation_batch_id || defaultAllocBatchId || null;
+    let rawSubBatch = row.sub_batch || (row as any).allocation_batch || (row as any).batch_no || defaultSubBatch || null;
+
+    let effectiveSubBatch: string | null = null;
+    if (rawSubBatch) {
+      const s = String(rawSubBatch).trim();
+      const m = s.match(/^(?:batch|batc|b)[\s-_]*(\d+)$/i);
+      effectiveSubBatch = m ? `Batch-${m[1]}` : s;
+    }
+
+    if (effectiveSectionId && effectiveSubBatch && !effectiveAllocBatchId) {
+      const normAb = (val: string) => val.toLowerCase().replace(/[\s-_]/g, '').replace(/^batc(?=\d)/, 'batch');
+      const targetNorm = normAb(effectiveSubBatch);
+      let matchedAb = allAllocBatches.find(
+        (ab) => ab.section_id === effectiveSectionId &&
+          (ab.name.toLowerCase() === effectiveSubBatch!.toLowerCase() || normAb(ab.name) === targetNorm)
+      );
+
+      if (!matchedAb) {
+        if (!process.env.DATABASE_URL) {
+          const newAb = {
+            id: `ab_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            section_id: effectiveSectionId,
+            name: effectiveSubBatch,
+            created_at: new Date(),
+          };
+          inMemoryStore.allocationBatches.push(newAb as any);
+          allAllocBatches.push(newAb);
+          matchedAb = newAb;
+        } else {
+          try {
+            matchedAb = await prisma.allocationBatch.create({
+              data: {
+                section_id: effectiveSectionId,
+                name: effectiveSubBatch,
+              },
+            });
+            allAllocBatches.push(matchedAb);
+          } catch {
+            matchedAb = (await prisma.allocationBatch.findFirst({
+              where: {
+                section_id: effectiveSectionId,
+                name: { equals: effectiveSubBatch, mode: 'insensitive' },
+              },
+            })) || undefined;
+            if (matchedAb) allAllocBatches.push(matchedAb);
+          }
+        }
+      }
+
+      if (matchedAb) {
+        effectiveAllocBatchId = matchedAb.id;
+        effectiveSubBatch = matchedAb.name;
+      }
+    }
+
+    const effectiveCurrentYear = row.current_year || targetScope?.current_year || undefined;
+
     const isExplicitlyUnassigned =
       row.mentor_id === 'NONE' ||
       row.mentor_id === 'UNASSIGNED' ||
@@ -363,7 +397,6 @@ export async function bulkImportStudents(
         resolvedMentorId = row.mentor_id;
       } else if (row.mentor_name && row.mentor_name !== 'Unassigned') {
         resolvedMentorId = findBestStaffMatch(row.mentor_name, staffList);
-        // If row mentor name didn't match any staff in DB, fallback to targetScope only if targetScope is set to a valid staff
         if (!resolvedMentorId && targetScope?.mentor_id && targetScope.mentor_id !== 'AUTO' && targetScope.mentor_id !== 'NONE' && targetScope.mentor_id !== 'UNASSIGNED') {
           resolvedMentorId = targetScope.mentor_id;
         }
@@ -374,148 +407,171 @@ export async function bulkImportStudents(
       }
     }
 
-    try {
-      if (!process.env.DATABASE_URL) {
-        // In-Memory Mode
-        let existingIndex = inMemoryStore.students.findIndex(
-          (st) => st.register_number.toUpperCase() === rawRegNo
-        );
+    preparedRows.push({
+      rawRegNo,
+      rawName,
+      rawLeetCode,
+      effectiveBatchId,
+      effectiveSectionId,
+      effectiveAllocBatchId,
+      effectiveSubBatch,
+      effectiveDept,
+      effectiveCurrentYear,
+      resolvedMentorId,
+      isExplicitlyUnassigned,
+    });
+  }
 
-        let studentId = '';
-        if (existingIndex >= 0) {
-          const existing = inMemoryStore.students[existingIndex];
-          studentId = existing.id;
-          inMemoryStore.students[existingIndex] = {
-            ...existing,
-            name: rawName,
-            department: effectiveDept,
-            batch_id: effectiveBatchId,
-            section_id: effectiveSectionId,
-            allocation_batch_id: effectiveAllocBatchId || existing.allocation_batch_id,
-            sub_batch: effectiveSubBatch || existing.sub_batch,
-            current_year: effectiveCurrentYear || existing.current_year || '1',
-            leetcode_username: rawLeetCode,
-            mentor_id: resolvedMentorId || (existing as any)?.mentor_id || null,
-          };
-          updatedCount++;
-        } else {
-          studentId = `st_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-          inMemoryStore.students.push({
-            id: studentId,
-            register_number: rawRegNo,
-            name: rawName,
-            department: effectiveDept,
-            batch_id: effectiveBatchId,
-            section_id: effectiveSectionId,
-            allocation_batch_id: effectiveAllocBatchId || null,
-            sub_batch: effectiveSubBatch || null,
-            current_year: effectiveCurrentYear || '1',
-            leetcode_username: rawLeetCode,
-            mentor_id: resolvedMentorId || null,
-            created_at: new Date(),
-          });
-          createdCount++;
-        }
+  // 4. Persist students and mentor assignments
+  if (!process.env.DATABASE_URL) {
+    // In-Memory Mode
+    for (const item of preparedRows) {
+      const existingIndex = inMemoryStore.students.findIndex(
+        (st) => st.register_number.toUpperCase() === item.rawRegNo
+      );
 
-        // Mentor Assignment (clean replacement)
-        if (resolvedMentorId) {
-          inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter(
-            (a) => a.student_id !== studentId
-          );
-          inMemoryStore.staffStudentAssignments.push({
-            id: `ssa_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-            staff_id: resolvedMentorId,
-            student_id: studentId,
-            created_at: new Date(),
-          });
-        } else if (isExplicitlyUnassigned) {
-          inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter(
-            (a) => a.student_id !== studentId
-          );
-        }
-
-        newlyCreatedOrUpdatedIds.push(studentId);
-        processedStudents.push({ register_number: rawRegNo, name: rawName, id: studentId });
+      let studentId = '';
+      if (existingIndex >= 0) {
+        const existing = inMemoryStore.students[existingIndex];
+        studentId = existing.id;
+        inMemoryStore.students[existingIndex] = {
+          ...existing,
+          name: item.rawName,
+          department: item.effectiveDept,
+          batch_id: item.effectiveBatchId,
+          section_id: item.effectiveSectionId,
+          allocation_batch_id: item.effectiveAllocBatchId || existing.allocation_batch_id,
+          sub_batch: item.effectiveSubBatch || existing.sub_batch,
+          current_year: item.effectiveCurrentYear || existing.current_year || '1',
+          leetcode_username: item.rawLeetCode,
+          mentor_id: item.resolvedMentorId || (existing as any)?.mentor_id || null,
+        };
+        updatedCount++;
       } else {
-        // Database Mode (PostgreSQL via Prisma)
-        const existing = await prisma.student.findFirst({
-          where: { register_number: { equals: rawRegNo, mode: 'insensitive' } },
+        studentId = `st_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        inMemoryStore.students.push({
+          id: studentId,
+          register_number: item.rawRegNo,
+          name: item.rawName,
+          department: item.effectiveDept,
+          batch_id: item.effectiveBatchId,
+          section_id: item.effectiveSectionId,
+          allocation_batch_id: item.effectiveAllocBatchId || null,
+          sub_batch: item.effectiveSubBatch || null,
+          current_year: item.effectiveCurrentYear || '1',
+          leetcode_username: item.rawLeetCode,
+          mentor_id: item.resolvedMentorId || null,
+          created_at: new Date(),
         });
+        createdCount++;
+      }
 
-        let studentRecord: any = null;
+      // Mentor Assignment
+      if (item.resolvedMentorId) {
+        inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter(
+          (a) => a.student_id !== studentId
+        );
+        inMemoryStore.staffStudentAssignments.push({
+          id: `ssa_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          staff_id: item.resolvedMentorId,
+          student_id: studentId,
+          created_at: new Date(),
+        });
+      } else if (item.isExplicitlyUnassigned) {
+        inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter(
+          (a) => a.student_id !== studentId
+        );
+      }
 
-        if (existing) {
-          studentRecord = await prisma.student.update({
-            where: { id: existing.id },
-            data: {
-              name: rawName,
-              department: effectiveDept,
-              batch_id: effectiveBatchId,
-              section_id: effectiveSectionId,
-              allocation_batch_id: effectiveAllocBatchId || existing.allocation_batch_id,
-              sub_batch: effectiveSubBatch || existing.sub_batch,
-              ...(effectiveCurrentYear ? { current_year: effectiveCurrentYear } : {}),
-              leetcode_username: rawLeetCode,
-              updated_at: new Date(),
-            },
-          });
-          updatedCount++;
-        } else {
-          studentRecord = await prisma.student.create({
-            data: {
-              register_number: rawRegNo,
-              name: rawName,
-              department: effectiveDept,
-              batch_id: effectiveBatchId,
-              section_id: effectiveSectionId,
-              allocation_batch_id: effectiveAllocBatchId || null,
-              sub_batch: effectiveSubBatch || null,
-              current_year: effectiveCurrentYear || '1',
-              leetcode_username: rawLeetCode,
-            },
-          });
-          createdCount++;
-        }
+      newlyCreatedOrUpdatedIds.push(studentId);
+      processedStudents.push({ register_number: item.rawRegNo, name: item.rawName, id: studentId });
+    }
+  } else {
+    // Database Mode: Process in concurrent chunks of 10 for maximum performance
+    const CHUNK_SIZE = 10;
+    for (let i = 0; i < preparedRows.length; i += CHUNK_SIZE) {
+      const chunk = preparedRows.slice(i, i + CHUNK_SIZE);
+      await Promise.all(
+        chunk.map(async (item) => {
+          try {
+            const existing = existingStudentMap.get(item.rawRegNo);
+            let studentRecord: any = null;
 
-        // Mentor Assignment (clean replacement)
-        if (resolvedMentorId && studentRecord) {
-          const staffExists = staffList.some((s) => s.id === resolvedMentorId);
-          if (staffExists) {
-            try {
-              await prisma.staffStudentAssignment.deleteMany({
-                where: { student_id: studentRecord.id },
-              });
-
-              await prisma.staffStudentAssignment.create({
+            if (existing) {
+              studentRecord = await prisma.student.update({
+                where: { id: existing.id },
                 data: {
-                  student_id: studentRecord.id,
-                  staff_id: resolvedMentorId,
+                  name: item.rawName,
+                  department: item.effectiveDept,
+                  batch_id: item.effectiveBatchId,
+                  section_id: item.effectiveSectionId,
+                  allocation_batch_id: item.effectiveAllocBatchId || existing.allocation_batch_id,
+                  sub_batch: item.effectiveSubBatch || existing.sub_batch,
+                  ...(item.effectiveCurrentYear ? { current_year: item.effectiveCurrentYear } : {}),
+                  leetcode_username: item.rawLeetCode,
+                  updated_at: new Date(),
                 },
               });
-            } catch (assignErr: any) {
-              console.warn(`[Import] Mentor assignment warning for student ${studentRecord.id} (${rawRegNo}):`, assignErr?.message || assignErr);
+              updatedCount++;
+            } else {
+              studentRecord = await prisma.student.create({
+                data: {
+                  register_number: item.rawRegNo,
+                  name: item.rawName,
+                  department: item.effectiveDept,
+                  batch_id: item.effectiveBatchId,
+                  section_id: item.effectiveSectionId,
+                  allocation_batch_id: item.effectiveAllocBatchId || null,
+                  sub_batch: item.effectiveSubBatch || null,
+                  current_year: item.effectiveCurrentYear || '1',
+                  leetcode_username: item.rawLeetCode,
+                },
+              });
+              createdCount++;
             }
-          } else {
-            console.warn(`[Import] Resolved mentor ID ${resolvedMentorId} was not found in active staff list; skipping assignment for ${rawRegNo}`);
-          }
-        } else if (isExplicitlyUnassigned && studentRecord) {
-          try {
-            await prisma.staffStudentAssignment.deleteMany({
-              where: { student_id: studentRecord.id },
-            });
-          } catch (unassignErr: any) {
-            console.warn(`[Import] Mentor unassign warning for student ${studentRecord.id} (${rawRegNo}):`, unassignErr?.message || unassignErr);
-          }
-        }
 
-        if (studentRecord) {
-          newlyCreatedOrUpdatedIds.push(studentRecord.id);
-          processedStudents.push(studentRecord);
-        }
-      }
-    } catch (dbErr: any) {
-      failedCount++;
-      errors.push({ register_number: rawRegNo, error: dbErr?.message || 'Database error during save' });
+            // Mentor Assignment (clean replacement via atomic transaction)
+            if (item.resolvedMentorId && studentRecord) {
+              const staffExists = staffList.some((s) => s.id === item.resolvedMentorId);
+              if (staffExists) {
+                try {
+                  await prisma.$transaction([
+                    prisma.staffStudentAssignment.deleteMany({
+                      where: { student_id: studentRecord.id },
+                    }),
+                    prisma.staffStudentAssignment.create({
+                      data: {
+                        student_id: studentRecord.id,
+                        staff_id: item.resolvedMentorId,
+                      },
+                    }),
+                  ]);
+                } catch (assignErr: any) {
+                  console.warn(`[Import] Mentor assignment warning for student ${studentRecord.id} (${item.rawRegNo}):`, assignErr?.message || assignErr);
+                }
+              } else {
+                console.warn(`[Import] Resolved mentor ID ${item.resolvedMentorId} was not found in active staff list; skipping assignment for ${item.rawRegNo}`);
+              }
+            } else if (item.isExplicitlyUnassigned && studentRecord) {
+              try {
+                await prisma.staffStudentAssignment.deleteMany({
+                  where: { student_id: studentRecord.id },
+                });
+              } catch (unassignErr: any) {
+                console.warn(`[Import] Mentor unassign warning for student ${studentRecord.id} (${item.rawRegNo}):`, unassignErr?.message || unassignErr);
+              }
+            }
+
+            if (studentRecord) {
+              newlyCreatedOrUpdatedIds.push(studentRecord.id);
+              processedStudents.push(studentRecord);
+            }
+          } catch (dbErr: any) {
+            failedCount++;
+            errors.push({ register_number: item.rawRegNo, error: dbErr?.message || 'Database error during save' });
+          }
+        })
+      );
     }
   }
 
