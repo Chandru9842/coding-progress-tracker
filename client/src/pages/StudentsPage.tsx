@@ -572,16 +572,15 @@ export const StudentsPage: React.FC = () => {
       return;
     }
 
-    // Standard Fixed Window: Immediate interactive batch capped at 100 students (guarantees standard 30-45s window)
-    const MAX_INTERACTIVE_SYNC = 100;
-    const immediateIds = targetIds.slice(0, MAX_INTERACTIVE_SYNC);
-    const backgroundIds = targetIds.slice(MAX_INTERACTIVE_SYNC);
+    // Sync ALL target students — no artificial caps so all students are updated together
+    const immediateIds = targetIds;
+    const backgroundIds: string[] = [];
 
     const totalToSync = immediateIds.length;
     const batchSize = 10; // High-throughput batch of 10 students
     const startTime = Date.now();
-    // Calibrated standard target duration: 30-45s model
-    const targetDuration = Math.min(45, Math.max(12, Math.ceil(totalToSync * 0.35)));
+    // Calibrated standard target duration: ~0.3s per student with concurrency = 3
+    const targetDuration = Math.min(45, Math.max(10, Math.ceil(totalToSync * 0.3)));
 
     notifySyncStarted('Sync All Students');
     setSyncingAll(true);
@@ -589,7 +588,7 @@ export const StudentsPage: React.FC = () => {
     setSyncNotice(null);
     setError(null);
 
-    // Initialize interactive live progress state
+    // Initialize interactive live progress state immediately
     setSyncProgress({
       active: true,
       total: totalToSync,
@@ -601,6 +600,10 @@ export const StudentsPage: React.FC = () => {
       estimatedRemainingSeconds: targetDuration,
       percentage: 0,
     });
+
+    // CRITICAL: Yield to browser paint loop so the panel renders BEFORE the sync starts.
+    // Without this the panel appears 15-20s late because Promise.all blocks the render.
+    await new Promise<void>((resolve) => setTimeout(resolve, 80));
 
     // Start 1-second live countdown / elapsed timer interval
     const timerInterval = setInterval(() => {
@@ -628,7 +631,7 @@ export const StudentsPage: React.FC = () => {
 
     try {
       let processedCount = 0;
-      const concurrency = 2; // Process 2 chunks concurrently
+      const concurrency = 3; // Process 3 chunks concurrently (30 students parallel)
       for (let cIdx = 0; cIdx < chunks.length; cIdx += concurrency) {
         const chunkBatch = chunks.slice(cIdx, cIdx + concurrency);
 

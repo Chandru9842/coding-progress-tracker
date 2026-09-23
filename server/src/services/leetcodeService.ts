@@ -898,12 +898,12 @@ export async function syncBatchLeetCode(batchId: string, user: { userId: string;
   const stopTask = diagnosticLogService.startSyncTask(`batch_${batchId}`, `Sync Batch: ${batchLabel}`);
 
   let results: any[] = [];
+  // Allow full batch to complete — 15 workers × ~4s per student handles 100 students in ~30s naturally
+  const MAX_SAFE_EXECUTION_MS = process.env.VERCEL ? 55000 : 180000;
   try {
-    // Run student syncing concurrently (concurrency 10 with safe serverless time budget)
-    const MAX_SAFE_EXECUTION_MS = process.env.VERCEL ? 7500 : 60000;
     results = await runConcurrentTasks(
       studentList,
-      10,
+      15,
       async (st) => {
         try {
           const res = await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
@@ -1053,11 +1053,12 @@ export async function syncFilteredStudentsLeetCode(
     studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
   }
 
-  // Run student syncing concurrently with a pool of 12 workers and adaptive serverless budget
-  const MAX_SAFE_EXECUTION_MS = process.env.VERCEL ? 8500 : 30000;
+  // Run student syncing concurrently — no artificial 9s wall-clock cap.
+  // Each student fetch takes 0.5-4s; 15 workers handle 52+ students in ~15-30s naturally.
+  const MAX_SAFE_EXECUTION_MS = process.env.VERCEL ? 55000 : 180000;
   const results = await runConcurrentTasks(
     studentList,
-    12,
+    15,
     async (st) => {
       try {
         const res = await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
