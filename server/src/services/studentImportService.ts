@@ -519,46 +519,22 @@ export async function bulkImportStudents(
     }
   }
 
-  // 4. Synchronously fetch initial LeetCode stats for imported students within time budget
-  let unsyncedStudentIds: string[] = [];
-  if (newlyCreatedOrUpdatedIds.length > 0 && process.env.NODE_ENV !== 'test') {
-    const authContext = { userId: user.userId, role: user.role };
-    console.log(`[Import-Sync] Fetching initial LeetCode stats for ${newlyCreatedOrUpdatedIds.length} imported student(s)...`);
-    
-    // Process in bounded batches of 10 with time guard so all imported students (e.g. 56) are synced
-    const batchSize = 10;
-    const idsToSync = newlyCreatedOrUpdatedIds;
-    const syncedIds = new Set<string>();
-    const syncDeadline = Date.now() + (process.env.VERCEL ? 6000 : 45000); // Safe serverless time guard
-    for (let i = 0; i < idsToSync.length; i += batchSize) {
-      if (Date.now() > syncDeadline) {
-        console.warn(`[Import-Sync] Time budget reached, synced ${i}/${idsToSync.length} students.`);
-        break;
-      }
-      const chunk = idsToSync.slice(i, i + batchSize);
-      await Promise.all(
-        chunk.map(async (stId) => {
-          try {
-            await syncStudentLeetCode(stId, authContext, { skipGoogleSheetSync: true });
-            syncedIds.add(stId);
-          } catch {
-            // Ignore individual fetch errors so import always completes
-          }
-        })
-      );
-    }
-
-    unsyncedStudentIds = idsToSync.filter((id) => !syncedIds.has(id));
-
-    try {
-      await syncAllActiveGoogleSheets();
-    } catch (sheetErr: any) {
-      console.warn(`[Import-Sync] Google Sheet bulk sync note:`, sheetErr?.message || sheetErr);
-    }
-  }
+  // 4. Return all newly imported student IDs so the frontend AutoSyncDaemon can sync them smoothly
+  const unsyncedStudentIds: string[] = newlyCreatedOrUpdatedIds;
 
   // Invalidate caches so lists and dashboard metrics update immediately
   serverCache.invalidate();
+
+  // Trigger background Google Sheets sync asynchronously without holding the HTTP response
+  if (newlyCreatedOrUpdatedIds.length > 0 && process.env.NODE_ENV !== 'test') {
+    setTimeout(async () => {
+      try {
+        await syncAllActiveGoogleSheets();
+      } catch (sheetErr: any) {
+        console.warn(`[Import-Sync] Background Google Sheet sync note:`, sheetErr?.message || sheetErr);
+      }
+    }, 100);
+  }
 
   return {
     message: `Successfully processed ${students.length} record(s): ${createdCount} created, ${updatedCount} updated, ${failedCount} failed.`,
