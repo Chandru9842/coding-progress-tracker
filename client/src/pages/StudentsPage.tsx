@@ -1386,6 +1386,10 @@ export const StudentsPage: React.FC = () => {
           rowMentorId = importMentorId;
         }
 
+        if (!rowMentorId && importMentorId && importMentorId !== 'AUTO' && importMentorId !== 'NONE') {
+          rowMentorId = importMentorId;
+        }
+
         // Smart Section resolution: check if row itself specified a section, otherwise use batch default
         let resolvedSectionId = importSectionId;
         if (r.section && targetBatch?.sections && targetBatch.sections.length > 0) {
@@ -1430,8 +1434,8 @@ export const StudentsPage: React.FC = () => {
         mentor_id: (importMentorId && importMentorId !== 'AUTO' && importMentorId !== 'NONE') ? importMentorId : undefined,
       };
 
-      // Chunk in safe batches of 25 so Vercel serverless execution limits (10-15s) are never hit
-      const CHUNK_SIZE = 25;
+      // Chunk in safe batches of 10 so Vercel serverless execution limits (10-15s) are never hit and live progress is visible
+      const CHUNK_SIZE = 10;
       const chunks: typeof allStudentPayloads[] = [];
       for (let i = 0; i < allStudentPayloads.length; i += CHUNK_SIZE) {
         chunks.push(allStudentPayloads.slice(i, i + CHUNK_SIZE));
@@ -1482,8 +1486,11 @@ export const StudentsPage: React.FC = () => {
         autoSyncService.enqueueStudentIds(allUnsyncedIds);
       }
 
-      // Refresh student roster
-      fetchStudents(false);
+      // Purge cached lists and refresh student roster with latest live data
+      clearClientCache('students_');
+      clearClientCache('stats_');
+      clearClientCache('staff_');
+      await fetchStudents(false, true);
     } catch (err: any) {
       setImportResult({
         success: false,

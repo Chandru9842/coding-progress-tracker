@@ -214,10 +214,13 @@ export async function bulkImportStudents(
       if (s) defaultSectionId = s.id;
     }
   } else {
-    // PostgreSQL mode: Pre-fetch sections, existing allocation batches, and existing students in parallel
-    const allRegNos = students
-      .map((s) => (s.register_number ? s.register_number.trim().toUpperCase() : ''))
-      .filter(Boolean);
+    const allRegNos = Array.from(
+      new Set(
+        students
+          .map((s) => (s.register_number ? s.register_number.trim().toUpperCase() : ''))
+          .filter(Boolean)
+      )
+    );
 
     const [dbSections, dbExistingStudents] = await Promise.all([
       prisma.section.findMany({
@@ -225,7 +228,7 @@ export async function bulkImportStudents(
       }),
       allRegNos.length > 0
         ? prisma.student.findMany({
-            where: { register_number: { in: allRegNos, mode: 'insensitive' } },
+            where: { register_number: { in: allRegNos } },
             select: {
               id: true,
               register_number: true,
@@ -487,91 +490,188 @@ export async function bulkImportStudents(
       processedStudents.push({ register_number: item.rawRegNo, name: item.rawName, id: studentId });
     }
   } else {
-    // Database Mode: Process in concurrent chunks of 10 for maximum performance
-    const CHUNK_SIZE = 10;
-    for (let i = 0; i < preparedRows.length; i += CHUNK_SIZE) {
-      const chunk = preparedRows.slice(i, i + CHUNK_SIZE);
-      await Promise.all(
-        chunk.map(async (item) => {
+    // Database Mode: Ultra-fast batch operations to prevent serverless function timeouts
+    const toCreate: PreparedRow[] = [];
+    const toUpdate: PreparedRow[] = [];
+
+    for (const item of preparedRows) {
+      if (existingStudentMap.has(item.rawRegNo)) {
+        toUpdate.push(item);
+      } else {
+        toCreate.push(item);
+      }
+    }
+
+    const studentIdByRegNo = new Map<string, string>();
+
+    // 1. Bulk insert new students
+    if (toCreate.length > 0) {
+      try {
+        await prisma.student.createMany({
+          data: toCreate.map((item) => ({
+            register_number: item.rawRegNo,
+            name: item.rawName,
+            department: item.effectiveDept,
+            batch_id: item.effectiveBatchId,
+            section_id: item.effectiveSectionId,
+            allocation_batch_id: item.effectiveAllocBatchId || null,
+            sub_batch: item.effectiveSubBatch || null,
+            current_year: item.effectiveCurrentYear || '1',
+            leetcode_username: item.rawLeetCode,
+          })),
+          skipDuplicates: true,
+        });
+
+        // Retrieve created IDs for mentor assignments and auto-sync
+        const createdRecords = await prisma.student.findMany({
+          where: { register_number: { in: toCreate.map((c) => c.rawRegNo) } },
+          select: { id: true, register_number: true, name: true },
+        });
+
+        for (const rec of createdRecords) {
+          studentIdByRegNo.set(rec.register_number.toUpperCase(), rec.id);
+          newlyCreatedOrUpdatedIds.push(rec.id);
+          processedStudents.push(rec);
+          createdCount++;
+        }
+      } catch (createErr: any) {
+        console.warn('[Import] Bulk createMany error, falling back to sequential create:', createErr?.message || createErr);
+        for (const item of toCreate) {
           try {
-            const existing = existingStudentMap.get(item.rawRegNo);
-            let studentRecord: any = null;
-
-            if (existing) {
-              studentRecord = await prisma.student.update({
-                where: { id: existing.id },
-                data: {
-                  name: item.rawName,
-                  department: item.effectiveDept,
-                  batch_id: item.effectiveBatchId,
-                  section_id: item.effectiveSectionId,
-                  allocation_batch_id: item.effectiveAllocBatchId || existing.allocation_batch_id,
-                  sub_batch: item.effectiveSubBatch || existing.sub_batch,
-                  ...(item.effectiveCurrentYear ? { current_year: item.effectiveCurrentYear } : {}),
-                  leetcode_username: item.rawLeetCode,
-                  updated_at: new Date(),
-                },
-              });
-              updatedCount++;
-            } else {
-              studentRecord = await prisma.student.create({
-                data: {
-                  register_number: item.rawRegNo,
-                  name: item.rawName,
-                  department: item.effectiveDept,
-                  batch_id: item.effectiveBatchId,
-                  section_id: item.effectiveSectionId,
-                  allocation_batch_id: item.effectiveAllocBatchId || null,
-                  sub_batch: item.effectiveSubBatch || null,
-                  current_year: item.effectiveCurrentYear || '1',
-                  leetcode_username: item.rawLeetCode,
-                },
-              });
-              createdCount++;
-            }
-
-            // Mentor Assignment (clean replacement via atomic transaction)
-            if (item.resolvedMentorId && studentRecord) {
-              const staffExists = staffList.some((s) => s.id === item.resolvedMentorId);
-              if (staffExists) {
-                try {
-                  await prisma.$transaction([
-                    prisma.staffStudentAssignment.deleteMany({
-                      where: { student_id: studentRecord.id },
-                    }),
-                    prisma.staffStudentAssignment.create({
-                      data: {
-                        student_id: studentRecord.id,
-                        staff_id: item.resolvedMentorId,
-                      },
-                    }),
-                  ]);
-                } catch (assignErr: any) {
-                  console.warn(`[Import] Mentor assignment warning for student ${studentRecord.id} (${item.rawRegNo}):`, assignErr?.message || assignErr);
-                }
-              } else {
-                console.warn(`[Import] Resolved mentor ID ${item.resolvedMentorId} was not found in active staff list; skipping assignment for ${item.rawRegNo}`);
-              }
-            } else if (item.isExplicitlyUnassigned && studentRecord) {
-              try {
-                await prisma.staffStudentAssignment.deleteMany({
-                  where: { student_id: studentRecord.id },
-                });
-              } catch (unassignErr: any) {
-                console.warn(`[Import] Mentor unassign warning for student ${studentRecord.id} (${item.rawRegNo}):`, unassignErr?.message || unassignErr);
-              }
-            }
-
-            if (studentRecord) {
-              newlyCreatedOrUpdatedIds.push(studentRecord.id);
-              processedStudents.push(studentRecord);
-            }
-          } catch (dbErr: any) {
+            const rec = await prisma.student.create({
+              data: {
+                register_number: item.rawRegNo,
+                name: item.rawName,
+                department: item.effectiveDept,
+                batch_id: item.effectiveBatchId,
+                section_id: item.effectiveSectionId,
+                allocation_batch_id: item.effectiveAllocBatchId || null,
+                sub_batch: item.effectiveSubBatch || null,
+                current_year: item.effectiveCurrentYear || '1',
+                leetcode_username: item.rawLeetCode,
+              },
+            });
+            studentIdByRegNo.set(item.rawRegNo, rec.id);
+            newlyCreatedOrUpdatedIds.push(rec.id);
+            processedStudents.push(rec);
+            createdCount++;
+          } catch (singleErr: any) {
             failedCount++;
-            errors.push({ register_number: item.rawRegNo, error: dbErr?.message || 'Database error during save' });
+            errors.push({ register_number: item.rawRegNo, error: singleErr?.message || 'Database error during create' });
           }
-        })
-      );
+        }
+      }
+    }
+
+    // 2. Fast batch update for existing students
+    if (toUpdate.length > 0) {
+      try {
+        await prisma.$transaction(
+          toUpdate.map((item) => {
+            const existing = existingStudentMap.get(item.rawRegNo)!;
+            return prisma.student.update({
+              where: { id: existing.id },
+              data: {
+                name: item.rawName,
+                department: item.effectiveDept,
+                batch_id: item.effectiveBatchId,
+                section_id: item.effectiveSectionId,
+                allocation_batch_id: item.effectiveAllocBatchId || existing.allocation_batch_id,
+                sub_batch: item.effectiveSubBatch || existing.sub_batch,
+                ...(item.effectiveCurrentYear ? { current_year: item.effectiveCurrentYear } : {}),
+                leetcode_username: item.rawLeetCode,
+                updated_at: new Date(),
+              },
+            });
+          })
+        );
+        for (const item of toUpdate) {
+          const existing = existingStudentMap.get(item.rawRegNo)!;
+          studentIdByRegNo.set(item.rawRegNo, existing.id);
+          newlyCreatedOrUpdatedIds.push(existing.id);
+          processedStudents.push({ id: existing.id, register_number: item.rawRegNo, name: item.rawName });
+          updatedCount++;
+        }
+      } catch (updateErr: any) {
+        console.warn('[Import] Bulk update transaction error, falling back to sequential update:', updateErr?.message || updateErr);
+        for (const item of toUpdate) {
+          try {
+            const existing = existingStudentMap.get(item.rawRegNo)!;
+            const rec = await prisma.student.update({
+              where: { id: existing.id },
+              data: {
+                name: item.rawName,
+                department: item.effectiveDept,
+                batch_id: item.effectiveBatchId,
+                section_id: item.effectiveSectionId,
+                allocation_batch_id: item.effectiveAllocBatchId || existing.allocation_batch_id,
+                sub_batch: item.effectiveSubBatch || existing.sub_batch,
+                ...(item.effectiveCurrentYear ? { current_year: item.effectiveCurrentYear } : {}),
+                leetcode_username: item.rawLeetCode,
+                updated_at: new Date(),
+              },
+            });
+            studentIdByRegNo.set(item.rawRegNo, rec.id);
+            newlyCreatedOrUpdatedIds.push(rec.id);
+            processedStudents.push(rec);
+            updatedCount++;
+          } catch (singleErr: any) {
+            failedCount++;
+            errors.push({ register_number: item.rawRegNo, error: singleErr?.message || 'Database error during update' });
+          }
+        }
+      }
+    }
+
+    // 3. Ultra-fast bulk mentor assignment
+    const assignmentsToInsert: Array<{ student_id: string; staff_id: string }> = [];
+    const studentIdsToUnassign: string[] = [];
+    const validStaffIds = new Set(staffList.map((s) => s.id));
+
+    for (const item of preparedRows) {
+      const studentId = studentIdByRegNo.get(item.rawRegNo);
+      if (!studentId) continue;
+
+      if (item.resolvedMentorId && validStaffIds.has(item.resolvedMentorId)) {
+        assignmentsToInsert.push({
+          student_id: studentId,
+          staff_id: item.resolvedMentorId,
+        });
+      } else if (item.isExplicitlyUnassigned) {
+        studentIdsToUnassign.push(studentId);
+      }
+    }
+
+    const allAffectedStudentIds = Array.from(
+      new Set([...assignmentsToInsert.map((a) => a.student_id), ...studentIdsToUnassign])
+    );
+
+    if (allAffectedStudentIds.length > 0) {
+      try {
+        await prisma.$transaction([
+          prisma.staffStudentAssignment.deleteMany({
+            where: { student_id: { in: allAffectedStudentIds } },
+          }),
+          ...(assignmentsToInsert.length > 0
+            ? [
+                prisma.staffStudentAssignment.createMany({
+                  data: assignmentsToInsert,
+                  skipDuplicates: true,
+                }),
+              ]
+            : []),
+        ]);
+      } catch (assignBatchErr: any) {
+        console.warn('[Import] Bulk mentor assignment transaction error, falling back to sequential:', assignBatchErr?.message || assignBatchErr);
+        for (const a of assignmentsToInsert) {
+          try {
+            await prisma.staffStudentAssignment.deleteMany({ where: { student_id: a.student_id } });
+            await prisma.staffStudentAssignment.create({ data: a });
+          } catch {
+            // Ignore single assignment error
+          }
+        }
+      }
     }
   }
 
