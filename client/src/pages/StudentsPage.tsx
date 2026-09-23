@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
@@ -280,6 +280,19 @@ export const StudentsPage: React.FC = () => {
   const [showColumnMappingPanel, setShowColumnMappingPanel] = useState<boolean>(false);
 
   const [debouncedSearch, setDebouncedSearch] = useState<string>('');
+
+  const { tableMentorCounts, tableUnassignedCount } = useMemo(() => {
+    const counts: Record<string, number> = {};
+    let unassigned = 0;
+    students.forEach((s) => {
+      if (s.mentor?.id) {
+        counts[s.mentor.id] = (counts[s.mentor.id] || 0) + 1;
+      } else {
+        unassigned++;
+      }
+    });
+    return { tableMentorCounts: counts, tableUnassignedCount: unassigned };
+  }, [students]);
 
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -969,7 +982,8 @@ export const StudentsPage: React.FC = () => {
     configOverride?: ColumnMappingConfig
   ) => {
     const config = configOverride !== undefined ? configOverride : columnMapping;
-    const result = analyzeAndParseStudents(dataInput, config);
+    const configWithStaff: ColumnMappingConfig = { ...config, knownStaffList: staffList };
+    const result = analyzeAndParseStudents(dataInput, configWithStaff, staffList);
 
     setImportRows(result.rows);
     setDetectedMentors(result.detectedMentors);
@@ -988,10 +1002,10 @@ export const StudentsPage: React.FC = () => {
         if (!autoMappings[mName]) autoMappings[mName] = 'NONE';
         return;
       }
-      if (!autoMappings[mName]) {
+      if (!autoMappings[mName] || autoMappings[mName] === 'AUTO') {
         const matched = findMatchingStaff(mName, staffList);
-        // If matched to registered staff use staff id, otherwise default to 'NONE' (unpaired) so user has clear visibility
-        autoMappings[mName] = matched ? matched.id : 'NONE';
+        // If matched to registered staff use staff id, otherwise default to 'AUTO' so backend will resolve it rather than unassigning!
+        autoMappings[mName] = matched ? matched.id : 'AUTO';
       }
     });
     setMentorMappings(autoMappings);
@@ -1022,6 +1036,28 @@ export const StudentsPage: React.FC = () => {
       setImportMentorId(user.id);
     }
   };
+
+  // When staffList loads or changes, re-resolve any 'AUTO' or unmapped mentors
+  useEffect(() => {
+    if (staffList.length > 0 && detectedMentors.length > 0) {
+      setMentorMappings((prev) => {
+        let changed = false;
+        const updated = { ...prev };
+        detectedMentors.forEach((mName) => {
+          if (mName !== 'Unassigned') {
+            if (!updated[mName] || updated[mName] === 'AUTO') {
+              const matched = findMatchingStaff(mName, staffList);
+              if (matched) {
+                updated[mName] = matched.id;
+                changed = true;
+              }
+            }
+          }
+        });
+        return changed ? updated : prev;
+      });
+    }
+  }, [staffList, detectedMentors]);
 
   const handleFileProcess = (file: File) => {
     if (!file) return;
@@ -1215,6 +1251,66 @@ export const StudentsPage: React.FC = () => {
     setQuickAssignStaffId('');
   };
 
+  const handleSplitStudentsEvenly = () => {
+    // 1. Determine mentors to split among
+    let mentorsToSplit: string[] = [];
+    if (!selectedMentorFilters.has('ALL') && selectedMentorFilters.size >= 2) {
+      mentorsToSplit = Array.from(selectedMentorFilters).filter((m) => m !== 'Unassigned');
+    } else {
+      mentorsToSplit = detectedMentors.filter((m) => m !== 'Unassigned');
+    }
+
+    if (mentorsToSplit.length < 2) {
+      if (staffList.length >= 2) {
+        mentorsToSplit = staffList.slice(0, 2).map((s) => s.name);
+      } else {
+        alert('Please select or configure at least 2 mentors to split students evenly ("half and half").');
+        return;
+      }
+    }
+
+    // 2. Determine target students to distribute
+    const targetRows = getFilteredImportRows().filter((r) => r.isValid);
+    if (targetRows.length === 0) {
+      alert('No valid students to distribute.');
+      return;
+    }
+
+    const totalStudents = targetRows.length;
+    const numMentors = mentorsToSplit.length;
+    const perMentor = Math.ceil(totalStudents / numMentors);
+
+    const assignments = new Map<string, { mentorName: string; staffId?: string }>();
+    targetRows.forEach((r, idx) => {
+      const mentorIndex = Math.min(Math.floor(idx / perMentor), numMentors - 1);
+      const mentorName = mentorsToSplit[mentorIndex];
+      const matched = mentorMappings[mentorName] && mentorMappings[mentorName] !== 'NONE' && mentorMappings[mentorName] !== 'AUTO'
+        ? mentorMappings[mentorName]
+        : findMatchingStaff(mentorName, staffList)?.id;
+      assignments.set(r.id, { mentorName, staffId: matched });
+    });
+
+    setImportRows((prev) =>
+      prev.map((r) => {
+        const a = assignments.get(r.id);
+        if (!a) return r;
+        return {
+          ...r,
+          cleanMentor: a.mentorName,
+          mentorStaffId: a.staffId || undefined,
+        };
+      })
+    );
+
+    // Breakdown message
+    const summary = mentorsToSplit.map((m) => {
+      const count = targetRows.filter((_, idx) => Math.min(Math.floor(idx / perMentor), numMentors - 1) === mentorsToSplit.indexOf(m)).length;
+      return `${m} (${count})`;
+    }).join(', ');
+
+    alert(`✨ Successfully distributed ${totalStudents} students evenly ("half and half") across ${numMentors} mentors: ${summary}!`);
+  };
+
   const getFilteredImportRows = () => {
     return importRows.filter((row) => {
       // Mentor filter (supports multi-selection of mentors)
@@ -1251,9 +1347,18 @@ export const StudentsPage: React.FC = () => {
     });
   };
 
-  const handleExecuteImport = async () => {
-    // Import ALL selected and valid rows across the file (guarantees all 56 rows import)
-    const targetRowsToImport = importRows.filter((r) => r.selected && r.isValid);
+  const handleExecuteImport = async (importScope: 'ALL' | 'FILTERED' | 'SELECTED' = 'SELECTED') => {
+    let targetRowsToImport: ParsedImportRow[] = [];
+
+    if (importScope === 'FILTERED') {
+      const visibleIds = new Set(getFilteredImportRows().map((r) => r.id));
+      targetRowsToImport = importRows.filter((r) => r.isValid && visibleIds.has(r.id));
+    } else if (importScope === 'ALL') {
+      targetRowsToImport = importRows.filter((r) => r.isValid);
+    } else {
+      const selectedValid = importRows.filter((r) => r.selected && r.isValid);
+      targetRowsToImport = selectedValid.length > 0 ? selectedValid : importRows.filter((r) => r.isValid);
+    }
 
     if (targetRowsToImport.length === 0) {
       alert('Please select at least one valid student to import from the list.');
@@ -1347,7 +1452,7 @@ export const StudentsPage: React.FC = () => {
     } catch (err: any) {
       setImportResult({
         success: false,
-        message: err.response?.data?.error || 'Failed to import students from spreadsheet.',
+        message: err.response?.data?.error || err?.message || 'Failed to import students from spreadsheet.',
       });
     } finally {
       setIsImporting(false);
@@ -1747,13 +1852,17 @@ export const StudentsPage: React.FC = () => {
             className="form-input"
             value={filterMentorId}
             onChange={(e) => setFilterMentorId(e.target.value)}
-            style={{ flex: '1 1 150px' }}
+            style={{ flex: '1 1 170px' }}
           >
-            <option value="">Mentor (All Students)</option>
-            <option value="UNASSIGNED">⚠️ Unpaired / No Mentor</option>
+            <option value="">Mentor (All Students - {students.length})</option>
+            <option value="UNASSIGNED">
+              ⚠️ Unpaired / No Mentor ({tableUnassignedCount} {tableUnassignedCount === 1 ? 'student' : 'students'})
+            </option>
             <optgroup label="Assigned Staff Mentors">
               {staffList.map((stf) => (
-                <option key={stf.id} value={stf.id}>{stf.name}</option>
+                <option key={stf.id} value={stf.id}>
+                  👤 {stf.name} ({tableMentorCounts[stf.id] || 0} {(tableMentorCounts[stf.id] || 0) === 1 ? 'student' : 'students'})
+                </option>
               ))}
             </optgroup>
           </select>
@@ -3440,6 +3549,31 @@ export const StudentsPage: React.FC = () => {
                             <span>Multi-mentor mode</span>
                           </label>
                         )}
+
+                        {/* Split Evenly (Half & Half) Button */}
+                        <button
+                          type="button"
+                          onClick={handleSplitStudentsEvenly}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.35rem',
+                            padding: '0.28rem 0.65rem',
+                            borderRadius: '16px',
+                            border: '1px solid rgba(129, 140, 248, 0.4)',
+                            backgroundColor: 'rgba(129, 140, 248, 0.15)',
+                            color: '#a5b4fc',
+                            fontWeight: 700,
+                            fontSize: '0.75rem',
+                            cursor: 'pointer',
+                            marginLeft: '0.3rem',
+                            transition: 'all 0.15s ease',
+                          }}
+                          title="Distribute students equally between selected mentors (half and half)"
+                        >
+                          <span>⚖️</span>
+                          <span>Split Evenly (Half &amp; Half)</span>
+                        </button>
                       </div>
 
                       {/* Search inside preview */}
@@ -3711,6 +3845,24 @@ export const StudentsPage: React.FC = () => {
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                       <button
                         type="button"
+                        onClick={handleSplitStudentsEvenly}
+                        style={{
+                          background: 'rgba(129, 140, 248, 0.15)',
+                          border: '1px solid rgba(129, 140, 248, 0.35)',
+                          borderRadius: '4px',
+                          padding: '0.2rem 0.5rem',
+                          color: '#a5b4fc',
+                          cursor: 'pointer',
+                          fontSize: '0.78rem',
+                          fontWeight: 600,
+                        }}
+                        title="Split students equally (half and half) across selected mentors"
+                      >
+                        ⚖️ Split (Half &amp; Half)
+                      </button>
+                      <span style={{ color: 'var(--text-muted)' }}>|</span>
+                      <button
+                        type="button"
                         onClick={() => setImportRows((prev) => prev.map((r) => ({ ...r, selected: r.isValid })))}
                         style={{ background: 'rgba(99, 102, 241, 0.15)', border: '1px solid rgba(99, 102, 241, 0.3)', borderRadius: '4px', padding: '0.2rem 0.5rem', color: '#818cf8', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600 }}
                       >
@@ -3938,7 +4090,7 @@ export const StudentsPage: React.FC = () => {
                 )}
               </div>
 
-              <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
                 <button
                   type="button"
                   className="btn-secondary"
@@ -3947,12 +4099,41 @@ export const StudentsPage: React.FC = () => {
                 >
                   Cancel
                 </button>
+
+                {!selectedMentorFilters.has('ALL') && (
+                  <button
+                    type="button"
+                    onClick={() => handleExecuteImport('FILTERED')}
+                    disabled={isImporting || getFilteredImportRows().filter((r) => r.isValid).length === 0}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.45rem',
+                      padding: '0.5rem 0.9rem',
+                      borderRadius: '6px',
+                      backgroundColor: 'rgba(245, 158, 11, 0.18)',
+                      border: '1px solid rgba(245, 158, 11, 0.45)',
+                      color: '#fbbf24',
+                      fontWeight: 700,
+                      fontSize: '0.82rem',
+                      cursor: isImporting || getFilteredImportRows().filter((r) => r.isValid).length === 0 ? 'not-allowed' : 'pointer',
+                    }}
+                    title="Import ONLY students for the currently selected mentor filter"
+                  >
+                    <Upload size={15} />
+                    <span>
+                      Import Filtered ({getFilteredImportRows().filter((r) => r.isValid).length})
+                    </span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   className="btn-primary"
-                  onClick={handleExecuteImport}
-                  disabled={isImporting || importRows.filter((r) => r.selected && r.isValid).length === 0}
+                  onClick={() => handleExecuteImport('ALL')}
+                  disabled={isImporting || importRows.filter((r) => r.isValid).length === 0}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', minWidth: '170px', justifyContent: 'center' }}
+                  title="Import ALL valid students across all mentors into selected Batch"
                 >
                   {isImporting ? (
                     <>
@@ -3963,7 +4144,7 @@ export const StudentsPage: React.FC = () => {
                     <>
                       <Upload size={16} />
                       <span>
-                        Import All Selected ({importRows.filter((r) => r.selected && r.isValid).length})
+                        Import All ({importRows.filter((r) => r.isValid).length} Students)
                       </span>
                     </>
                   )}

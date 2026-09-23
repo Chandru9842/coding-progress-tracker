@@ -1007,16 +1007,39 @@ export default function ReportsPage() {
   const availableAllocationBatches = selectedSectionObj?.allocation_batches || [];
   const isCustomDateInvalid = datePreset === 'custom' && !!fromDate && !!toDate && fromDate > toDate;
 
+  const mentorCountsAndUnassigned = React.useMemo(() => {
+    const counts: Record<string, number> = {};
+    let unassigned = 0;
+    (reportData?.students || []).forEach((st) => {
+      if (!st.mentor_name || st.mentor_name === 'Unassigned' || !st.mentor_id) {
+        unassigned++;
+      }
+      if (st.mentor_id) {
+        counts[st.mentor_id] = (counts[st.mentor_id] || 0) + 1;
+      }
+      if (st.mentor_name && st.mentor_name !== 'Unassigned') {
+        counts[st.mentor_name.trim().toLowerCase()] = (counts[st.mentor_name.trim().toLowerCase()] || 0) + 1;
+      }
+    });
+    return { counts, unassigned };
+  }, [reportData?.students]);
+
   const allMentors = React.useMemo(() => {
-    const map = new Map<string, { id: string; name: string; email?: string }>();
+    const map = new Map<string, { id: string; name: string; email?: string; studentCount?: number }>();
     staffList.forEach((s) => {
-      if (s.id) map.set(s.id, { id: s.id, name: s.name, email: s.email });
+      if (s.id) {
+        const count = mentorCountsAndUnassigned.counts[s.id] ?? mentorCountsAndUnassigned.counts[s.name.trim().toLowerCase()] ?? 0;
+        map.set(s.id, { id: s.id, name: s.name, email: s.email, studentCount: count });
+      }
     });
     (filterOptions.staff || []).forEach((s) => {
-      if (s.id && !map.has(s.id)) map.set(s.id, { id: s.id, name: s.name, email: s.email });
+      if (s.id && !map.has(s.id)) {
+        const count = mentorCountsAndUnassigned.counts[s.id] ?? mentorCountsAndUnassigned.counts[s.name.trim().toLowerCase()] ?? 0;
+        map.set(s.id, { id: s.id, name: s.name, email: s.email, studentCount: count });
+      }
     });
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [staffList, filterOptions.staff]);
+  }, [staffList, filterOptions.staff, mentorCountsAndUnassigned]);
 
   return (
     <Layout title="Reports & Sync">
@@ -1577,6 +1600,7 @@ export default function ReportsPage() {
                 }}
                 placeholder="All Mentors / Staff"
                 includeUnassigned={true}
+                unassignedCount={mentorCountsAndUnassigned.unassigned}
               />
             </div>
 

@@ -55,6 +55,7 @@ export interface ColumnMappingConfig {
   deptCol?: number; // -1 for none/auto
   secCol?: number; // -1 for none/auto
   yearCol?: number; // -1 for none/auto
+  knownStaffList?: Array<{ id: string; name: string; email?: string }>;
 }
 
 export interface ParseResult {
@@ -201,12 +202,74 @@ const KNOWN_DEPTS = new Set([
 ]);
 
 /**
+ * Checks if a string matches any known registered staff user in the system.
+ */
+export function matchesKnownStaff(
+  text: string,
+  staffList?: Array<{ id: string; name: string; email?: string }>
+): boolean {
+  if (!text || !staffList || staffList.length === 0) return false;
+  const clean = text.trim().toLowerCase().replace(/^(dr|mr|mrs|ms|prof|er)\.?\s*/i, '').replace(/[^a-z0-9]/g, '');
+  if (!clean || clean.length < 2) return false;
+
+  const tokens = text
+    .toLowerCase()
+    .replace(/^(dr|mr|mrs|ms|prof|er)\.?\s*/i, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length >= 3 && !['dr', 'mr', 'mrs', 'ms', 'prof', 'er'].includes(t));
+
+  return staffList.some((s) => {
+    const sClean = s.name.toLowerCase().replace(/^(dr|mr|mrs|ms|prof|er)\.?\s*/i, '').replace(/[^a-z0-9]/g, '');
+    if (sClean && clean && sClean === clean) return true;
+    if (clean.length >= 3 && (sClean.includes(clean) || clean.includes(sClean))) return true;
+    if (tokens.length > 0) {
+      const sTokens = s.name
+        .toLowerCase()
+        .replace(/^(dr|mr|mrs|ms|prof|er)\.?\s*/i, '')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter((t) => t.length >= 3);
+      if (tokens.some((t) => sTokens.includes(t))) return true;
+    }
+    return false;
+  });
+}
+
+/**
+ * Determines whether a cell contains a mentor/faculty name (handles Indian faculty naming patterns:
+ * e.g., "Devi", "K. Devi", "Devi K", "Mrs. Devi", "Dr. A. Muthuraj", or matches staff database).
+ */
+export function isLikelyMentorName(
+  cell: string,
+  staffList?: Array<{ id: string; name: string; email?: string }>
+): boolean {
+  if (!cell) return false;
+  const trimmed = cell.trim();
+  if (trimmed.length < 2 || trimmed.length > 60) return false;
+  if (trimmed.includes('leetcode') || trimmed.includes('http') || /^\d+$/.test(trimmed)) return false;
+  if (KNOWN_DEPTS.has(trimmed.toUpperCase())) return false;
+
+  // 1. Matches any known staff user in DB
+  if (matchesKnownStaff(trimmed, staffList)) return true;
+
+  // 2. Starts with standard academic / professional title (Dr, Mr, Mrs, Ms, Prof, Er)
+  if (/^(dr|mr|mrs|ms|prof|er)\.?\s+/i.test(trimmed)) return true;
+
+  // 3. Name with dot notation e.g., "Devi.S", "Muthu.R", "K.Devi"
+  if (/^[a-zA-Z]{2,20}\.[a-zA-Z]{1,5}$/.test(trimmed) || /^[a-zA-Z]{1,5}\.[a-zA-Z]{2,20}$/.test(trimmed)) return true;
+
+  return false;
+}
+
+/**
  * Universal Intelligent Analyzer & Parser for ANY Excel/CSV Sheet.
  * Works with any column ordering, custom column configurations, or automatic detection.
  */
 export function analyzeAndParseStudents(
   input: string | (string | number)[][],
-  customConfig?: ColumnMappingConfig
+  customConfig?: ColumnMappingConfig,
+  knownStaffListOverride?: Array<{ id: string; name: string; email?: string }>
 ): ParseResult {
   let lines: string[][] = [];
 
@@ -345,6 +408,7 @@ export function analyzeAndParseStudents(
   }
 
   // Resolve Column Mappings (Custom override takes highest priority, then auto-detection)
+  const effectiveStaffList = customConfig?.knownStaffList || knownStaffListOverride || [];
   let regNoCol = customConfig?.regNoCol !== undefined ? customConfig.regNoCol : -1;
   let nameCol = customConfig?.nameCol !== undefined ? customConfig.nameCol : -1;
   let leetcodeCol = customConfig?.leetcodeCol !== undefined ? customConfig.leetcodeCol : -1;
@@ -355,8 +419,25 @@ export function analyzeAndParseStudents(
 
   // Step A: Header keyword auto-detection if not specified
   if (hasHeaders && headerLine.length > 0) {
+    const isSNoHeader = (val: string) =>
+      val === 'sno' ||
+      val === 'slno' ||
+      val === 'snumber' ||
+      val === 'serial' ||
+      val === 'serialno' ||
+      val === 'serialnumber' ||
+      val === 'no' ||
+      val === '#' ||
+      val === 'sl' ||
+      val === 'srno';
+
     headerLine.forEach((h, idx) => {
       const hClean = h.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+
+      // Exclude obvious Serial Number columns from regNo, name, mentor
+      if (isSNoHeader(hClean)) {
+        return;
+      }
 
       if (regNoCol === -1) {
         if (
@@ -382,7 +463,7 @@ export function analyzeAndParseStudents(
           hClean.includes('fullname') ||
           hClean.includes('nameofstudent') ||
           hClean.includes('nameofcandidate') ||
-          (hClean === 'name' && !hClean.includes('mentor') && !hClean.includes('college'))
+          (hClean.includes('name') && !hClean.includes('mentor') && !hClean.includes('faculty') && !hClean.includes('staff') && !hClean.includes('college'))
         ) {
           nameCol = idx;
         }
@@ -411,7 +492,8 @@ export function analyzeAndParseStudents(
           hClean.includes('guide') ||
           hClean.includes('tutor') ||
           hClean.includes('incharge') ||
-          hClean.includes('counselor')
+          hClean.includes('counselor') ||
+          hClean.includes('teacher')
         ) {
           mentorCol = idx;
         }
@@ -449,29 +531,40 @@ export function analyzeAndParseStudents(
         const cell = (cellRaw || '').trim();
         if (!cell) return;
 
+        // Skip pure small integers in column 0 (likely S.No) from scoring as name or mentor
+        if (/^\d{1,3}$/.test(cell) && c === 0 && maxCols > 2) {
+          return;
+        }
+
         // LeetCode URL / handle
         if (cell.includes('leetcode.com') || cell.includes('leetcode.cn') || (cell.startsWith('@') && !cell.includes(' '))) {
-          colScores[c].lc += 3;
+          colScores[c].lc += 4;
         }
 
         // Register Number: 4-25 alphanumeric with digits and no slash
         const digits = cell.replace(/\s+/g, '');
         if (digits.length >= 4 && digits.length <= 25 && /^[0-9A-Za-z_-]+$/.test(digits) && /\d/.test(digits) && !cell.includes('/')) {
-          colScores[c].reg += 2;
+          colScores[c].reg += 3;
         }
 
-        // Mentor: Starts with title or matches dot name
-        if (/^(dr|mr|mrs|ms|prof|er)\.?\s*/i.test(cell) || /^[a-zA-Z]{2,15}\.[a-zA-Z]{1,5}$/.test(cell)) {
-          colScores[c].mentor += 3;
+        // Mentor: Matches known staff or Indian mentor patterns (e.g. "Devi", "K. Devi", "Devi K")
+        if (isLikelyMentorName(cell, effectiveStaffList)) {
+          colScores[c].mentor += 5;
         }
 
         // Dept: matches known dept list
         if (KNOWN_DEPTS.has(cell.toUpperCase())) {
-          colScores[c].dept += 2;
+          colScores[c].dept += 3;
         }
 
-        // Student Name: 3-50 letters, uppercase/capitalized name
-        if (/^[A-Za-z\s.'()_-]{3,60}$/.test(cell) && !cell.includes('http') && !cell.includes('leetcode') && !KNOWN_DEPTS.has(cell.toUpperCase())) {
+        // Student Name: 3-50 letters, uppercase/capitalized name, not LeetCode, not Dept, not Mentor
+        if (
+          /^[A-Za-z\s.'()_-]{3,60}$/.test(cell) &&
+          !cell.includes('http') &&
+          !cell.includes('leetcode') &&
+          !KNOWN_DEPTS.has(cell.toUpperCase()) &&
+          !isLikelyMentorName(cell, effectiveStaffList)
+        ) {
           colScores[c].name += 1;
         }
       });
@@ -657,10 +750,7 @@ export function analyzeAndParseStudents(
       }
 
       if (!rawMentor) {
-        if (/^(dr|mr|mrs|ms|prof|er)\.?\s*/i.test(cell)) {
-          rawMentor = cell;
-          continue;
-        } else if (/^[a-zA-Z]{2,15}\.[a-zA-Z]{1,5}$/.test(cell)) {
+        if (isLikelyMentorName(cell, effectiveStaffList)) {
           rawMentor = cell;
           continue;
         }
@@ -681,7 +771,13 @@ export function analyzeAndParseStudents(
         continue;
       }
 
-      if (!name && /^[A-Za-z\s.'()_-]{3,60}$/.test(cell) && !/^(dr\.|mr\.|mrs\.|prof\.|er\.)/i.test(cell) && !cell.includes('http') && !cell.includes('leetcode')) {
+      if (
+        !name &&
+        /^[A-Za-z\s.'()_-]{3,60}$/.test(cell) &&
+        !isLikelyMentorName(cell, effectiveStaffList) &&
+        !cell.includes('http') &&
+        !cell.includes('leetcode')
+      ) {
         name = cell;
         continue;
       }

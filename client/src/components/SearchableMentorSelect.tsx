@@ -6,6 +6,7 @@ export interface MentorOption {
   name: string;
   email?: string;
   department?: string;
+  studentCount?: number;
 }
 
 interface SearchableMentorSelectProps {
@@ -14,6 +15,7 @@ interface SearchableMentorSelectProps {
   onChange: (mentorId: string) => void;
   placeholder?: string;
   includeUnassigned?: boolean;
+  unassignedCount?: number;
   disabled?: boolean;
   style?: React.CSSProperties;
   label?: string;
@@ -26,6 +28,7 @@ export const SearchableMentorSelect: React.FC<SearchableMentorSelectProps> = ({
   onChange,
   placeholder = 'All Mentors / Staff',
   includeUnassigned = true,
+  unassignedCount,
   disabled = false,
   style,
   label = 'Mentor (Staff)',
@@ -77,10 +80,17 @@ export const SearchableMentorSelect: React.FC<SearchableMentorSelectProps> = ({
   const selectedMentor = useMemo(() => {
     if (!value || value === '') return null;
     if (value === 'UNASSIGNED' || value === 'NONE') {
-      return { id: 'UNASSIGNED', name: 'Unassigned (No Mentor)', email: '' };
+      const labelStr = unassignedCount !== undefined
+        ? `Unassigned / Unpaired (${unassignedCount} students)`
+        : 'Unassigned (No Mentor Assigned)';
+      return { id: 'UNASSIGNED', name: labelStr, email: '', studentCount: unassignedCount };
     }
-    return mentors.find((m) => m.id === value) || null;
-  }, [value, mentors]);
+    const found = mentors.find((m) => m.id === value);
+    if (found && found.studentCount !== undefined) {
+      return { ...found, name: `${found.name} (${found.studentCount})` };
+    }
+    return found || null;
+  }, [value, mentors, unassignedCount]);
 
   // High-performance fuzzy filtering that never lags even with 100+ mentors
   const filteredMentors = useMemo(() => {
@@ -361,7 +371,16 @@ export const SearchableMentorSelect: React.FC<SearchableMentorSelectProps> = ({
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <AlertCircle size={14} style={{ color: '#f59e0b' }} />
-                  <span>Unassigned (No Mentor Assigned)</span>
+                  <span>
+                    Unassigned / Unpaired{' '}
+                    {unassignedCount !== undefined ? (
+                      <span style={{ fontSize: '0.74rem', color: '#fbbf24', fontWeight: 700, marginLeft: '0.35rem' }}>
+                        ({unassignedCount} {unassignedCount === 1 ? 'student' : 'students'})
+                      </span>
+                    ) : (
+                      '(No Mentor Assigned)'
+                    )}
+                  </span>
                 </div>
                 {value === 'UNASSIGNED' && <Check size={14} style={{ color: '#fbbf24' }} />}
               </div>
@@ -395,11 +414,23 @@ export const SearchableMentorSelect: React.FC<SearchableMentorSelectProps> = ({
                     }
                   >
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem', overflow: 'hidden' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
                         <User size={13} style={{ color: isSelected ? '#60a5fa' : 'var(--text-muted)' }} />
                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {m.name}
                         </span>
+                        {m.studentCount !== undefined && (
+                          <span style={{
+                            fontSize: '0.72rem',
+                            fontWeight: 600,
+                            padding: '0.1rem 0.45rem',
+                            borderRadius: '10px',
+                            backgroundColor: isSelected ? 'rgba(96, 165, 250, 0.25)' : 'rgba(255, 255, 255, 0.08)',
+                            color: isSelected ? '#93c5fd' : '#94a3b8',
+                          }}>
+                            ({m.studentCount} {m.studentCount === 1 ? 'student' : 'students'})
+                          </span>
+                        )}
                       </div>
                       {m.email && (
                         <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', paddingLeft: '1.25rem' }}>

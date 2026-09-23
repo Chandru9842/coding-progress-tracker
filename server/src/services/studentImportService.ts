@@ -83,16 +83,25 @@ export function findBestStaffMatch(
   });
   if (normMatch) return normMatch.id;
 
-  // 3. Substring match if long enough (>= 4 chars)
-  if (inputNorm.length >= 4) {
+  // 3. Substring match if >= 3 chars (e.g., "Devi" matching "Mrs. K. Devi" or "Devi K")
+  if (inputNorm.length >= 3) {
     const subMatch = staffList.find((s) => {
       const sNorm = normalizeForMatching(s.name);
-      return sNorm.length >= 4 && (sNorm.includes(inputNorm) || inputNorm.includes(sNorm));
+      return sNorm.length >= 3 && (sNorm.includes(inputNorm) || inputNorm.includes(sNorm));
     });
     if (subMatch) return subMatch.id;
   }
 
-  // 4. Token-based matching (handles "Dr. A. Muthuraj" matching "Muthuraj", "A. Muthuraj", "Muthuraj A")
+  // 4. Contains match if input is at least 3 letters
+  if (inputTrimmed.length >= 3) {
+    const directSub = staffList.find((s) => {
+      const sLower = s.name.toLowerCase();
+      return sLower.includes(inputLower) || inputLower.includes(sLower);
+    });
+    if (directSub) return directSub.id;
+  }
+
+  // 5. Token-based matching (handles "Dr. A. Muthuraj" matching "Muthuraj", "A. Muthuraj", "Muthuraj A", "Devi", "K. Devi")
   if (inputTokens.length > 0) {
     let bestScore = 0;
     let bestStaffId: string | null = null;
@@ -104,7 +113,7 @@ export function findBestStaffMatch(
       let matchCount = 0;
       for (const it of inputTokens) {
         if (it.length >= 3 && staffTokens.some((st) => st.includes(it) || it.includes(st))) {
-          matchCount += 2;
+          matchCount += 3;
         } else if (it.length < 3 && staffTokens.includes(it)) {
           matchCount += 1;
         }
@@ -470,20 +479,33 @@ export async function bulkImportStudents(
 
         // Mentor Assignment (clean replacement)
         if (resolvedMentorId && studentRecord) {
-          await prisma.staffStudentAssignment.deleteMany({
-            where: { student_id: studentRecord.id },
-          });
+          const staffExists = staffList.some((s) => s.id === resolvedMentorId);
+          if (staffExists) {
+            try {
+              await prisma.staffStudentAssignment.deleteMany({
+                where: { student_id: studentRecord.id },
+              });
 
-          await prisma.staffStudentAssignment.create({
-            data: {
-              student_id: studentRecord.id,
-              staff_id: resolvedMentorId,
-            },
-          });
+              await prisma.staffStudentAssignment.create({
+                data: {
+                  student_id: studentRecord.id,
+                  staff_id: resolvedMentorId,
+                },
+              });
+            } catch (assignErr: any) {
+              console.warn(`[Import] Mentor assignment warning for student ${studentRecord.id} (${rawRegNo}):`, assignErr?.message || assignErr);
+            }
+          } else {
+            console.warn(`[Import] Resolved mentor ID ${resolvedMentorId} was not found in active staff list; skipping assignment for ${rawRegNo}`);
+          }
         } else if (isExplicitlyUnassigned && studentRecord) {
-          await prisma.staffStudentAssignment.deleteMany({
-            where: { student_id: studentRecord.id },
-          });
+          try {
+            await prisma.staffStudentAssignment.deleteMany({
+              where: { student_id: studentRecord.id },
+            });
+          } catch (unassignErr: any) {
+            console.warn(`[Import] Mentor unassign warning for student ${studentRecord.id} (${rawRegNo}):`, unassignErr?.message || unassignErr);
+          }
         }
 
         if (studentRecord) {
