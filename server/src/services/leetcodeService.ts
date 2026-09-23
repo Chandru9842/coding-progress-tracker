@@ -899,8 +899,8 @@ export async function syncBatchLeetCode(batchId: string, user: { userId: string;
 
   let results: any[] = [];
   try {
-    // Run student syncing concurrently (concurrency 10 with 60s time budget)
-    const MAX_SAFE_EXECUTION_MS = 60000;
+    // Run student syncing concurrently (concurrency 10 with safe serverless time budget)
+    const MAX_SAFE_EXECUTION_MS = process.env.VERCEL ? 7500 : 60000;
     results = await runConcurrentTasks(
       studentList,
       10,
@@ -1053,8 +1053,8 @@ export async function syncFilteredStudentsLeetCode(
     studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
   }
 
-  // Run student syncing concurrently with a pool of 10 workers and up to 60-second budget
-  const MAX_SAFE_EXECUTION_MS = 60000;
+  // Run student syncing concurrently with a pool of 10 workers and adaptive serverless budget
+  const MAX_SAFE_EXECUTION_MS = process.env.VERCEL ? 7500 : 60000;
   const results = await runConcurrentTasks(
     studentList,
     10,

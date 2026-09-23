@@ -504,7 +504,7 @@ export async function bulkImportStudents(
     // Process in bounded batches of 10 with time guard so all imported students (e.g. 56) are synced
     const batchSize = 10;
     const idsToSync = newlyCreatedOrUpdatedIds;
-    const syncDeadline = Date.now() + 45000; // 45s safety limit
+    const syncDeadline = Date.now() + (process.env.VERCEL ? 6000 : 45000); // Safe serverless time guard
     for (let i = 0; i < idsToSync.length; i += batchSize) {
       if (Date.now() > syncDeadline) {
         console.warn(`[Import-Sync] Time budget reached, synced ${i}/${idsToSync.length} students.`);

@@ -566,69 +566,53 @@ export default function ReportsPage() {
       ? displayedStudents.map((s) => s.id)
       : undefined;
 
-    try {
-      const res = await syncReportStudents({
-        batchId: targetBatchId || undefined,
-        sectionId: targetSecId || undefined,
-        department: department || undefined,
-        allocationBatchId: allocationBatchId || undefined,
-        staffId: staffId || undefined,
-        search: trimmedSearch || undefined,
-        studentIds: targetedIds,
-      });
+    // Resolve full list of student IDs to sync from displayed report students
+    const candidateIds = targetedIds && targetedIds.length > 0
+      ? targetedIds
+      : (displayedStudents && displayedStudents.length > 0)
+        ? displayedStudents.filter((s) => s.leetcode_username).map((s) => s.id)
+        : (reportData?.students && reportData.students.length > 0)
+          ? reportData.students.filter((s) => s.leetcode_username).map((s) => s.id)
+          : [];
 
-      // If server responded with synchronous completion (for targeted ID / small set)
-      if (res.status === 'COMPLETED' || res.successful !== undefined) {
+    try {
+      if (candidateIds.length > 0) {
+        // Chunk into safe batches of 4 students (each chunk takes 2-3s, completely avoiding Vercel 10s timeout)
+        const batchSize = 4;
+        let totalSuccess = 0;
+        const totalToSync = candidateIds.length;
+
+        for (let i = 0; i < totalToSync; i += batchSize) {
+          const chunk = candidateIds.slice(i, i + batchSize);
+          const currentProcessed = Math.min(i + chunk.length, totalToSync);
+          const percent = Math.round((currentProcessed / totalToSync) * 100);
+          setSuccessMsg(`⚡ Live syncing LeetCode stats: ${currentProcessed} / ${totalToSync} students (${percent}%)... Please wait.`);
+
+          try {
+            const chunkRes = await syncReportStudents({
+              studentIds: chunk,
+            });
+            totalSuccess += (chunkRes.successful ?? chunk.length);
+          } catch (chunkErr) {
+            console.warn(`[Sync Chunk Warning] Batch ${Math.floor(i / batchSize) + 1} note:`, chunkErr);
+          }
+        }
+
+        setSuccessMsg(`✅ Live LeetCode sync completed! ${totalSuccess} / ${totalToSync} student records synchronized.`);
+      } else {
+        // Fallback for when no students are loaded in state yet
+        const res = await syncReportStudents({
+          batchId: targetBatchId || undefined,
+          sectionId: targetSecId || undefined,
+          department: department || undefined,
+          allocationBatchId: allocationBatchId || undefined,
+          staffId: staffId || undefined,
+          search: trimmedSearch || undefined,
+        });
         setSuccessMsg(`✅ ${res.message || 'Live LeetCode data synchronized!'}`);
-        setSyncingLeetcode(false);
-        const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
-        const refreshedData = await getReportData(
-          {
-            academicYear: academicYear || undefined,
-            department: department || undefined,
-            batchId: targetBatchId || undefined,
-            sectionId: targetSecId || undefined,
-            allocationBatchId: allocationBatchId || undefined,
-            staffId: staffId || undefined,
-            fromDate: activeFrom || undefined,
-            toDate: activeTo || undefined,
-            sortBy,
-            sortOrder,
-            activityStatus,
-            minProblems: (parsedMin !== undefined && !isNaN(parsedMin)) ? parsedMin : undefined,
-          },
-          true
-        );
-        setReportData(refreshedData);
-        window.dispatchEvent(new CustomEvent('student-synced'));
-        return;
       }
 
-      // Server responds with 202 Accepted — sync is running in background
-      // Show a countdown then auto-refresh the report
-      const waitSeconds = res.estimatedDurationSeconds || 30;
-      setSuccessMsg(`⚡ LeetCode sync started in background! Auto-refreshing data in ${waitSeconds}s...`);
-      setSyncCountdown(waitSeconds);
-      setSyncingLeetcode(false);
-
-      // Countdown ticker
-      let remaining = waitSeconds;
-      const ticker = setInterval(() => {
-        remaining -= 1;
-        if (remaining <= 0) {
-          clearInterval(ticker);
-          setSyncCountdown(null);
-        } else {
-          setSyncCountdown(remaining);
-          setSuccessMsg(`⚡ LeetCode sync running in background... Auto-refreshing in ${remaining}s`);
-        }
-      }, 1000);
-
-      // After wait, refresh the report data from PostgreSQL
-      await new Promise<void>((resolve) => setTimeout(resolve, waitSeconds * 1000));
-      clearInterval(ticker);
-      setSyncCountdown(null);
-
+      // Refresh report data from PostgreSQL with latest snapshots
       const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
       const refreshedData = await getReportData(
         {
@@ -648,10 +632,13 @@ export default function ReportsPage() {
         true
       );
       setReportData(refreshedData);
-      setSuccessMsg(`✅ LeetCode data refreshed successfully! Latest solve counts are now displayed.`);
+      window.dispatchEvent(new CustomEvent('student-synced'));
+      window.dispatchEvent(new CustomEvent('sheets-synced'));
     } catch (err: any) {
       setError(extractErrorMessage(err, 'Failed to sync LeetCode data for filtered students'));
+    } finally {
       setSyncingLeetcode(false);
+      setSyncCountdown(null);
     }
   };
 

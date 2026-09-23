@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
-import { statsApi, getCachedData } from '../services/api.js';
+import { statsApi, studentApi, getCachedData } from '../services/api.js';
 import { syncReportStudents } from '../api/reports.js';
 import { DashboardStats } from '../types/index.js';
 import {
@@ -67,8 +67,39 @@ export const DashboardPage: React.FC = () => {
       setSyncingLeetCode(true);
       setSyncMessage(null);
       setError(null);
-      const res = await syncReportStudents();
-      setSyncMessage(`⚡ Live LeetCode sync completed! ${res.successful ?? 'All'} student records synchronized.`);
+
+      // Fetch student IDs to safely chunk sync in pools of 4 (eliminating Vercel serverless timeouts)
+      let studentIds: string[] = [];
+      try {
+        const studentList = await studentApi.getStudents(undefined, true);
+        if (Array.isArray(studentList)) {
+          studentIds = studentList.filter((s) => s.leetcode_username).map((s) => s.id);
+        }
+      } catch {
+        // fallback
+      }
+
+      if (studentIds.length > 0) {
+        const batchSize = 4;
+        let totalSuccess = 0;
+        for (let i = 0; i < studentIds.length; i += batchSize) {
+          const chunk = studentIds.slice(i, i + batchSize);
+          const currentProcessed = Math.min(i + chunk.length, studentIds.length);
+          const percent = Math.round((currentProcessed / studentIds.length) * 100);
+          setSyncMessage(`⚡ Live syncing LeetCode stats: ${currentProcessed}/${studentIds.length} students (${percent}%)... Please wait.`);
+          try {
+            const res = await syncReportStudents({ studentIds: chunk });
+            totalSuccess += (res.successful ?? chunk.length);
+          } catch (chunkErr) {
+            console.warn(`[Sync Chunk Warning] Batch ${Math.floor(i / batchSize) + 1} note:`, chunkErr);
+          }
+        }
+        setSyncMessage(`⚡ Live LeetCode sync completed! ${totalSuccess}/${studentIds.length} student records synchronized.`);
+      } else {
+        const res = await syncReportStudents();
+        setSyncMessage(`⚡ Live LeetCode sync completed! ${res.successful ?? 'All'} student records synchronized.`);
+      }
+
       await fetchStats(true);
       window.dispatchEvent(new CustomEvent('student-synced'));
     } catch (err: any) {
