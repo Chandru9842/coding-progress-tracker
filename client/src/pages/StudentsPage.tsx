@@ -1251,65 +1251,6 @@ export const StudentsPage: React.FC = () => {
     setQuickAssignStaffId('');
   };
 
-  const handleSplitStudentsEvenly = () => {
-    // 1. Determine mentors to split among
-    let mentorsToSplit: string[] = [];
-    if (!selectedMentorFilters.has('ALL') && selectedMentorFilters.size >= 2) {
-      mentorsToSplit = Array.from(selectedMentorFilters).filter((m) => m !== 'Unassigned');
-    } else {
-      mentorsToSplit = detectedMentors.filter((m) => m !== 'Unassigned');
-    }
-
-    if (mentorsToSplit.length < 2) {
-      if (staffList.length >= 2) {
-        mentorsToSplit = staffList.slice(0, 2).map((s) => s.name);
-      } else {
-        alert('Please select or configure at least 2 mentors to split students evenly ("half and half").');
-        return;
-      }
-    }
-
-    // 2. Determine target students to distribute
-    const targetRows = getFilteredImportRows().filter((r) => r.isValid);
-    if (targetRows.length === 0) {
-      alert('No valid students to distribute.');
-      return;
-    }
-
-    const totalStudents = targetRows.length;
-    const numMentors = mentorsToSplit.length;
-    const perMentor = Math.ceil(totalStudents / numMentors);
-
-    const assignments = new Map<string, { mentorName: string; staffId?: string }>();
-    targetRows.forEach((r, idx) => {
-      const mentorIndex = Math.min(Math.floor(idx / perMentor), numMentors - 1);
-      const mentorName = mentorsToSplit[mentorIndex];
-      const matched = mentorMappings[mentorName] && mentorMappings[mentorName] !== 'NONE' && mentorMappings[mentorName] !== 'AUTO'
-        ? mentorMappings[mentorName]
-        : findMatchingStaff(mentorName, staffList)?.id;
-      assignments.set(r.id, { mentorName, staffId: matched });
-    });
-
-    setImportRows((prev) =>
-      prev.map((r) => {
-        const a = assignments.get(r.id);
-        if (!a) return r;
-        return {
-          ...r,
-          cleanMentor: a.mentorName,
-          mentorStaffId: a.staffId || undefined,
-        };
-      })
-    );
-
-    // Breakdown message
-    const summary = mentorsToSplit.map((m) => {
-      const count = targetRows.filter((_, idx) => Math.min(Math.floor(idx / perMentor), numMentors - 1) === mentorsToSplit.indexOf(m)).length;
-      return `${m} (${count})`;
-    }).join(', ');
-
-    alert(`✨ Successfully distributed ${totalStudents} students evenly ("half and half") across ${numMentors} mentors: ${summary}!`);
-  };
 
   const getFilteredImportRows = () => {
     return importRows.filter((row) => {
@@ -3550,30 +3491,6 @@ export const StudentsPage: React.FC = () => {
                           </label>
                         )}
 
-                        {/* Split Evenly (Half & Half) Button */}
-                        <button
-                          type="button"
-                          onClick={handleSplitStudentsEvenly}
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '0.35rem',
-                            padding: '0.28rem 0.65rem',
-                            borderRadius: '16px',
-                            border: '1px solid rgba(129, 140, 248, 0.4)',
-                            backgroundColor: 'rgba(129, 140, 248, 0.15)',
-                            color: '#a5b4fc',
-                            fontWeight: 700,
-                            fontSize: '0.75rem',
-                            cursor: 'pointer',
-                            marginLeft: '0.3rem',
-                            transition: 'all 0.15s ease',
-                          }}
-                          title="Distribute students equally between selected mentors (half and half)"
-                        >
-                          <span>⚖️</span>
-                          <span>Split Evenly (Half &amp; Half)</span>
-                        </button>
                       </div>
 
                       {/* Search inside preview */}
@@ -3845,24 +3762,6 @@ export const StudentsPage: React.FC = () => {
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                       <button
                         type="button"
-                        onClick={handleSplitStudentsEvenly}
-                        style={{
-                          background: 'rgba(129, 140, 248, 0.15)',
-                          border: '1px solid rgba(129, 140, 248, 0.35)',
-                          borderRadius: '4px',
-                          padding: '0.2rem 0.5rem',
-                          color: '#a5b4fc',
-                          cursor: 'pointer',
-                          fontSize: '0.78rem',
-                          fontWeight: 600,
-                        }}
-                        title="Split students equally (half and half) across selected mentors"
-                      >
-                        ⚖️ Split (Half &amp; Half)
-                      </button>
-                      <span style={{ color: 'var(--text-muted)' }}>|</span>
-                      <button
-                        type="button"
                         onClick={() => setImportRows((prev) => prev.map((r) => ({ ...r, selected: r.isValid })))}
                         style={{ background: 'rgba(99, 102, 241, 0.15)', border: '1px solid rgba(99, 102, 241, 0.3)', borderRadius: '4px', padding: '0.2rem 0.5rem', color: '#818cf8', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600 }}
                       >
@@ -4085,7 +3984,7 @@ export const StudentsPage: React.FC = () => {
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                 {importRows.length > 0 && (
                   <span>
-                    Ready to import <strong>{importRows.filter((r) => r.selected && r.isValid).length}</strong> of {importRows.length} valid student(s) across all mentors into selected Batch.
+                    Ready to import <strong>{importRows.filter((r) => r.isValid).length}</strong> valid student(s) from sheet into selected Batch.
                   </span>
                 )}
               </div>
