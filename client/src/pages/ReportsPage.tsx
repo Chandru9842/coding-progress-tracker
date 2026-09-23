@@ -581,18 +581,34 @@ export default function ReportsPage() {
       ? displayedStudents.map((s) => s.id)
       : undefined;
 
-    // Resolve full list of student IDs to sync from displayed report students
+    // Resolve candidates matching currently filtered students
+    let candidateStudents = (displayedStudents && displayedStudents.length > 0)
+      ? displayedStudents
+      : (reportData?.students && reportData.students.length > 0)
+        ? reportData.students
+        : [];
+
+    // If a mentor is selected, strictly match that mentor's students
+    if (staffId) {
+      const selectedMentorObj = allMentors.find((m) => m.id === staffId);
+      const mentorMatchName = selectedMentorObj?.name?.trim().toLowerCase();
+      candidateStudents = candidateStudents.filter((s) => {
+        if (staffId === 'UNASSIGNED') {
+          return !s.mentor_name || s.mentor_name === 'Unassigned';
+        }
+        if (s.mentor_id === staffId) return true;
+        if (mentorMatchName && s.mentor_name && s.mentor_name.trim().toLowerCase().includes(mentorMatchName)) return true;
+        return false;
+      });
+    }
+
     const candidateIds = targetedIds && targetedIds.length > 0
       ? targetedIds
-      : (displayedStudents && displayedStudents.length > 0)
-        ? displayedStudents.filter((s) => s.leetcode_username).map((s) => s.id)
-        : (reportData?.students && reportData.students.length > 0)
-          ? reportData.students.filter((s) => s.leetcode_username).map((s) => s.id)
-          : [];
+      : candidateStudents.filter((s) => s.leetcode_username).map((s) => s.id);
 
     try {
       if (candidateIds.length > 0) {
-        // Chunk into safe batches of 3 students (each chunk takes 1.2-1.8s, completely avoiding Vercel 10s timeout)
+        // Chunk into safe batches of 3 students (runs each chunk in ~1.5s with live in-place table updates)
         const batchSize = 3;
         let totalSuccess = 0;
         const totalToSync = candidateIds.length;
@@ -603,17 +619,49 @@ export default function ReportsPage() {
           const currentProcessed = Math.min(i + chunk.length, totalToSync);
           const percent = Math.round((currentProcessed / totalToSync) * 100);
           const elapsed = Math.floor((Date.now() - startTime) / 1000);
-          const estRemaining = i > 0
-            ? Math.max(0, Math.round(((totalToSync - i) / i) * elapsed))
-            : Math.max(0, Math.ceil((totalToSync - currentProcessed) * 0.6));
+          const remainingStudents = totalToSync - currentProcessed;
+          const remainingChunks = Math.ceil(remainingStudents / batchSize);
+          const estRemaining = Math.max(1, remainingChunks * 2);
 
-          setSuccessMsg(`⚡ Live syncing LeetCode stats: ${currentProcessed} / ${totalToSync} students (${percent}%) • Elapsed: ${elapsed}s • Remaining: ~${estRemaining}s... Please wait.`);
+          setSuccessMsg(`⚡ Live syncing LeetCode stats: ${currentProcessed} / ${totalToSync} students (${percent}%) • Elapsed: ${elapsed}s • Remaining: ~${estRemaining}s...`);
 
           try {
             const chunkRes = await syncReportStudents({
               studentIds: chunk,
             });
             totalSuccess += (chunkRes.successful ?? chunk.length);
+
+            // Live in-place row update so user sees numbers increment chunk-by-chunk!
+            if (chunkRes?.results && Array.isArray(chunkRes.results)) {
+              const statsMap = new Map<string, any>();
+              chunkRes.results.forEach((r: any) => {
+                if (r.studentId && r.stats) statsMap.set(r.studentId, r.stats);
+              });
+              if (statsMap.size > 0) {
+                setReportData((prev) => {
+                  if (!prev) return prev;
+                  return {
+                    ...prev,
+                    students: prev.students.map((st) => {
+                      const newStats = statsMap.get(st.id);
+                      if (!newStats) return st;
+                      return {
+                        ...st,
+                        total_solved: newStats.totalSolved ?? st.total_solved,
+                        easy_solved: newStats.easySolved ?? st.easy_solved,
+                        medium_solved: newStats.mediumSolved ?? st.medium_solved,
+                        hard_solved: newStats.hardSolved ?? st.hard_solved,
+                        overall_total: newStats.totalSolved ?? st.overall_total,
+                        overall_easy: newStats.easySolved ?? st.overall_easy,
+                        overall_medium: newStats.mediumSolved ?? st.overall_medium,
+                        overall_hard: newStats.hardSolved ?? st.overall_hard,
+                        has_activity: (newStats.totalSolved ?? 0) > 0,
+                      };
+                    }),
+                  };
+                });
+              }
+            }
           } catch (chunkErr) {
             console.warn(`[Sync Chunk Warning] Batch ${Math.floor(i / batchSize) + 1} note:`, chunkErr);
           }
@@ -634,26 +682,30 @@ export default function ReportsPage() {
         setSuccessMsg(`✅ ${res.message || 'Live LeetCode data synchronized!'}`);
       }
 
-      // Refresh report data from PostgreSQL with latest snapshots
-      const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
-      const refreshedData = await getReportData(
-        {
-          academicYear: academicYear || undefined,
-          department: department || undefined,
-          batchId: targetBatchId || undefined,
-          sectionId: targetSecId || undefined,
-          allocationBatchId: allocationBatchId || undefined,
-          staffId: staffId || undefined,
-          fromDate: activeFrom || undefined,
-          toDate: activeTo || undefined,
-          sortBy,
-          sortOrder,
-          activityStatus,
-          minProblems: (parsedMin !== undefined && !isNaN(parsedMin)) ? parsedMin : undefined,
-        },
-        true
-      );
-      setReportData(refreshedData);
+      // Refresh report data safely without overwriting live table state on transient error
+      try {
+        const parsedMin = minProblems.trim() ? parseInt(minProblems.trim(), 10) : undefined;
+        const refreshedData = await getReportData(
+          {
+            academicYear: academicYear || undefined,
+            department: department || undefined,
+            batchId: targetBatchId || undefined,
+            sectionId: targetSecId || undefined,
+            allocationBatchId: allocationBatchId || undefined,
+            staffId: staffId || undefined,
+            fromDate: activeFrom || undefined,
+            toDate: activeTo || undefined,
+            sortBy,
+            sortOrder,
+            activityStatus,
+            minProblems: (parsedMin !== undefined && !isNaN(parsedMin)) ? parsedMin : undefined,
+          },
+          true
+        );
+        setReportData(refreshedData);
+      } catch (refreshErr) {
+        console.warn('[Sync Notice] Could not immediately refresh summary metrics:', refreshErr);
+      }
       window.dispatchEvent(new CustomEvent('student-synced'));
       window.dispatchEvent(new CustomEvent('sheets-synced'));
     } catch (err: any) {

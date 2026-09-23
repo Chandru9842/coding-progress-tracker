@@ -150,19 +150,15 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
         method: 'POST',
         headers: leetHeaders,
         body: JSON.stringify(gqlQuery),
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(2800),
       });
       if (fetchRes.ok) {
         gqlData = await fetchRes.json();
       } else {
         throw new Error(`LeetCode GraphQL responded with HTTP ${fetchRes.status}`);
       }
-    } catch (fetchErr) {
-      const gqlRes = await axios.post('https://leetcode.com/graphql', gqlQuery, {
-        headers: leetHeaders,
-        timeout: 8000,
-      });
-      gqlData = gqlRes.data;
+    } catch (fetchErr: any) {
+      // Direct failover to proxy backup
     }
 
     // Check if LeetCode explicitly returned "That user does not exist."
@@ -253,7 +249,7 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
 
   // 2. Try High-Availability Backup: Faisal Shohag Vercel LeetCode API for exact cleanUsername
   try {
-    const backupRes = await axios.get(`https://leetcode-api-faisalshohag.vercel.app/${encodeURIComponent(cleanUsername)}`, { timeout: 7000 });
+    const backupRes = await axios.get(`https://leetcode-api-faisalshohag.vercel.app/${encodeURIComponent(cleanUsername)}`, { timeout: 3500 });
     if (backupRes.data) {
       if (Array.isArray(backupRes.data.errors) && backupRes.data.errors.some((e: any) => (e.message || '').toLowerCase().includes('user does not exist'))) {
         const notFoundErr: any = new Error(`LeetCode user '@${cleanUsername}' does not exist.`);
@@ -322,7 +318,7 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
 
   // 3. Try Tertiary Backup: Alfa LeetCode Proxy for exact cleanUsername
   try {
-    const alfaRes = await axios.get(`https://alfa-leetcode-api.onrender.com/userProfile/${encodeURIComponent(cleanUsername)}`, { timeout: 7000 });
+    const alfaRes = await axios.get(`https://alfa-leetcode-api.onrender.com/userProfile/${encodeURIComponent(cleanUsername)}`, { timeout: 3000 });
     if (alfaRes.data) {
       if (Array.isArray(alfaRes.data.errors) && alfaRes.data.errors.some((e: any) => (e.message || '').toLowerCase().includes('user does not exist'))) {
         const notFoundErr: any = new Error(`LeetCode user '@${cleanUsername}' does not exist.`);
@@ -1054,7 +1050,7 @@ export async function syncFilteredStudentsLeetCode(
   }
 
   // Run student syncing concurrently with a pool of 10 workers and adaptive serverless budget
-  const MAX_SAFE_EXECUTION_MS = process.env.VERCEL ? 7500 : 60000;
+  const MAX_SAFE_EXECUTION_MS = process.env.VERCEL ? 5500 : 30000;
   const results = await runConcurrentTasks(
     studentList,
     10,

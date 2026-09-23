@@ -41,6 +41,8 @@ export interface StudentReportItem {
   name: string;
   department: string;
   leetcode_username?: string | null;
+  mentor_name?: string | null;
+  mentor_id?: string | null;
   batch_id: string;
   section_id: string;
   allocation_batch_id?: string | null;
