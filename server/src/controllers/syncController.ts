@@ -382,3 +382,18 @@ export async function retryAllFailedStudents(req: AuthenticatedRequest, res: Res
     res.status(500).json({ error: 'Failed to retry sync errors' });
   }
 }
+
+export async function getUnsyncedCandidates(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    const limit = parseInt(req.query.limit as string, 10) || 60;
+    const candidates = await leetcodeService.getUnsyncedStudentCandidates(limit);
+    res.status(200).json({ candidates, count: candidates.length });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to retrieve unsynced candidates' });
+  }
+}
+

@@ -696,6 +696,11 @@ export async function syncStudentLeetCode(
 
       if (offset === 0) todaySnapshot = snapData;
     } else {
+      // If this is a past date (offset > 0) and we already have a snapshot for it, skip the redundant database upsert
+      if (offset > 0 && existing) {
+        continue;
+      }
+
       const snapData = await prisma.dailyCodingSnapshot.upsert({
         where: {
           student_id_snapshot_date: {
@@ -1049,11 +1054,11 @@ export async function syncFilteredStudentsLeetCode(
     studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
   }
 
-  // Run student syncing concurrently with a pool of 10 workers and adaptive serverless budget
-  const MAX_SAFE_EXECUTION_MS = process.env.VERCEL ? 5500 : 30000;
+  // Run student syncing concurrently with a pool of 12 workers and adaptive serverless budget
+  const MAX_SAFE_EXECUTION_MS = process.env.VERCEL ? 8500 : 30000;
   const results = await runConcurrentTasks(
     studentList,
-    10,
+    12,
     async (st) => {
       try {
         const res = await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
@@ -1064,12 +1069,6 @@ export async function syncFilteredStudentsLeetCode(
     },
     MAX_SAFE_EXECUTION_MS
   );
-
-  // Trigger Google Sheet sync non-blockingly in the background so it never holds up or times out the live report sync
-  const batchIds = studentList.map((s) => s.batch_id);
-  syncGoogleSheetsForBatchIds(batchIds, user).catch((sheetErr) => {
-    console.warn('[LeetCode Filtered Sync] Background Google Sheet sync notice:', sheetErr);
-  });
 
   const durationMs = Date.now() - startTime;
   const successfulCount = results.filter((r) => r.success).length;
@@ -1292,13 +1291,46 @@ export async function runPeriodicAutoSync(): Promise<{
   let results: any[] = [];
   try {
     if (!process.env.DATABASE_URL) {
-      studentList = inMemoryStore.students.filter((s) => s.leetcode_username).map((s) => ({ id: s.id, batch_id: s.batch_id }));
+      const candidates = inMemoryStore.students.filter((s) => s.leetcode_username);
+      // Sort: students with no snapshots first, then 0 total solved
+      candidates.sort((a, b) => {
+        const snapsA = inMemoryStore.snapshots.filter((snap) => snap.student_id === a.id);
+        const snapsB = inMemoryStore.snapshots.filter((snap) => snap.student_id === b.id);
+        const scoreA = snapsA.length === 0 ? 0 : (snapsA[0].total_solved === 0 ? 1 : 2);
+        const scoreB = snapsB.length === 0 ? 0 : (snapsB[0].total_solved === 0 ? 1 : 2);
+        return scoreA - scoreB;
+      });
+      studentList = candidates.map((s) => ({ id: s.id, batch_id: s.batch_id }));
     } else {
       const students = await prisma.student.findMany({
         where: { leetcode_username: { not: null } },
-        select: { id: true, batch_id: true },
+        select: {
+          id: true,
+          batch_id: true,
+          snapshots: {
+            take: 1,
+            orderBy: { snapshot_date: 'desc' },
+            select: { snapshot_date: true, total_solved: true },
+          },
+        },
       });
-      studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
+
+      // Priority ordering:
+      // 1. Students with NO snapshots (Pending sync)
+      // 2. Students with total_solved === 0
+      // 3. Students whose snapshot is oldest
+      const sortedStudents = [...students].sort((a, b) => {
+        const snapA = a.snapshots[0];
+        const snapB = b.snapshots[0];
+        const scoreA = !snapA ? 0 : (snapA.total_solved === 0 ? 1 : 2);
+        const scoreB = !snapB ? 0 : (snapB.total_solved === 0 ? 1 : 2);
+        if (scoreA !== scoreB) return scoreA - scoreB;
+        if (!snapA) return -1;
+        if (!snapB) return 1;
+        return new Date(snapA.snapshot_date).getTime() - new Date(snapB.snapshot_date).getTime();
+      });
+
+      studentList = sortedStudents.map((s) => ({ id: s.id, batch_id: s.batch_id }));
     }
 
     // Concurrent execution with pool of 15 workers for lightning execution with 8.5s safe time budget
@@ -1410,4 +1442,106 @@ export async function runDailyMidnightReconciliation(): Promise<{
     timestamp: new Date().toISOString(),
   };
 }
+
+export async function getUnsyncedStudentCandidates(limit: number = 60): Promise<Array<{
+  id: string;
+  name: string;
+  register_number: string;
+  leetcode_username: string;
+  reason: 'NO_SNAPSHOT' | 'ZERO_SOLVED' | 'STALE';
+}>> {
+  if (!process.env.DATABASE_URL) {
+    const todayStr = getISTDateString(0);
+    const unsynced: any[] = [];
+    for (const s of inMemoryStore.students) {
+      if (!s.leetcode_username) continue;
+      const snaps = inMemoryStore.snapshots.filter((snap) => snap.student_id === s.id);
+      if (snaps.length === 0) {
+        unsynced.push({
+          id: s.id,
+          name: s.name,
+          register_number: s.register_number,
+          leetcode_username: s.leetcode_username,
+          reason: 'NO_SNAPSHOT',
+        });
+      } else {
+        const latest = snaps.sort((a, b) => new Date(b.snapshot_date).getTime() - new Date(a.snapshot_date).getTime())[0];
+        if ((latest.total_solved || 0) === 0) {
+          unsynced.push({
+            id: s.id,
+            name: s.name,
+            register_number: s.register_number,
+            leetcode_username: s.leetcode_username,
+            reason: 'ZERO_SOLVED',
+          });
+        } else if (toISTDateString(latest.snapshot_date) !== todayStr) {
+          unsynced.push({
+            id: s.id,
+            name: s.name,
+            register_number: s.register_number,
+            leetcode_username: s.leetcode_username,
+            reason: 'STALE',
+          });
+        }
+      }
+      if (unsynced.length >= limit) break;
+    }
+    return unsynced;
+  }
+
+  const todayStr = getISTDateString(0);
+  const students = await prisma.student.findMany({
+    where: { leetcode_username: { not: null } },
+    select: {
+      id: true,
+      name: true,
+      register_number: true,
+      leetcode_username: true,
+      snapshots: {
+        take: 1,
+        orderBy: { snapshot_date: 'desc' },
+        select: { snapshot_date: true, total_solved: true },
+      },
+    },
+  });
+
+  const candidates: any[] = [];
+  for (const st of students) {
+    if (!st.leetcode_username) continue;
+    const snap = st.snapshots[0];
+    if (!snap) {
+      candidates.push({
+        id: st.id,
+        name: st.name,
+        register_number: st.register_number,
+        leetcode_username: st.leetcode_username,
+        reason: 'NO_SNAPSHOT',
+      });
+    } else if (snap.total_solved === 0) {
+      candidates.push({
+        id: st.id,
+        name: st.name,
+        register_number: st.register_number,
+        leetcode_username: st.leetcode_username,
+        reason: 'ZERO_SOLVED',
+      });
+    } else if (toISTDateString(snap.snapshot_date) !== todayStr) {
+      candidates.push({
+        id: st.id,
+        name: st.name,
+        register_number: st.register_number,
+        leetcode_username: st.leetcode_username,
+        reason: 'STALE',
+      });
+    }
+  }
+
+  candidates.sort((a, b) => {
+    const order: Record<string, number> = { NO_SNAPSHOT: 0, ZERO_SOLVED: 1, STALE: 2 };
+    return (order[a.reason] ?? 3) - (order[b.reason] ?? 3);
+  });
+
+  return candidates.slice(0, limit);
+}
+
 

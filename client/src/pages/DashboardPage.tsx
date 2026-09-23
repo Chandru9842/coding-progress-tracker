@@ -80,7 +80,7 @@ export const DashboardPage: React.FC = () => {
       }
 
       if (studentIds.length > 0) {
-        const batchSize = 4;
+        const batchSize = 10;
         let totalSuccess = 0;
         for (let i = 0; i < studentIds.length; i += batchSize) {
           const chunk = studentIds.slice(i, i + batchSize);

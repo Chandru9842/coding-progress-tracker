@@ -6,6 +6,7 @@ import { getCachedData, staffApi } from '../services/api.js';
 import { GoogleSheetsIntegration } from '../components/GoogleSheetsIntegration.js';
 import { SyncErrorsView } from '../components/SyncErrorsView.js';
 import { SearchableMentorSelect } from '../components/SearchableMentorSelect.js';
+import { autoSyncService } from '../services/autoSyncService.js';
 import {
   getReportFilters,
   getReportData,
@@ -246,6 +247,9 @@ export default function ReportsPage() {
 
       const data = await getReportData(fetchParams);
       setReportData(data);
+      if (data?.students && data.students.length > 0) {
+        autoSyncService.enqueueStudents(data.students);
+      }
     } catch (err: any) {
       setError(extractErrorMessage(err, 'Failed to load report data'));
     } finally {
@@ -334,6 +338,45 @@ export default function ReportsPage() {
   const [syncCountdown, setSyncCountdown] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  // Live in-place row update when background auto-sync finishes syncing any student
+  useEffect(() => {
+    const handleStudentSynced = (e: any) => {
+      const results = e.detail?.results;
+      if (!Array.isArray(results) || results.length === 0) return;
+      const statsMap = new Map<string, any>();
+      results.forEach((r: any) => {
+        if (r.studentId && r.success && r.stats) statsMap.set(r.studentId, r.stats);
+      });
+      if (statsMap.size === 0) return;
+
+      setReportData((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          students: prev.students.map((st) => {
+            const newStats = statsMap.get(st.id);
+            if (!newStats) return st;
+            return {
+              ...st,
+              total_solved: newStats.totalSolved ?? st.total_solved,
+              easy_solved: newStats.easySolved ?? st.easy_solved,
+              medium_solved: newStats.mediumSolved ?? st.medium_solved,
+              hard_solved: newStats.hardSolved ?? st.hard_solved,
+              overall_total: newStats.totalSolved ?? st.overall_total,
+              overall_easy: newStats.easySolved ?? st.overall_easy,
+              overall_medium: newStats.mediumSolved ?? st.overall_medium,
+              overall_hard: newStats.hardSolved ?? st.overall_hard,
+              has_activity: (newStats.totalSolved ?? 0) > 0,
+            };
+          }),
+        };
+      });
+    };
+
+    window.addEventListener('student-synced', handleStudentSynced);
+    return () => window.removeEventListener('student-synced', handleStudentSynced);
+  }, []);
 
   // Report Selection & Deletion Handlers
   const handleToggleSelectReport = (reportId: string, e?: React.MouseEvent) => {
@@ -608,20 +651,20 @@ export default function ReportsPage() {
 
     try {
       if (candidateIds.length > 0) {
-        // Chunk into safe batches of 3 students (runs each chunk in ~1.5s with live in-place table updates)
-        const batchSize = 3;
+        // Chunk into high-throughput batches of 10 students (runs concurrently on server with 12 workers)
+        const batchSize = 10;
         let totalSuccess = 0;
         const totalToSync = candidateIds.length;
         const startTime = Date.now();
+        // Calibrated standard target duration: 30-45s model
+        const targetDuration = Math.min(45, Math.max(12, Math.ceil(totalToSync * 0.35)));
 
         for (let i = 0; i < totalToSync; i += batchSize) {
           const chunk = candidateIds.slice(i, i + batchSize);
           const currentProcessed = Math.min(i + chunk.length, totalToSync);
           const percent = Math.round((currentProcessed / totalToSync) * 100);
           const elapsed = Math.floor((Date.now() - startTime) / 1000);
-          const remainingStudents = totalToSync - currentProcessed;
-          const remainingChunks = Math.ceil(remainingStudents / batchSize);
-          const estRemaining = Math.max(1, remainingChunks * 2);
+          const estRemaining = Math.max(1, Math.min(45, Math.round((1 - (currentProcessed / totalToSync)) * targetDuration)));
 
           setSuccessMsg(`⚡ Live syncing LeetCode stats: ${currentProcessed} / ${totalToSync} students (${percent}%) • Elapsed: ${elapsed}s • Remaining: ~${estRemaining}s...`);
 

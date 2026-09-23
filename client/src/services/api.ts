@@ -672,6 +672,7 @@ export const studentApi = {
     createdCount: number;
     updatedCount: number;
     failedCount: number;
+    unsyncedStudentIds?: string[];
     errors: Array<{ register_number: string; error: string }>;
   }> => {
     clearClientCache('students_');

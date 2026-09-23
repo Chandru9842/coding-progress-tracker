@@ -16,6 +16,7 @@ import {
   getSyncErrors,
   retryFailedStudent,
   retryAllFailedStudents,
+  getUnsyncedCandidates,
 } from '../controllers/syncController.js';
 
 const router = Router();
@@ -23,6 +24,7 @@ const router = Router();
 // Status & Manual Sync Endpoints
 router.get('/sync/status', requireAuth, requireStaff, getSyncStatus);
 router.get('/sync/active-status', requireAuth, requireStaff, getActiveSyncStatus);
+router.get('/sync/unsynced-candidates', requireAuth, requireStaff, getUnsyncedCandidates);
 router.post('/sync/student/:studentId', requireAuth, requireStaff, syncStudent);
 router.post('/sync/batch/:batchId', requireAuth, requireStaff, syncBatch);
 router.post('/sync/section/:sectionId', requireAuth, requireStaff, syncSection);

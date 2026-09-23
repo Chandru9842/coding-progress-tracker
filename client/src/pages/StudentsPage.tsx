@@ -4,6 +4,7 @@ import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
 import { studentApi, batchApi, staffApi, syncApi, Student, Batch, StaffUser, extractErrorMessage, getCachedData, clearClientCache } from '../services/api.js';
 import { syncReportStudents } from '../api/reports.js';
+import { autoSyncService } from '../services/autoSyncService.js';
 import {
   Users,
   UserPlus,
@@ -304,6 +305,9 @@ export const StudentsPage: React.FC = () => {
         const cached = getCachedData<Student[]>(cacheKey);
         if (cached) {
           setStudents(cached);
+          if (Array.isArray(cached) && cached.length > 0) {
+            autoSyncService.enqueueStudents(cached);
+          }
           setLoading(false);
           return;
         }
@@ -313,12 +317,55 @@ export const StudentsPage: React.FC = () => {
       }
       const data = await studentApi.getStudents(params, bypassCache);
       setStudents(data);
+      if (Array.isArray(data) && data.length > 0) {
+        autoSyncService.enqueueStudents(data);
+      }
     } catch (err: any) {
       setError(extractErrorMessage(err, 'Failed to load student roster'));
     } finally {
       setLoading(false);
     }
   };
+
+  // Live in-place row update when background auto-sync updates any student
+  useEffect(() => {
+    const handleStudentSynced = (e: any) => {
+      const results = e.detail?.results;
+      if (!Array.isArray(results) || results.length === 0) return;
+      const statsMap = new Map<string, any>();
+      results.forEach((r: any) => {
+        if (r.studentId && r.success && r.stats) statsMap.set(r.studentId, r.stats);
+      });
+      if (statsMap.size === 0) return;
+
+      setStudents((prevList) =>
+        prevList.map((st) => {
+          const match = statsMap.get(st.id);
+          if (match) {
+            const newSnap = {
+              id: `live_${st.id}_${Date.now()}`,
+              student_id: st.id,
+              snapshot_date: new Date().toISOString(),
+              total_solved: match.totalSolved ?? 0,
+              easy_solved: match.easySolved ?? 0,
+              medium_solved: match.mediumSolved ?? 0,
+              hard_solved: match.hardSolved ?? 0,
+              ranking: match.ranking ?? 0,
+            };
+            return {
+              ...st,
+              snapshots: [newSnap as any],
+              latest_snapshot: newSnap as any,
+            };
+          }
+          return st;
+        })
+      );
+    };
+
+    window.addEventListener('student-synced', handleStudentSynced);
+    return () => window.removeEventListener('student-synced', handleStudentSynced);
+  }, []);
 
   const handleToggleSelectStudent = (studentId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -526,8 +573,10 @@ export const StudentsPage: React.FC = () => {
     }
 
     const totalToSync = targetIds.length;
-    const batchSize = 3; // Safe chunks of 3 (each chunk ~1.2s - 1.8s, completely avoiding Vercel 10s ceiling)
+    const batchSize = 10; // High-throughput batch of 10 students
     const startTime = Date.now();
+    // Calibrated standard target duration: 30-45s model
+    const targetDuration = Math.min(45, Math.max(12, Math.ceil(totalToSync * 0.35)));
 
     setSyncingAll(true);
     setSyncCompletedSummary(null);
@@ -543,7 +592,7 @@ export const StudentsPage: React.FC = () => {
       errorCount: 0,
       currentStudentName: '',
       elapsedSeconds: 0,
-      estimatedRemainingSeconds: Math.ceil(totalToSync * 0.6),
+      estimatedRemainingSeconds: targetDuration,
       percentage: 0,
     });
 
@@ -553,9 +602,7 @@ export const StudentsPage: React.FC = () => {
       setSyncProgress((prev) => {
         if (!prev.active) return prev;
         const current = prev.current;
-        const remaining = current > 0
-          ? Math.max(0, Math.round(((totalToSync - current) / current) * elapsed))
-          : Math.max(0, Math.ceil(totalToSync * 0.6) - elapsed);
+        const remaining = Math.max(0, Math.min(45, Math.round((1 - (current / totalToSync)) * targetDuration)));
         return {
           ...prev,
           elapsedSeconds: elapsed,
@@ -580,9 +627,7 @@ export const StudentsPage: React.FC = () => {
           .join(', ');
 
         const elapsed = Math.floor((Date.now() - startTime) / 1000);
-        const remaining = i > 0
-          ? Math.max(0, Math.round(((totalToSync - i) / i) * elapsed))
-          : Math.max(0, Math.ceil((totalToSync - currentProcessed) * 0.6));
+        const remaining = Math.max(1, Math.min(45, Math.round((1 - (currentProcessed / totalToSync)) * targetDuration)));
 
         setSyncProgress((prev) => ({
           ...prev,
@@ -1257,6 +1302,11 @@ export const StudentsPage: React.FC = () => {
         failedCount: res.failedCount,
         errors: res.errors,
       });
+
+      // Enqueue any unsynced imported students into background auto-sync immediately
+      if (Array.isArray(res?.unsyncedStudentIds) && res.unsyncedStudentIds.length > 0) {
+        autoSyncService.enqueueStudentIds(res.unsyncedStudentIds);
+      }
 
       // Refresh student roster
       fetchStudents(false);

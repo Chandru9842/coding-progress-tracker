@@ -38,6 +38,7 @@ export interface BulkImportResult {
   createdCount: number;
   updatedCount: number;
   failedCount: number;
+  unsyncedStudentIds?: string[];
   errors: Array<{ register_number: string; error: string }>;
   students: any[];
 }
@@ -497,6 +498,7 @@ export async function bulkImportStudents(
   }
 
   // 4. Synchronously fetch initial LeetCode stats for imported students within time budget
+  let unsyncedStudentIds: string[] = [];
   if (newlyCreatedOrUpdatedIds.length > 0 && process.env.NODE_ENV !== 'test') {
     const authContext = { userId: user.userId, role: user.role };
     console.log(`[Import-Sync] Fetching initial LeetCode stats for ${newlyCreatedOrUpdatedIds.length} imported student(s)...`);
@@ -504,6 +506,7 @@ export async function bulkImportStudents(
     // Process in bounded batches of 10 with time guard so all imported students (e.g. 56) are synced
     const batchSize = 10;
     const idsToSync = newlyCreatedOrUpdatedIds;
+    const syncedIds = new Set<string>();
     const syncDeadline = Date.now() + (process.env.VERCEL ? 6000 : 45000); // Safe serverless time guard
     for (let i = 0; i < idsToSync.length; i += batchSize) {
       if (Date.now() > syncDeadline) {
@@ -515,12 +518,15 @@ export async function bulkImportStudents(
         chunk.map(async (stId) => {
           try {
             await syncStudentLeetCode(stId, authContext, { skipGoogleSheetSync: true });
+            syncedIds.add(stId);
           } catch {
             // Ignore individual fetch errors so import always completes
           }
         })
       );
     }
+
+    unsyncedStudentIds = idsToSync.filter((id) => !syncedIds.has(id));
 
     try {
       await syncAllActiveGoogleSheets();
@@ -538,6 +544,7 @@ export async function bulkImportStudents(
     createdCount,
     updatedCount,
     failedCount,
+    unsyncedStudentIds,
     errors,
     students: processedStudents,
   };
