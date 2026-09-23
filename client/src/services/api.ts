@@ -630,17 +630,31 @@ export const studentApi = {
 
   updateStudent: async (studentId: string, data: Partial<Student>): Promise<Student> => {
     clearClientCache('students_');
-    const res = await api.patch<{ student: Student }>(`/students/${studentId}`, data);
-    return res.data.student;
+    clearClientCache('reports_');
+    const res = await api.patch<{ student?: Student } | Student>(`/students/${studentId}`, data);
+    return (res.data as any)?.student || res.data;
+  },
+
+  bulkAssignMentor: async (studentIds: string[], mentorId: string | null): Promise<{ success: boolean; count: number; mentor_id: string | null }> => {
+    clearClientCache('students_');
+    clearClientCache('reports_');
+    clearClientCache('stats_');
+    const res = await api.post<{ success: boolean; count: number; mentor_id: string | null }>('/students/bulk-assign-mentor', {
+      studentIds,
+      mentorId,
+    });
+    return res.data;
   },
 
   deleteStudent: async (studentId: string): Promise<void> => {
     clearClientCache('students_');
+    clearClientCache('reports_');
     await api.delete(`/students/${studentId}`);
   },
 
   bulkDeleteStudents: async (studentIds: string[]): Promise<void> => {
     clearClientCache('students_');
+    clearClientCache('reports_');
     await api.post('/students/bulk-delete', { studentIds });
   },
 

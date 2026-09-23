@@ -5,6 +5,7 @@ import * as importService from '../services/studentImportService.js';
 import {
   isStaffAuthorizedForStudent,
   isStaffAuthorizedForSection,
+  getAuthorizedStudentIdsForStaff,
 } from '../services/studentAuthorizationService.js';
 import { syncStudentLeetCode } from '../services/leetcodeService.js';
 import { syncAllActiveGoogleSheets } from '../services/googleSheetsService.js';
@@ -158,11 +159,13 @@ export async function updateStudent(req: AuthenticatedRequest, res: Response): P
       current_year,
     });
 
-    if (student && student.leetcode_username) {
+    // Only attempt LeetCode sync if leetcode_username was explicitly supplied/changed
+    if (leetcode_username !== undefined && student && student.leetcode_username) {
       const authUser = { userId: req.user.userId, role: req.user.role as UserRole };
       try {
         await syncStudentLeetCode(student.id, authUser, { skipGoogleSheetSync: true });
-        student = await studentService.getStudentByIdForUser(authUser, student.id);
+        const fresh = await studentService.getStudentByIdForUser(authUser, student.id).catch(() => null);
+        if (fresh) student = fresh;
       } catch (syncErr: any) {
         console.warn(`[Auto-Sync] LeetCode sync for updated student ${student.id} note:`, syncErr?.message || syncErr);
       }
@@ -255,6 +258,43 @@ export async function bulkImportStudents(req: AuthenticatedRequest, res: Respons
   } catch (error: any) {
     const statusCode = error.statusCode || 500;
     res.status(statusCode).json({ error: error.message || 'Failed to bulk import students' });
+  }
+}
+
+export async function bulkAssignMentor(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const { studentIds, mentorId } = req.body;
+    if (!studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
+      res.status(400).json({ error: 'studentIds array is required' });
+      return;
+    }
+
+    const cleanMentorId = (!mentorId || mentorId === 'NONE' || mentorId === 'UNASSIGNED') ? null : String(mentorId).trim();
+
+    // STAFF scope enforcement: staff must be authorized for all selected students
+    if (req.user.role === 'STAFF') {
+      const authList = await getAuthorizedStudentIdsForStaff(req.user.userId);
+      const authSet = new Set(authList);
+      const unauthorized = studentIds.filter((id) => !authSet.has(id));
+      if (unauthorized.length > 0) {
+        res.status(403).json({ error: 'Forbidden: You are not authorized to assign mentors to some of the selected students' });
+        return;
+      }
+    }
+
+    const result = await studentService.bulkAssignMentor(studentIds, cleanMentorId);
+    res.status(200).json({
+      message: cleanMentorId ? `Successfully assigned mentor to ${studentIds.length} student(s)` : `Successfully unassigned mentor from ${studentIds.length} student(s)`,
+      ...result,
+    });
+  } catch (error: any) {
+    const statusCode = error.statusCode || 400;
+    res.status(statusCode).json({ error: error.message || 'Failed to bulk assign mentor' });
   }
 }
 

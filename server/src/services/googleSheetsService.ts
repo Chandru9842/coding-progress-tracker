@@ -208,13 +208,16 @@ export function buildGoogleSheetMatrix(
 
     const secA = a.section ? a.section.name : (a.section_name || '');
     const secB = b.section ? b.section.name : (b.section_name || '');
-    if (secA !== secB) return secA.localeCompare(secB);
+    if (secA !== secB) return secA.localeCompare(secB, undefined, { numeric: true, sensitivity: 'base' });
 
-    const abA = a.allocation_batch ? a.allocation_batch.name : (a.sub_batch || 'N/A');
-    const abB = b.allocation_batch ? b.allocation_batch.name : (b.sub_batch || 'N/A');
-    if (abA !== abB) return abA.localeCompare(abB);
+    // Named allocation batches (Batch-1, Batch-2, etc.) come first in natural order; unassigned at the end
+    const rawAbA = a.allocation_batch ? a.allocation_batch.name : (a.sub_batch && a.sub_batch !== 'N/A' ? a.sub_batch : '');
+    const rawAbB = b.allocation_batch ? b.allocation_batch.name : (b.sub_batch && b.sub_batch !== 'N/A' ? b.sub_batch : '');
+    const abA = rawAbA ? rawAbA : '\uffff';
+    const abB = rawAbB ? rawAbB : '\uffff';
+    if (abA !== abB) return abA.localeCompare(abB, undefined, { numeric: true, sensitivity: 'base' });
 
-    return (a.register_number || '').localeCompare(b.register_number || '');
+    return (a.register_number || '').localeCompare(b.register_number || '', undefined, { numeric: true, sensitivity: 'base' });
   });
 
   const rows: string[][] = sortedStudents.map((st) => {

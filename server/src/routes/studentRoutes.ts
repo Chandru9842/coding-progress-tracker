@@ -8,6 +8,7 @@ import {
   deleteStudent,
   bulkDeleteStudents,
   bulkImportStudents,
+  bulkAssignMentor,
 } from '../controllers/studentController.js';
 
 const router = Router();
@@ -22,6 +23,7 @@ router.get('/students/:studentId', requireStaff, getStudentDetail);
 router.post('/students', requireStaff, createStudent);
 router.post('/students/bulk-import', requireStaff, bulkImportStudents);
 router.post('/students/bulk-delete', requireStaff, bulkDeleteStudents);
+router.post('/students/bulk-assign-mentor', requireStaff, bulkAssignMentor);
 router.patch('/students/:studentId', requireStaff, updateStudent);
 router.delete('/students/:studentId', requireStaff, deleteStudent);
 

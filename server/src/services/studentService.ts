@@ -679,3 +679,59 @@ export async function bulkDeleteStudents(studentIds: string[]) {
   return { message: `${studentIds.length} students deleted successfully` };
 }
 
+export async function bulkAssignMentor(studentIds: string[], mentorId: string | null) {
+  serverCache.invalidate('students_');
+  serverCache.invalidate('student_');
+  serverCache.invalidate('stats_');
+  serverCache.invalidate('batch');
+  serverCache.invalidate('report_');
+
+  if (mentorId) {
+    await validateActiveStaffMentor(mentorId);
+  }
+
+  if (!process.env.DATABASE_URL) {
+    const studentIdSet = new Set(studentIds);
+    inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter(
+      (a) => !studentIdSet.has(a.student_id)
+    );
+
+    if (mentorId) {
+      studentIds.forEach((sId) => {
+        inMemoryStore.staffStudentAssignments.push({
+          id: `ssa_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          staff_id: mentorId,
+          student_id: sId,
+          created_at: new Date(),
+        });
+      });
+    }
+
+    inMemoryStore.students.forEach((st) => {
+      if (studentIdSet.has(st.id)) {
+        st.mentor_id = mentorId;
+      }
+    });
+
+    return { success: true, count: studentIds.length, mentor_id: mentorId };
+  }
+
+  // Delete existing mentor assignments for all selected students
+  await prisma.staffStudentAssignment.deleteMany({
+    where: { student_id: { in: studentIds } },
+  });
+
+  // If assigning a mentor, create new assignments for all selected students
+  if (mentorId) {
+    await prisma.staffStudentAssignment.createMany({
+      data: studentIds.map((sId) => ({
+        staff_id: mentorId,
+        student_id: sId,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  return { success: true, count: studentIds.length, mentor_id: mentorId };
+}
+

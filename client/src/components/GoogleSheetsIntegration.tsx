@@ -230,6 +230,8 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
   const [customStartDate, setCustomStartDate] = useState<string>('');
   const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>('');
   const [selectedDepartment, setSelectedDepartment] = useState<string>('ALL');
+  const [selectedAdminSectionId, setSelectedAdminSectionId] = useState<string>('ALL');
+  const [selectedAdminAllocBatchId, setSelectedAdminAllocBatchId] = useState<string>('ALL');
   const [selectedBatchIds, setSelectedBatchIds] = useState<Set<string>>(new Set());
 
   // Logs Modal state
@@ -357,6 +359,8 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
 
     if (isAdmin) {
       setSelectedDepartment('ALL');
+      setSelectedAdminSectionId('ALL');
+      setSelectedAdminAllocBatchId('ALL');
       const availableYears = Array.from(new Set(assignedBatches.map((b) => `${b.start_year}–${b.end_year}`))).sort();
       setSelectedAcademicYear(availableYears[0] || '');
       setSelectedBatchIds(new Set());
@@ -403,14 +407,34 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
       }
 
       if (isAdmin) {
-        const generatedName = linkName.trim() || `${selectedAcademicYear} ${selectedDepartment !== 'ALL' ? selectedDepartment : 'All Departments'} Master Sheet`;
+        const targetSec = availableAdminSections.find((s) => s.id === selectedAdminSectionId);
+        const targetAlloc = availableAdminAllocBatches.find((ab) => ab.id === selectedAdminAllocBatchId);
+
+        let secLabel = '';
+        if (selectedAdminSectionId !== 'ALL' && targetSec) {
+          secLabel = targetSec.name;
+        }
+        let allocLabel = '';
+        if (selectedAdminAllocBatchId !== 'ALL' && targetAlloc) {
+          allocLabel = targetAlloc.name;
+        }
+
+        const nameParts = [selectedAcademicYear, selectedDepartment !== 'ALL' ? selectedDepartment : 'All Departments'];
+        if (secLabel) nameParts.push(secLabel);
+        if (allocLabel) nameParts.push(allocLabel);
+        nameParts.push('Sheet');
+        const generatedName = linkName.trim() || nameParts.join(' ');
+
         payload = {
           name: generatedName,
           spreadsheet_id: spreadsheetId,
           webhook_url: webhookUrl.trim() || undefined,
           start_date: effectiveStartDate || undefined,
           academic_year: selectedAcademicYear,
-          department: selectedDepartment,
+          department: selectedDepartment !== 'ALL' ? selectedDepartment : undefined,
+          section_id: selectedAdminSectionId !== 'ALL' ? selectedAdminSectionId : undefined,
+          allocation_batch_id: selectedAdminAllocBatchId !== 'ALL' ? selectedAdminAllocBatchId : undefined,
+          batch_ids: targetSec?.batch_id ? [targetSec.batch_id] : undefined,
           is_auto_sync_enabled: true,
           sync_students: true,
           sync_daily_progress: true,
@@ -429,7 +453,7 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
           academic_year: selectedStaffAcademicYear,
           department: targetSec?.department,
           section_id: selectedStaffSectionId,
-          allocation_batch_id: selectedStaffAllocBatchId,
+          allocation_batch_id: selectedStaffAllocBatchId !== 'ALL' ? selectedStaffAllocBatchId : undefined,
           batch_ids: targetSec?.batch_id ? [targetSec.batch_id] : [],
           is_auto_sync_enabled: true,
           sync_students: true,
@@ -474,6 +498,8 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
       setCustomStartDate('');
       setSelectedAcademicYear('');
       setSelectedDepartment('ALL');
+      setSelectedAdminSectionId('ALL');
+      setSelectedAdminAllocBatchId('ALL');
       setSelectedBatchIds(new Set());
       setMessage({ type: 'info', text: `Linking [${optimisticLink.name}] in background...` });
 
@@ -747,6 +773,26 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
     }
   };
 
+  // Filter batches matching selected academic year and department for Admin linking modal
+  const matchingAdminBatches = assignedBatches.filter((b) => {
+    if (selectedAcademicYear && `${b.start_year}–${b.end_year}` !== selectedAcademicYear) return false;
+    if (selectedDepartment && selectedDepartment !== 'ALL' && b.department.toLowerCase() !== selectedDepartment.toLowerCase()) return false;
+    return true;
+  });
+
+  // Extract all sections from matching batches, sorted naturally
+  const availableAdminSections = Array.from(
+    new Map(
+      matchingAdminBatches.flatMap((b) => b.sections || []).map((sec) => [sec.id, sec])
+    ).values()
+  ).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+  // Extract allocation batches from selected section (if a specific section is chosen)
+  const selectedAdminSectionObj = availableAdminSections.find((s) => s.id === selectedAdminSectionId);
+  const availableAdminAllocBatches = (selectedAdminSectionObj?.allocation_batches || []).sort(
+    (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+  );
+
   // Filter linked sheets by search and creator
   const filteredSheetLinks = sheetLinks.filter((link) => {
     const q = searchQuery.toLowerCase().trim();
@@ -756,12 +802,16 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
       link.spreadsheet_id.toLowerCase().includes(q) ||
       (link.academic_year && link.academic_year.toLowerCase().includes(q)) ||
       (link.department && link.department.toLowerCase().includes(q)) ||
-      (link.owner?.name && link.owner.name.toLowerCase().includes(q));
+      ((link as any).section?.name && (link as any).section.name.toLowerCase().includes(q)) ||
+      ((link as any).allocation_batch?.name && (link as any).allocation_batch.name.toLowerCase().includes(q)) ||
+      (link.owner?.name && link.owner.name.toLowerCase().includes(q)) ||
+      (link.owner?.role && link.owner.role.toLowerCase().includes(q));
 
     if (!matchesSearch) return false;
 
     if (creatorFilter === 'ALL') return true;
     if (creatorFilter === 'ADMIN') return link.owner?.role === 'ADMIN';
+    if (creatorFilter === 'STAFF_ALL') return link.owner?.role === 'STAFF';
     const creatorId = link.owner_user_id || link.created_by;
     return creatorId === creatorFilter;
   });
@@ -774,6 +824,9 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
       })
     ).values()
   );
+
+  const staffCreatorsList = creatorsList.filter((c) => c.role === 'STAFF');
+  const adminCreatorsList = creatorsList.filter((c) => c.role === 'ADMIN');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -1192,25 +1245,31 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
             />
           </div>
 
-          {isAdmin && (
-            <div style={{ minWidth: '220px' }}>
-              <select
-                id="select-creator-filter"
-                className="form-input"
-                value={creatorFilter}
-                onChange={(e) => setCreatorFilter(e.target.value)}
-                style={{ width: '100%', fontSize: '0.875rem' }}
-              >
-                <option value="ALL">All Sheets (Admin & Staff)</option>
-                <option value="ADMIN">Admin Linked Sheets Only</option>
-                {creatorsList.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({c.role})
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+          {/* Creator Filter Dropdown for Both Admin & Staff */}
+          <div style={{ minWidth: '240px' }}>
+            <select
+              id="select-creator-filter"
+              className="form-input"
+              value={creatorFilter}
+              onChange={(e) => setCreatorFilter(e.target.value)}
+              style={{ width: '100%', fontSize: '0.875rem' }}
+            >
+              <option value="ALL">🌐 All Sheets (Admin & Staff)</option>
+              <option value="ADMIN">🛡️ Admin Linked Sheets Only</option>
+              <option value="STAFF_ALL">
+                👥 All Staff Sheets ({sheetLinks.filter((l) => l.owner?.role === 'STAFF').length})
+              </option>
+              {staffCreatorsList.length > 0 && (
+                <optgroup label="Filter by Specific Staff Member">
+                  {staffCreatorsList.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      👤 {c.name} (Staff)
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+          </div>
         </div>
 
         {/* Sheets List */}
@@ -1547,6 +1606,8 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
                       onChange={(e) => {
                         setSelectedAcademicYear(e.target.value);
                         setSelectedDepartment('ALL');
+                        setSelectedAdminSectionId('ALL');
+                        setSelectedAdminAllocBatchId('ALL');
                       }}
                       required
                       style={{ width: '100%' }}
@@ -1565,7 +1626,11 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
                     <select
                       className="form-input"
                       value={selectedDepartment}
-                      onChange={(e) => setSelectedDepartment(e.target.value)}
+                      onChange={(e) => {
+                        setSelectedDepartment(e.target.value);
+                        setSelectedAdminSectionId('ALL');
+                        setSelectedAdminAllocBatchId('ALL');
+                      }}
                       style={{ width: '100%' }}
                     >
                       <option value="ALL">All Departments</option>
@@ -1580,6 +1645,54 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
                         )
                       ).sort().map((dept) => (
                         <option key={dept} value={dept}>{dept}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem' }}>
+                      Class / Section (Optional)
+                    </label>
+                    <select
+                      className="form-input"
+                      value={selectedAdminSectionId}
+                      onChange={(e) => {
+                        setSelectedAdminSectionId(e.target.value);
+                        setSelectedAdminAllocBatchId('ALL');
+                      }}
+                      style={{ width: '100%' }}
+                    >
+                      <option value="ALL">
+                        All Sections {availableAdminSections.length > 0 ? `(${availableAdminSections.map(s => s.name).join(', ')})` : ''}
+                      </option>
+                      {availableAdminSections.map((sec) => (
+                        <option key={sec.id} value={sec.id}>
+                          {sec.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem' }}>
+                      Allocation Batch (Optional)
+                    </label>
+                    <select
+                      className="form-input"
+                      value={selectedAdminAllocBatchId}
+                      onChange={(e) => setSelectedAdminAllocBatchId(e.target.value)}
+                      style={{ width: '100%' }}
+                      disabled={selectedAdminSectionId === 'ALL'}
+                    >
+                      <option value="ALL">
+                        {selectedAdminSectionId === 'ALL'
+                          ? 'All Allocation Batches (Select a Section first to filter by sub-batch)'
+                          : 'All Allocation Batches (Entire Section)'}
+                      </option>
+                      {availableAdminAllocBatches.map((ab) => (
+                        <option key={ab.id} value={ab.id}>
+                          {ab.name}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -1605,13 +1718,7 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
                             const secs = staffSections.filter((s) => s.academic_year === newYear);
                             const firstSec = secs[0];
                             setSelectedStaffSectionId(firstSec?.id || '');
-                            if (firstSec?.assignment_mode === 'ALL') {
-                              setSelectedStaffAllocBatchId('ALL');
-                            } else if (firstSec?.allocation_batches && firstSec.allocation_batches.length > 0) {
-                              setSelectedStaffAllocBatchId(firstSec.allocation_batches[0].id);
-                            } else {
-                              setSelectedStaffAllocBatchId('ALL');
-                            }
+                            setSelectedStaffAllocBatchId('ALL');
                           }}
                           required
                           style={{ width: '100%' }}
@@ -1632,14 +1739,7 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
                           onChange={(e) => {
                             const newSecId = e.target.value;
                             setSelectedStaffSectionId(newSecId);
-                            const targetSec = staffSections.find((s) => s.id === newSecId);
-                            if (targetSec?.assignment_mode === 'ALL') {
-                              setSelectedStaffAllocBatchId('ALL');
-                            } else if (targetSec?.allocation_batches && targetSec.allocation_batches.length > 0) {
-                              setSelectedStaffAllocBatchId(targetSec.allocation_batches[0].id);
-                            } else {
-                              setSelectedStaffAllocBatchId('ALL');
-                            }
+                            setSelectedStaffAllocBatchId('ALL');
                           }}
                           required
                           style={{ width: '100%' }}
@@ -1656,16 +1756,15 @@ export const GoogleSheetsIntegration: React.FC<GoogleSheetsIntegrationProps> = (
 
                       <div>
                         <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem' }}>
-                          Allocation Batch / Scope *
+                          Allocation Batch (Optional)
                         </label>
                         <select
                           className="form-input"
                           value={selectedStaffAllocBatchId}
                           onChange={(e) => setSelectedStaffAllocBatchId(e.target.value)}
-                          required
                           style={{ width: '100%' }}
                         >
-                          <option value="ALL">Entire Section (All Students)</option>
+                          <option value="ALL">Entire Section (All Students / All Allocation Batches)</option>
                           {(() => {
                             const currentSec = staffSections.find((s) => s.id === selectedStaffSectionId);
                             if (!currentSec || !currentSec.allocation_batches) return null;

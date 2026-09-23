@@ -427,21 +427,37 @@ export const StudentsPage: React.FC = () => {
 
   const handleTableBulkMentorAssignment = async () => {
     if (!tableQuickAssignStaffId || selectedStudentIds.size === 0) return;
+    const targetMentorId = tableQuickAssignStaffId === 'NONE' || tableQuickAssignStaffId === 'UNASSIGNED' ? null : tableQuickAssignStaffId;
+    const targetStaff = staffList.find((s) => s.id === targetMentorId);
+    const studentIds = Array.from(selectedStudentIds);
+    const targetIdsSet = new Set(selectedStudentIds);
+
     try {
       setSubmitting(true);
-      const studentIds = Array.from(selectedStudentIds);
-      const isUnpair = tableQuickAssignStaffId === 'NONE';
-      await Promise.all(
-        studentIds.map((id) =>
-          studentApi.updateStudent(id, {
-            mentor_id: isUnpair ? '' : tableQuickAssignStaffId,
-          })
-        )
+
+      // 1. Optimistic instant UI update: immediately reflect the new mentor or unassigned state in table
+      setStudents((prev) =>
+        prev.map((s) => {
+          if (!targetIdsSet.has(s.id)) return s;
+          return {
+            ...s,
+            mentor_id: targetMentorId,
+            mentor: targetStaff ? { id: targetStaff.id, name: targetStaff.name, email: targetStaff.email } : null,
+          };
+        })
       );
+
+      // 2. High-speed single API call to bulk assign mentor
+      await studentApi.bulkAssignMentor(studentIds, targetMentorId);
+
       setTableQuickAssignStaffId('');
       setSelectedStudentIds(new Set());
+      setSyncNotice(targetMentorId ? `Successfully assigned mentor to ${studentIds.length} student(s)` : `Successfully unassigned ${studentIds.length} student(s)`);
+
+      // 3. Background revalidation
       await fetchStudents(false, true);
     } catch (err: any) {
+      await fetchStudents(false, true);
       alert(extractErrorMessage(err, 'Failed to update mentor for selected students'));
     } finally {
       setSubmitting(false);
