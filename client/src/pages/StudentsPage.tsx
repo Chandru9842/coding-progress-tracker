@@ -396,10 +396,14 @@ export const StudentsPage: React.FC = () => {
   };
 
   const handleToggleSelectAll = () => {
-    if (selectedStudentIds.size === students.length && students.length > 0) {
+    const currentViewIds = students.map((s) => s.id);
+    const isAllCurrentSelected = currentViewIds.length > 0 && currentViewIds.every((id) => selectedStudentIds.has(id));
+    if (isAllCurrentSelected) {
+      // Clear selection
       setSelectedStudentIds(new Set());
     } else {
-      setSelectedStudentIds(new Set(students.map((s) => s.id)));
+      // Select ONLY the students currently visible in the active filtered view
+      setSelectedStudentIds(new Set(currentViewIds));
     }
   };
 
@@ -409,14 +413,19 @@ export const StudentsPage: React.FC = () => {
 
   const handleConfirmBulkDelete = async () => {
     if (selectedStudentIds.size === 0) return;
-    const toDeleteSet = new Set(selectedStudentIds);
+    // CRITICAL: Strictly scope deletion to students matching the current filtered view
+    const currentViewIdsSet = new Set(students.map((s) => s.id));
+    const toDeleteIds = Array.from(selectedStudentIds).filter((id) => currentViewIdsSet.has(id));
+    if (toDeleteIds.length === 0) return;
+    const toDeleteSet = new Set(toDeleteIds);
+
     // Optimistic UI removal
     setStudents((prev) => prev.filter((s) => !toDeleteSet.has(s.id)));
     setShowBulkDeleteModal(false);
     setSelectedStudentIds(new Set());
     try {
       setSubmitting(true);
-      await studentApi.bulkDeleteStudents(Array.from(toDeleteSet));
+      await studentApi.bulkDeleteStudents(toDeleteIds);
     } catch (err: any) {
       fetchStudents(false);
       alert(err.response?.data?.error || 'Failed to delete selected students');
@@ -429,8 +438,12 @@ export const StudentsPage: React.FC = () => {
     if (!tableQuickAssignStaffId || selectedStudentIds.size === 0) return;
     const targetMentorId = tableQuickAssignStaffId === 'NONE' || tableQuickAssignStaffId === 'UNASSIGNED' ? null : tableQuickAssignStaffId;
     const targetStaff = staffList.find((s) => s.id === targetMentorId);
-    const studentIds = Array.from(selectedStudentIds);
-    const targetIdsSet = new Set(selectedStudentIds);
+
+    // CRITICAL: Strictly scope mentor reassignment to students matching the current filtered view
+    const currentViewIdsSet = new Set(students.map((s) => s.id));
+    const studentIds = Array.from(selectedStudentIds).filter((id) => currentViewIdsSet.has(id));
+    if (studentIds.length === 0) return;
+    const targetIdsSet = new Set(studentIds);
 
     try {
       setSubmitting(true);
@@ -521,6 +534,7 @@ export const StudentsPage: React.FC = () => {
 
   useEffect(() => {
     setCurrentPage(1);
+    setSelectedStudentIds(new Set());
     fetchStudents();
   }, [debouncedSearch, filterBatchId, filterSectionId, filterDept, filterYear, filterAllocBatchId, filterMentorId]);
 
@@ -2423,9 +2437,24 @@ export const StudentsPage: React.FC = () => {
                 <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Delete Selected Students</h3>
               </div>
 
-              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: '1.5' }}>
-                Are you sure you want to delete <strong style={{ color: 'var(--primary)' }}>{selectedStudentIds.size} selected student(s)</strong>?
+              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '0.75rem', lineHeight: '1.5' }}>
+                Are you sure you want to delete <strong style={{ color: 'var(--primary)' }}>{students.filter((s) => selectedStudentIds.has(s.id)).length} selected student(s)</strong> from the current view?
               </p>
+
+              <div style={{ maxHeight: '130px', overflowY: 'auto', marginBottom: '1rem', padding: '0.5rem 0.75rem', background: 'rgba(0, 0, 0, 0.25)', borderRadius: '6px', fontSize: '0.8rem', border: '1px solid var(--border-subtle)' }}>
+                {students.filter((s) => selectedStudentIds.has(s.id)).slice(0, 8).map((s) => (
+                  <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.2rem 0' }}>
+                    <span style={{ fontWeight: 600 }}>{s.register_number} - {s.name}</span>
+                    <span style={{ color: s.mentor?.name ? '#818cf8' : 'var(--text-muted)' }}>{s.mentor?.name || 'Unassigned'}</span>
+                  </div>
+                ))}
+                {students.filter((s) => selectedStudentIds.has(s.id)).length > 8 && (
+                  <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '0.25rem', textAlign: 'center' }}>
+                    ...and {students.filter((s) => selectedStudentIds.has(s.id)).length - 8} more student(s)
+                  </div>
+                )}
+              </div>
+
               <p style={{ fontSize: '0.825rem', color: '#f87171', backgroundColor: 'rgba(248, 113, 113, 0.1)', padding: '0.65rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.5rem' }}>
                 ⚠️ Warning: This will permanently remove the selected student records and all their associated daily coding snapshots.
               </p>
