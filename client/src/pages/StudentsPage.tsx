@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
-import { studentApi, batchApi, staffApi, syncApi, Student, Batch, StaffUser, extractErrorMessage, getCachedData, clearClientCache } from '../services/api.js';
+import { studentApi, batchApi, staffApi, syncApi, Student, Batch, StaffUser, extractErrorMessage, getCachedData, clearClientCache, notifySyncStarted, notifySyncEnded } from '../services/api.js';
 import { syncReportStudents } from '../api/reports.js';
 import { autoSyncService } from '../services/autoSyncService.js';
 import {
@@ -572,12 +572,18 @@ export const StudentsPage: React.FC = () => {
       return;
     }
 
-    const totalToSync = targetIds.length;
+    // Standard Fixed Window: Immediate interactive batch capped at 100 students (guarantees standard 30-45s window)
+    const MAX_INTERACTIVE_SYNC = 100;
+    const immediateIds = targetIds.slice(0, MAX_INTERACTIVE_SYNC);
+    const backgroundIds = targetIds.slice(MAX_INTERACTIVE_SYNC);
+
+    const totalToSync = immediateIds.length;
     const batchSize = 10; // High-throughput batch of 10 students
     const startTime = Date.now();
     // Calibrated standard target duration: 30-45s model
     const targetDuration = Math.min(45, Math.max(12, Math.ceil(totalToSync * 0.35)));
 
+    notifySyncStarted('Sync All Students');
     setSyncingAll(true);
     setSyncCompletedSummary(null);
     setSyncNotice(null);
@@ -614,87 +620,112 @@ export const StudentsPage: React.FC = () => {
     let totalSuccess = 0;
     let totalErrors = 0;
 
-    try {
-      for (let i = 0; i < totalToSync; i += batchSize) {
-        const chunk = targetIds.slice(i, i + batchSize);
-        const currentProcessed = Math.min(i + chunk.length, totalToSync);
-        const percent = Math.round((currentProcessed / totalToSync) * 100);
+    // Divide into chunks of 10
+    const chunks: string[][] = [];
+    for (let i = 0; i < totalToSync; i += batchSize) {
+      chunks.push(immediateIds.slice(i, i + batchSize));
+    }
 
-        // Identify student usernames in current chunk
-        const chunkStudentNames = students
-          .filter((s) => chunk.includes(s.id))
+    try {
+      let processedCount = 0;
+      const concurrency = 2; // Process 2 chunks concurrently
+      for (let cIdx = 0; cIdx < chunks.length; cIdx += concurrency) {
+        const chunkBatch = chunks.slice(cIdx, cIdx + concurrency);
+
+        // Identify student usernames in current batch
+        const batchStudentNames = students
+          .filter((s) => chunkBatch.some((c) => c.includes(s.id)))
           .map((s) => `@${(s.leetcode_username || '').replace(/^@/, '')}`)
+          .slice(0, 5)
           .join(', ');
 
         const elapsed = Math.floor((Date.now() - startTime) / 1000);
-        const remaining = Math.max(1, Math.min(45, Math.round((1 - (currentProcessed / totalToSync)) * targetDuration)));
+        const remaining = Math.max(0, Math.min(45, Math.round((1 - (processedCount / totalToSync)) * targetDuration)));
+        const percent = Math.min(100, Math.round((processedCount / totalToSync) * 100));
 
         setSyncProgress((prev) => ({
           ...prev,
-          current: i,
+          current: processedCount,
           percentage: percent,
-          currentStudentName: chunkStudentNames,
+          currentStudentName: batchStudentNames,
           elapsedSeconds: elapsed,
           estimatedRemainingSeconds: remaining,
         }));
 
-        try {
-          const res = await syncReportStudents({ studentIds: chunk });
-          const successfulInChunk = (res.successful ?? chunk.length);
-          totalSuccess += successfulInChunk;
+        await Promise.all(
+          chunkBatch.map(async (chunk) => {
+            try {
+              const res = await syncReportStudents({ studentIds: chunk });
+              const successfulInChunk = (res.successful ?? chunk.length);
+              totalSuccess += successfulInChunk;
 
-          // LIVE IN-PLACE STATE MUTATION:
-          // Immediately update local students array so table rows turn from 'Pending sync' to green counts in real time!
-          if (Array.isArray(res.results)) {
-            setStudents((prevList) =>
-              prevList.map((st) => {
-                const match = res.results.find((r: any) => r.studentId === st.id && r.success && r.stats);
-                if (match) {
-                  const newSnap = {
-                    id: `live_${st.id}_${Date.now()}`,
-                    student_id: st.id,
-                    snapshot_date: new Date().toISOString(),
-                    total_solved: match.stats.totalSolved ?? 0,
-                    easy_solved: match.stats.easySolved ?? 0,
-                    medium_solved: match.stats.mediumSolved ?? 0,
-                    hard_solved: match.stats.hardSolved ?? 0,
-                    ranking: match.stats.ranking ?? 0,
-                  };
-                  return {
-                    ...st,
-                    snapshots: [newSnap as any],
-                    latest_snapshot: newSnap as any,
-                  };
-                }
-                return st;
-              })
-            );
-          }
-        } catch (chunkErr) {
-          totalErrors += chunk.length;
-          console.warn(`[Sync Chunk Warning] Batch ${Math.floor(i / batchSize) + 1}:`, chunkErr);
-        }
+              // LIVE IN-PLACE STATE MUTATION:
+              // Immediately update local students array so table rows turn from 'Pending sync' to green counts in real time!
+              if (Array.isArray(res.results)) {
+                setStudents((prevList) =>
+                  prevList.map((st) => {
+                    const match = res.results.find((r: any) => r.studentId === st.id && r.success && r.stats);
+                    if (match) {
+                      const newSnap = {
+                        id: `live_${st.id}_${Date.now()}`,
+                        student_id: st.id,
+                        snapshot_date: new Date().toISOString(),
+                        total_solved: match.stats.totalSolved ?? 0,
+                        easy_solved: match.stats.easySolved ?? 0,
+                        medium_solved: match.stats.mediumSolved ?? 0,
+                        hard_solved: match.stats.hardSolved ?? 0,
+                        ranking: match.stats.ranking ?? 0,
+                      };
+                      return {
+                        ...st,
+                        snapshots: [newSnap as any],
+                        latest_snapshot: newSnap as any,
+                      };
+                    }
+                    return st;
+                  })
+                );
+              }
+            } catch (chunkErr) {
+              totalErrors += chunk.length;
+              console.warn(`[Sync Chunk Warning]:`, chunkErr);
+            } finally {
+              processedCount += chunk.length;
+            }
+          })
+        );
 
-        // Update progress count after chunk
+        // Update progress count after batch
+        const batchPercent = Math.min(100, Math.round((processedCount / totalToSync) * 100));
         setSyncProgress((prev) => ({
           ...prev,
-          current: currentProcessed,
-          percentage: percent,
+          current: processedCount,
+          percentage: batchPercent,
           successCount: totalSuccess,
           errorCount: totalErrors,
         }));
       }
 
       const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
-      setSyncCompletedSummary(
-        `🎉 Live Sync Complete! ${totalSuccess} / ${totalToSync} students synchronized in ${totalElapsed}s. All student solve counts updated!`
-      );
+      if (backgroundIds.length > 0) {
+        const bgCandidates = students.filter((s) => backgroundIds.includes(s.id));
+        autoSyncService.enqueueStudents(bgCandidates);
+        setSyncCompletedSummary(
+          `🎉 Live Sync Complete! ${totalSuccess} / ${totalToSync} students synchronized in ${totalElapsed}s. Remaining ${backgroundIds.length} students queued for seamless background sync.`
+        );
+      } else {
+        setSyncCompletedSummary(
+          `🎉 Live Sync Complete! ${totalSuccess} / ${totalToSync} students synchronized in ${totalElapsed}s. All student solve counts updated!`
+        );
+      }
+
       clearClientCache('students_');
       await fetchStudents(false, true);
       window.dispatchEvent(new CustomEvent('student-synced'));
     } catch (err: any) {
       setError(extractErrorMessage(err, 'Failed to complete student synchronization'));
     } finally {
+      notifySyncEnded('Sync All Students');
       clearInterval(timerInterval);
       setSyncingAll(false);
       setSyncProgress((prev) => ({

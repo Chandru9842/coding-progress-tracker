@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
-import { statsApi, studentApi, getCachedData } from '../services/api.js';
+import { statsApi, studentApi, getCachedData, notifySyncStarted, notifySyncEnded } from '../services/api.js';
 import { syncReportStudents } from '../api/reports.js';
 import { DashboardStats } from '../types/index.js';
 import {
@@ -63,12 +63,12 @@ export const DashboardPage: React.FC = () => {
   }, []);
 
   const handleLiveLeetCodeSync = async () => {
+    notifySyncStarted('Dashboard Live Sync');
     try {
       setSyncingLeetCode(true);
       setSyncMessage(null);
       setError(null);
 
-      // Fetch student IDs to safely chunk sync in pools of 4 (eliminating Vercel serverless timeouts)
       let studentIds: string[] = [];
       try {
         const studentList = await studentApi.getStudents(undefined, true);
@@ -80,21 +80,37 @@ export const DashboardPage: React.FC = () => {
       }
 
       if (studentIds.length > 0) {
+        const MAX_INTERACTIVE_SYNC = 100;
+        const immediateIds = studentIds.slice(0, MAX_INTERACTIVE_SYNC);
         const batchSize = 10;
         let totalSuccess = 0;
-        for (let i = 0; i < studentIds.length; i += batchSize) {
-          const chunk = studentIds.slice(i, i + batchSize);
-          const currentProcessed = Math.min(i + chunk.length, studentIds.length);
-          const percent = Math.round((currentProcessed / studentIds.length) * 100);
-          setSyncMessage(`⚡ Live syncing LeetCode stats: ${currentProcessed}/${studentIds.length} students (${percent}%)... Please wait.`);
-          try {
-            const res = await syncReportStudents({ studentIds: chunk });
-            totalSuccess += (res.successful ?? chunk.length);
-          } catch (chunkErr) {
-            console.warn(`[Sync Chunk Warning] Batch ${Math.floor(i / batchSize) + 1} note:`, chunkErr);
-          }
+        const totalToSync = immediateIds.length;
+
+        const chunks: string[][] = [];
+        for (let i = 0; i < totalToSync; i += batchSize) {
+          chunks.push(immediateIds.slice(i, i + batchSize));
         }
-        setSyncMessage(`⚡ Live LeetCode sync completed! ${totalSuccess}/${studentIds.length} student records synchronized.`);
+
+        let processedCount = 0;
+        const concurrency = 2;
+        for (let cIdx = 0; cIdx < chunks.length; cIdx += concurrency) {
+          const chunkBatch = chunks.slice(cIdx, cIdx + concurrency);
+          await Promise.all(
+            chunkBatch.map(async (chunk) => {
+              try {
+                const res = await syncReportStudents({ studentIds: chunk });
+                totalSuccess += (res.successful ?? chunk.length);
+              } catch (chunkErr) {
+                console.warn('[Sync Chunk Warning]:', chunkErr);
+              } finally {
+                processedCount += chunk.length;
+              }
+            })
+          );
+          const percent = Math.min(100, Math.round((processedCount / totalToSync) * 100));
+          setSyncMessage(`⚡ Live syncing LeetCode stats: ${processedCount}/${totalToSync} students (${percent}%)... Please wait.`);
+        }
+        setSyncMessage(`⚡ Live LeetCode sync completed! ${totalSuccess}/${totalToSync} student records synchronized.`);
       } else {
         const res = await syncReportStudents();
         setSyncMessage(`⚡ Live LeetCode sync completed! ${res.successful ?? 'All'} student records synchronized.`);
@@ -106,6 +122,7 @@ export const DashboardPage: React.FC = () => {
       console.error('Failed to sync LeetCode stats:', err);
       setError('Failed to live sync LeetCode statistics. Please try again.');
     } finally {
+      notifySyncEnded('Dashboard Live Sync');
       setSyncingLeetCode(false);
     }
   };

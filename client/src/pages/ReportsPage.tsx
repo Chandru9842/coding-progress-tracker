@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { RefreshCw, FileSpreadsheet, Download, Trash2, CheckCircle2, AlertCircle, X, Layers, AlertTriangle, ExternalLink } from 'lucide-react';
 import { Layout } from '../components/Layout.js';
-import { getCachedData, staffApi } from '../services/api.js';
+import { getCachedData, staffApi, notifySyncStarted, notifySyncEnded } from '../services/api.js';
 import { GoogleSheetsIntegration } from '../components/GoogleSheetsIntegration.js';
 import { SyncErrorsView } from '../components/SyncErrorsView.js';
 import { SearchableMentorSelect } from '../components/SearchableMentorSelect.js';
@@ -609,6 +609,7 @@ export default function ReportsPage() {
     overrideFromDate?: string,
     overrideToDate?: string
   ) => {
+    notifySyncStarted('Live Filtered Sync');
     setSyncingLeetcode(true);
     setSyncCountdown(null);
     setSuccessMsg(null);
@@ -651,67 +652,90 @@ export default function ReportsPage() {
 
     try {
       if (candidateIds.length > 0) {
-        // Chunk into high-throughput batches of 10 students (runs concurrently on server with 12 workers)
+        // Standard Fixed Window: Immediate interactive batch capped at 100 students (guarantees standard 30-45s window)
+        const MAX_INTERACTIVE_SYNC = 100;
+        const immediateIds = candidateIds.slice(0, MAX_INTERACTIVE_SYNC);
+        const backgroundIds = candidateIds.slice(MAX_INTERACTIVE_SYNC);
+
         const batchSize = 10;
         let totalSuccess = 0;
-        const totalToSync = candidateIds.length;
+        const totalToSync = immediateIds.length;
         const startTime = Date.now();
         // Calibrated standard target duration: 30-45s model
         const targetDuration = Math.min(45, Math.max(12, Math.ceil(totalToSync * 0.35)));
 
+        // Divide into chunks of 10
+        const chunks: string[][] = [];
         for (let i = 0; i < totalToSync; i += batchSize) {
-          const chunk = candidateIds.slice(i, i + batchSize);
-          const currentProcessed = Math.min(i + chunk.length, totalToSync);
-          const percent = Math.round((currentProcessed / totalToSync) * 100);
-          const elapsed = Math.floor((Date.now() - startTime) / 1000);
-          const estRemaining = Math.max(1, Math.min(45, Math.round((1 - (currentProcessed / totalToSync)) * targetDuration)));
+          chunks.push(immediateIds.slice(i, i + batchSize));
+        }
 
-          setSuccessMsg(`⚡ Live syncing LeetCode stats: ${currentProcessed} / ${totalToSync} students (${percent}%) • Elapsed: ${elapsed}s • Remaining: ~${estRemaining}s...`);
-
-          try {
-            const chunkRes = await syncReportStudents({
-              studentIds: chunk,
-            });
-            totalSuccess += (chunkRes.successful ?? chunk.length);
-
-            // Live in-place row update so user sees numbers increment chunk-by-chunk!
-            if (chunkRes?.results && Array.isArray(chunkRes.results)) {
-              const statsMap = new Map<string, any>();
-              chunkRes.results.forEach((r: any) => {
-                if (r.studentId && r.stats) statsMap.set(r.studentId, r.stats);
-              });
-              if (statsMap.size > 0) {
-                setReportData((prev) => {
-                  if (!prev) return prev;
-                  return {
-                    ...prev,
-                    students: prev.students.map((st) => {
-                      const newStats = statsMap.get(st.id);
-                      if (!newStats) return st;
-                      return {
-                        ...st,
-                        total_solved: newStats.totalSolved ?? st.total_solved,
-                        easy_solved: newStats.easySolved ?? st.easy_solved,
-                        medium_solved: newStats.mediumSolved ?? st.medium_solved,
-                        hard_solved: newStats.hardSolved ?? st.hard_solved,
-                        overall_total: newStats.totalSolved ?? st.overall_total,
-                        overall_easy: newStats.easySolved ?? st.overall_easy,
-                        overall_medium: newStats.mediumSolved ?? st.overall_medium,
-                        overall_hard: newStats.hardSolved ?? st.overall_hard,
-                        has_activity: (newStats.totalSolved ?? 0) > 0,
-                      };
-                    }),
-                  };
+        // Process chunks with concurrency = 2 for ultra-fast parallel throughput
+        let processedCount = 0;
+        const concurrency = 2;
+        for (let cIdx = 0; cIdx < chunks.length; cIdx += concurrency) {
+          const chunkBatch = chunks.slice(cIdx, cIdx + concurrency);
+          await Promise.all(
+            chunkBatch.map(async (chunk) => {
+              try {
+                const chunkRes = await syncReportStudents({
+                  studentIds: chunk,
                 });
+                totalSuccess += (chunkRes.successful ?? chunk.length);
+
+                // Live in-place row update so user sees numbers increment chunk-by-chunk!
+                if (chunkRes?.results && Array.isArray(chunkRes.results)) {
+                  const statsMap = new Map<string, any>();
+                  chunkRes.results.forEach((r: any) => {
+                    if (r.studentId && r.stats) statsMap.set(r.studentId, r.stats);
+                  });
+                  if (statsMap.size > 0) {
+                    setReportData((prev) => {
+                      if (!prev) return prev;
+                      return {
+                        ...prev,
+                        students: prev.students.map((st) => {
+                          const newStats = statsMap.get(st.id);
+                          if (!newStats) return st;
+                          return {
+                            ...st,
+                            total_solved: newStats.totalSolved ?? st.total_solved,
+                            easy_solved: newStats.easySolved ?? st.easy_solved,
+                            medium_solved: newStats.mediumSolved ?? st.medium_solved,
+                            hard_solved: newStats.hardSolved ?? st.hard_solved,
+                            overall_total: newStats.totalSolved ?? st.overall_total,
+                            overall_easy: newStats.easySolved ?? st.overall_easy,
+                            overall_medium: newStats.mediumSolved ?? st.overall_medium,
+                            overall_hard: newStats.hardSolved ?? st.overall_hard,
+                            has_activity: (newStats.totalSolved ?? 0) > 0,
+                          };
+                        }),
+                      };
+                    });
+                  }
+                }
+              } catch (chunkErr) {
+                console.warn('[Sync Chunk Warning]:', chunkErr);
+              } finally {
+                processedCount += chunk.length;
               }
-            }
-          } catch (chunkErr) {
-            console.warn(`[Sync Chunk Warning] Batch ${Math.floor(i / batchSize) + 1} note:`, chunkErr);
-          }
+            })
+          );
+
+          const percent = Math.min(100, Math.round((processedCount / totalToSync) * 100));
+          const elapsed = Math.floor((Date.now() - startTime) / 1000);
+          const estRemaining = Math.max(0, Math.min(45, Math.round((1 - (processedCount / totalToSync)) * targetDuration)));
+          setSuccessMsg(`⚡ Live syncing LeetCode stats: ${processedCount} / ${totalToSync} students (${percent}%) • Elapsed: ${elapsed}s • Remaining: ~${estRemaining}s...`);
         }
 
         const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
-        setSuccessMsg(`✅ Live LeetCode sync completed! ${totalSuccess} / ${totalToSync} student records synchronized in ${totalElapsed}s.`);
+        if (backgroundIds.length > 0) {
+          const bgCandidates = candidateStudents.filter((s) => backgroundIds.includes(s.id));
+          autoSyncService.enqueueStudents(bgCandidates);
+          setSuccessMsg(`✅ Live LeetCode sync completed! ${totalSuccess} / ${totalToSync} student records synchronized in ${totalElapsed}s. Remaining ${backgroundIds.length} students queued for seamless background sync.`);
+        } else {
+          setSuccessMsg(`✅ Live LeetCode sync completed! ${totalSuccess} / ${totalToSync} student records synchronized in ${totalElapsed}s.`);
+        }
       } else {
         // Fallback for when no students are loaded in state yet
         const res = await syncReportStudents({
@@ -754,6 +778,7 @@ export default function ReportsPage() {
     } catch (err: any) {
       setError(extractErrorMessage(err, 'Failed to sync LeetCode data for filtered students'));
     } finally {
+      notifySyncEnded('Live Filtered Sync');
       setSyncingLeetcode(false);
       setSyncCountdown(null);
     }
