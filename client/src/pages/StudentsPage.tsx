@@ -219,6 +219,7 @@ export const StudentsPage: React.FC = () => {
   const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
   const [studentToDelete, setStudentToDelete] = useState<Student | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null);
 
   // Modal States
   const [showStudentModal, setShowStudentModal] = useState<boolean>(false);
@@ -420,20 +421,24 @@ export const StudentsPage: React.FC = () => {
     if (toDeleteIds.length === 0) return;
     const toDeleteSet = new Set(toDeleteIds);
 
-    // Optimistic UI removal
-    setStudents((prev) => prev.filter((s) => !toDeleteSet.has(s.id)));
-    setShowBulkDeleteModal(false);
-    setSelectedStudentIds(new Set());
     try {
       setSubmitting(true);
+      setBulkDeleteError(null);
       await studentApi.bulkDeleteStudents(toDeleteIds);
+
+      // Confirmed deletion: update UI state
+      setStudents((prev) => prev.filter((s) => !toDeleteSet.has(s.id)));
+      setSelectedStudentIds(new Set());
+      setShowBulkDeleteModal(false);
+
       clearClientCache();
       window.dispatchEvent(new CustomEvent('student-synced'));
       window.dispatchEvent(new CustomEvent('sheets-synced'));
       await fetchStudents(false, true);
     } catch (err: any) {
-      fetchStudents(false, true);
-      alert(err.response?.data?.error || 'Failed to delete selected students');
+      const errMsg = extractErrorMessage(err, 'Failed to delete selected students');
+      setBulkDeleteError(errMsg);
+      setError(errMsg);
     } finally {
       setSubmitting(false);
     }
@@ -515,27 +520,30 @@ export const StudentsPage: React.FC = () => {
   const handleConfirmDeleteStudent = async () => {
     if (!studentToDelete) return;
     const deletedId = studentToDelete.id;
-    // Optimistic UI removal
-    setStudents((prev) => prev.filter((s) => s.id !== deletedId));
-    setSelectedStudentIds((prev) => {
-      const next = new Set(prev);
-      next.delete(deletedId);
-      return next;
-    });
-    setShowDeleteModal(false);
-    setStudentToDelete(null);
 
     try {
       setSubmitting(true);
       setDeleteError(null);
       await studentApi.deleteStudent(deletedId);
+
+      // Confirmed deletion: update UI state
+      setStudents((prev) => prev.filter((s) => s.id !== deletedId));
+      setSelectedStudentIds((prev) => {
+        const next = new Set(prev);
+        next.delete(deletedId);
+        return next;
+      });
+      setShowDeleteModal(false);
+      setStudentToDelete(null);
+
       clearClientCache();
       window.dispatchEvent(new CustomEvent('student-synced'));
       window.dispatchEvent(new CustomEvent('sheets-synced'));
       await fetchStudents(false, true);
     } catch (err: any) {
-      fetchStudents(false, true);
-      alert(err.response?.data?.error || 'Failed to delete student record');
+      const errMsg = extractErrorMessage(err, 'Failed to delete student record');
+      setDeleteError(errMsg);
+      setError(errMsg);
     } finally {
       setSubmitting(false);
     }
@@ -2008,7 +2016,10 @@ export const StudentsPage: React.FC = () => {
 
               <button
                 type="button"
-                onClick={() => setShowBulkDeleteModal(true)}
+                onClick={() => {
+                  setBulkDeleteError(null);
+                  setShowBulkDeleteModal(true);
+                }}
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -2455,7 +2466,7 @@ export const StudentsPage: React.FC = () => {
                 <button
                   type="button"
                   className="btn-secondary"
-                  onClick={() => { setShowDeleteModal(false); setStudentToDelete(null); }}
+                  onClick={() => { setShowDeleteModal(false); setStudentToDelete(null); setDeleteError(null); }}
                   disabled={submitting}
                 >
                   Cancel
@@ -2490,6 +2501,12 @@ export const StudentsPage: React.FC = () => {
                 <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Delete Selected Students</h3>
               </div>
 
+              {bulkDeleteError && (
+                <div style={{ padding: '0.75rem', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#f87171', borderRadius: 'var(--radius-sm)', marginBottom: '1rem', fontSize: '0.85rem' }}>
+                  {bulkDeleteError}
+                </div>
+              )}
+
               <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '0.75rem', lineHeight: '1.5' }}>
                 Are you sure you want to delete <strong style={{ color: 'var(--primary)' }}>{students.filter((s) => selectedStudentIds.has(s.id)).length} selected student(s)</strong> from the current view?
               </p>
@@ -2513,7 +2530,7 @@ export const StudentsPage: React.FC = () => {
               </p>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-                <button type="button" className="btn-secondary" onClick={() => setShowBulkDeleteModal(false)} disabled={submitting}>
+                <button type="button" className="btn-secondary" onClick={() => { setShowBulkDeleteModal(false); setBulkDeleteError(null); }} disabled={submitting}>
                   Cancel
                 </button>
                 <button

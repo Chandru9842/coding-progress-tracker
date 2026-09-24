@@ -16,6 +16,7 @@ import { runDatePresetProgressTests } from './unit/datePresetProgress.test.js';
 import { runGoogleSheetsContinuousMatrixTests } from './unit/googleSheetsContinuousMatrix.test.js';
 import { runMidnightDateAlignmentTests } from './unit/midnightDateAlignment.test.js';
 import { runMultiMentorBulkImportTests } from './unit/multiMentorBulkImport.test.js';
+import { testStudentDeletionPersistence } from './unit/studentDeletion.test.js';
 
 async function main() {
   console.log('===========================================================');
@@ -59,6 +60,7 @@ async function main() {
   await runTest(runGoogleSheetsContinuousMatrixTests);
   await runTest(runMidnightDateAlignmentTests);
   await runTest(runMultiMentorBulkImportTests);
+  await runTest(testStudentDeletionPersistence);
   await runTest(runPhase1RegressionTests);
   await runTest(runPhase2RegressionTests);
   await runTest(runPhase3RegressionTests);

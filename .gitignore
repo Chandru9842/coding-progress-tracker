@@ -32,3 +32,4 @@ Thumbs.db
 .env*
 backups/
 *.sql
+scratch/

@@ -629,7 +629,7 @@ export async function bulkImportStudents(
     const validStaffIds = new Set(staffList.map((s) => s.id));
 
     for (const item of preparedRows) {
-      const studentId = studentIdByRegNo.get(item.rawRegNo);
+      const studentId = studentIdByRegNo.get(item.rawRegNo.toUpperCase()) || studentIdByRegNo.get(item.rawRegNo);
       if (!studentId) continue;
 
       if (item.resolvedMentorId && validStaffIds.has(item.resolvedMentorId)) {

@@ -217,18 +217,23 @@ export async function bulkDeleteStudents(req: AuthenticatedRequest, res: Respons
       return;
     }
 
-    // STAFF scope enforcement: must be authorized for all specified student IDs
+    let authorizedIds = studentIds;
+    // STAFF scope enforcement: must be authorized for the specified student IDs
     if (req.user.role === 'STAFF') {
-      for (const id of studentIds) {
-        const ownsStudent = await isStaffAuthorizedForStudent(req.user.userId, id);
-        if (!ownsStudent) {
-          res.status(403).json({ error: 'Forbidden: You are not authorized to delete one or more selected students' });
-          return;
-        }
+      const authChecks = await Promise.all(
+        studentIds.map(async (id) => ({
+          id,
+          authorized: await isStaffAuthorizedForStudent(req.user!.userId, id),
+        }))
+      );
+      authorizedIds = authChecks.filter((c) => c.authorized).map((c) => c.id);
+      if (authorizedIds.length === 0) {
+        res.status(403).json({ error: 'Forbidden: You are not authorized to delete one or more selected students' });
+        return;
       }
     }
 
-    const result = await studentService.bulkDeleteStudents(studentIds);
+    const result = await studentService.bulkDeleteStudents(authorizedIds);
     res.status(200).json(result);
   } catch (error: any) {
     const statusCode = error.statusCode || 500;

@@ -650,17 +650,18 @@ export async function deleteStudent(studentId: string) {
     inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter((sa) => sa.student_id !== studentId);
     inMemoryStore.snapshots = inMemoryStore.snapshots.filter((s) => s.student_id !== studentId);
     diagnosticLogService.deleteLogsForStudents([studentId]);
-    serverCache.invalidate();
+    serverCache.clear();
     return { message: 'Student deleted successfully' };
   }
 
+  // Idempotent and safe deletion across related models in PostgreSQL
   await prisma.$transaction([
     prisma.dailyCodingSnapshot.deleteMany({ where: { student_id: studentId } }),
     prisma.staffStudentAssignment.deleteMany({ where: { student_id: studentId } }),
-    prisma.student.delete({ where: { id: studentId } }),
+    prisma.student.deleteMany({ where: { id: studentId } }),
   ]);
   diagnosticLogService.deleteLogsForStudents([studentId]);
-  serverCache.invalidate();
+  serverCache.clear();
   return { message: 'Student deleted successfully' };
 }
 
@@ -674,17 +675,18 @@ export async function bulkDeleteStudents(studentIds: string[]) {
     inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter((sa) => !studentIds.includes(sa.student_id));
     inMemoryStore.snapshots = inMemoryStore.snapshots.filter((s) => !studentIds.includes(s.student_id));
     diagnosticLogService.deleteLogsForStudents(studentIds);
-    serverCache.invalidate();
+    serverCache.clear();
     return { message: `${studentIds.length} students deleted successfully` };
   }
 
+  // Idempotent batch deletion across related models in PostgreSQL
   await prisma.$transaction([
     prisma.dailyCodingSnapshot.deleteMany({ where: { student_id: { in: studentIds } } }),
     prisma.staffStudentAssignment.deleteMany({ where: { student_id: { in: studentIds } } }),
     prisma.student.deleteMany({ where: { id: { in: studentIds } } }),
   ]);
   diagnosticLogService.deleteLogsForStudents(studentIds);
-  serverCache.invalidate();
+  serverCache.clear();
   return { message: `${studentIds.length} students deleted successfully` };
 }
 

@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout.js';
 import { useAuth } from '../context/AuthContext.js';
-import { studentApi, syncApi, Student, DailySnapshot, extractErrorMessage, getCachedData } from '../services/api.js';
+import { studentApi, syncApi, Student, DailySnapshot, extractErrorMessage, getCachedData, clearClientCache } from '../services/api.js';
 import { ArrowLeft, User, ShieldAlert, Code2, GraduationCap, Layers, Loader2, Activity, RefreshCw, CheckCircle2, Trash2, ChevronLeft, ChevronRight, Calendar, ExternalLink } from 'lucide-react';
 import { SyncStatus } from '../components/SyncStatus.js';
 
@@ -140,6 +140,9 @@ export const StudentDetailPage: React.FC = () => {
       setDeleting(true);
       setDeleteError(null);
       await studentApi.deleteStudent(studentId);
+      clearClientCache();
+      window.dispatchEvent(new CustomEvent('student-synced'));
+      window.dispatchEvent(new CustomEvent('sheets-synced'));
       navigate('/students');
     } catch (err: any) {
       setDeleteError(extractErrorMessage(err, 'Failed to delete student'));
