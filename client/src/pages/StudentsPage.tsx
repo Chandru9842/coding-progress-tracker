@@ -203,6 +203,23 @@ export const StudentsPage: React.FC = () => {
   const [filterYear, setFilterYear] = useState<string>('');
   const [filterAllocBatchId, setFilterAllocBatchId] = useState<string>('');
   const [filterMentorId, setFilterMentorId] = useState<string>('');
+  const [appliedFilters, setAppliedFilters] = useState<{
+    batchId: string;
+    sectionId: string;
+    department: string;
+    currentYear: string;
+    allocationBatchId: string;
+    mentorId: string;
+    search: string;
+  }>({
+    batchId: '',
+    sectionId: '',
+    department: '',
+    currentYear: '',
+    allocationBatchId: '',
+    mentorId: '',
+    search: '',
+  });
   const [filterAllocBatches, setFilterAllocBatches] = useState<any[]>([]);
   const [formAllocBatches, setFormAllocBatches] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -303,17 +320,22 @@ export const StudentsPage: React.FC = () => {
     return () => clearTimeout(handler);
   }, [search]);
 
-  const fetchStudents = async (showLoadingSpinner: boolean = false, bypassCache: boolean = false) => {
+  const fetchStudents = async (
+    showLoadingSpinner: boolean = false,
+    bypassCache: boolean = false,
+    activeFiltersOverride?: typeof appliedFilters
+  ) => {
     try {
       setError(null);
+      const f = activeFiltersOverride || appliedFilters;
       const params = {
-        batchId: filterBatchId || undefined,
-        sectionId: filterSectionId || undefined,
-        department: filterDept || undefined,
-        currentYear: filterYear || undefined,
-        allocationBatchId: filterAllocBatchId || undefined,
-        mentorId: filterMentorId || undefined,
-        search: debouncedSearch || undefined,
+        batchId: f.batchId || undefined,
+        sectionId: f.sectionId || undefined,
+        department: f.department || undefined,
+        currentYear: f.currentYear || undefined,
+        allocationBatchId: f.allocationBatchId || undefined,
+        mentorId: f.mentorId || undefined,
+        search: (f.search || '').trim() || undefined,
       };
       const cacheKey = `students_${JSON.stringify(params)}`;
       if (!bypassCache) {
@@ -549,11 +571,75 @@ export const StudentsPage: React.FC = () => {
     }
   };
 
+  // Load all students once on mount
   useEffect(() => {
+    fetchStudents(true);
+  }, []);
+
+  const handleApplyFilter = () => {
+    const newApplied = {
+      batchId: filterBatchId,
+      sectionId: filterSectionId,
+      department: filterDept,
+      currentYear: filterYear,
+      allocationBatchId: filterAllocBatchId,
+      mentorId: filterMentorId,
+      search: search.trim(),
+    };
+    setAppliedFilters(newApplied);
     setCurrentPage(1);
     setSelectedStudentIds(new Set());
-    fetchStudents();
-  }, [debouncedSearch, filterBatchId, filterSectionId, filterDept, filterYear, filterAllocBatchId, filterMentorId]);
+    fetchStudents(true, true, newApplied);
+  };
+
+  const handleResetFilters = () => {
+    setFilterBatchId('');
+    setFilterSectionId('');
+    setFilterDept('');
+    setFilterYear('');
+    setFilterAllocBatchId('');
+    setFilterMentorId('');
+    setSearch('');
+    const emptyApplied = {
+      batchId: '',
+      sectionId: '',
+      department: '',
+      currentYear: '',
+      allocationBatchId: '',
+      mentorId: '',
+      search: '',
+    };
+    setAppliedFilters(emptyApplied);
+    setCurrentPage(1);
+    setSelectedStudentIds(new Set());
+    fetchStudents(true, true, emptyApplied);
+  };
+
+  const hasSelectedFilters = Boolean(
+    filterBatchId || filterSectionId || filterDept || filterYear || filterAllocBatchId || filterMentorId || search.trim()
+  );
+  const selectedFilterCount = [
+    filterBatchId, filterSectionId, filterDept, filterYear, filterAllocBatchId, filterMentorId, search.trim()
+  ].filter(Boolean).length;
+
+  const hasAppliedFilters = Boolean(
+    appliedFilters.batchId ||
+    appliedFilters.sectionId ||
+    appliedFilters.department ||
+    appliedFilters.currentYear ||
+    appliedFilters.allocationBatchId ||
+    appliedFilters.mentorId ||
+    appliedFilters.search
+  );
+
+  const isFilterDirty =
+    filterBatchId !== appliedFilters.batchId ||
+    filterSectionId !== appliedFilters.sectionId ||
+    filterDept !== appliedFilters.department ||
+    filterYear !== appliedFilters.currentYear ||
+    filterAllocBatchId !== appliedFilters.allocationBatchId ||
+    filterMentorId !== appliedFilters.mentorId ||
+    search.trim() !== appliedFilters.search;
 
   useEffect(() => {
     if (filterSectionId) {
@@ -718,13 +804,14 @@ export const StudentsPage: React.FC = () => {
 
     try {
       let processedCount = 0;
-      const concurrency = 3; // Process 3 chunks concurrently (30 students parallel)
-      for (let cIdx = 0; cIdx < chunks.length; cIdx += concurrency) {
-        const chunkBatch = chunks.slice(cIdx, cIdx + concurrency);
+      const invalidUsersSet = new Set<string>();
+
+      for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
+        const chunk = chunks[cIdx];
 
         // Identify student usernames in current batch
         const batchStudentNames = students
-          .filter((s) => chunkBatch.some((c) => c.includes(s.id)))
+          .filter((s) => chunk.includes(s.id))
           .map((s) => `@${(s.leetcode_username || '').replace(/^@/, '')}`)
           .slice(0, 5)
           .join(', ');
@@ -742,48 +829,53 @@ export const StudentsPage: React.FC = () => {
           estimatedRemainingSeconds: remaining,
         }));
 
-        await Promise.all(
-          chunkBatch.map(async (chunk) => {
-            try {
-              const res = await syncReportStudents({ studentIds: chunk });
-              const successfulInChunk = (res.successful ?? chunk.length);
-              totalSuccess += successfulInChunk;
+        try {
+          const res = await syncReportStudents({ studentIds: chunk });
+          const successfulInChunk = (res.successful ?? chunk.length);
+          totalSuccess += successfulInChunk;
 
-              // LIVE IN-PLACE STATE MUTATION:
-              // Immediately update local students array so table rows turn from 'Pending sync' to green counts in real time!
-              if (Array.isArray(res.results)) {
-                setStudents((prevList) =>
-                  prevList.map((st) => {
-                    const match = res.results.find((r: any) => r.studentId === st.id && r.success && r.stats);
-                    if (match) {
-                      const newSnap = {
-                        id: `live_${st.id}_${Date.now()}`,
-                        student_id: st.id,
-                        snapshot_date: new Date().toISOString(),
-                        total_solved: match.stats.totalSolved ?? 0,
-                        easy_solved: match.stats.easySolved ?? 0,
-                        medium_solved: match.stats.mediumSolved ?? 0,
-                        hard_solved: match.stats.hardSolved ?? 0,
-                        ranking: match.stats.ranking ?? 0,
-                      };
-                      return {
-                        ...st,
-                        snapshots: [newSnap as any],
-                        latest_snapshot: newSnap as any,
-                      };
-                    }
-                    return st;
-                  })
-                );
+          // LIVE IN-PLACE STATE MUTATION:
+          // Immediately update local students array so table rows turn from 'Pending sync' to green counts in real time!
+          if (Array.isArray(res.results)) {
+            res.results.forEach((r: any) => {
+              if (!r.success && (r.isUserNotFound || (r.error && (r.error.includes('not exist') || r.error.includes('404'))))) {
+                const matched = students.find((s) => s.id === r.studentId);
+                if (matched?.leetcode_username) {
+                  invalidUsersSet.add(matched.leetcode_username);
+                }
               }
-            } catch (chunkErr) {
-              totalErrors += chunk.length;
-              console.warn(`[Sync Chunk Warning]:`, chunkErr);
-            } finally {
-              processedCount += chunk.length;
-            }
-          })
-        );
+            });
+
+            setStudents((prevList) =>
+              prevList.map((st) => {
+                const match = res.results.find((r: any) => r.studentId === st.id && r.success && r.stats);
+                if (match) {
+                  const newSnap = {
+                    id: `live_${st.id}_${Date.now()}`,
+                    student_id: st.id,
+                    snapshot_date: new Date().toISOString(),
+                    total_solved: match.stats.totalSolved ?? 0,
+                    easy_solved: match.stats.easySolved ?? 0,
+                    medium_solved: match.stats.mediumSolved ?? 0,
+                    hard_solved: match.stats.hardSolved ?? 0,
+                    ranking: match.stats.ranking ?? 0,
+                  };
+                  return {
+                    ...st,
+                    snapshots: [newSnap as any],
+                    latest_snapshot: newSnap as any,
+                  };
+                }
+                return st;
+              })
+            );
+          }
+        } catch (chunkErr) {
+          totalErrors += chunk.length;
+          console.warn(`[Sync Chunk Warning]:`, chunkErr);
+        } finally {
+          processedCount += chunk.length;
+        }
 
         // Update progress count after batch
         const batchPercent = Math.min(100, Math.round((processedCount / totalToSync) * 100));
@@ -794,6 +886,12 @@ export const StudentsPage: React.FC = () => {
           successCount: totalSuccess,
           errorCount: totalErrors,
         }));
+      }
+
+      if (invalidUsersSet.size > 0) {
+        setSyncNotice(
+          `⚠️ Notice: ${invalidUsersSet.size} account(s) (${Array.from(invalidUsersSet).join(', ')}) do not exist on LeetCode. Please verify their usernames.`
+        );
       }
 
       const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
@@ -1815,6 +1913,9 @@ export const StudentsPage: React.FC = () => {
               placeholder="Search reg no, name..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleApplyFilter();
+              }}
               style={{ paddingLeft: '2.25rem', width: '100%' }}
             />
           </div>
@@ -1925,7 +2026,137 @@ export const StudentsPage: React.FC = () => {
               ))}
             </optgroup>
           </select>
+
+          {/* Action Buttons: Explicit Filter Trigger & Reset */}
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <button
+              className="btn-primary"
+              onClick={handleApplyFilter}
+              disabled={loading}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.45rem',
+                padding: '0.5rem 1rem',
+                fontWeight: 700,
+                fontSize: '0.85rem',
+                backgroundColor: isFilterDirty ? 'var(--primary)' : 'rgba(59, 130, 246, 0.9)',
+                boxShadow: isFilterDirty ? '0 0 14px rgba(59, 130, 246, 0.45)' : undefined,
+                cursor: loading ? 'not-allowed' : 'pointer',
+              }}
+              title="Apply selected filter criteria to student roster"
+            >
+              <Filter size={15} />
+              <span>Filter</span>
+              {selectedFilterCount > 0 && (
+                <span
+                  style={{
+                    fontSize: '0.72rem',
+                    padding: '0.1rem 0.45rem',
+                    borderRadius: '999px',
+                    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+                    fontWeight: 800,
+                  }}
+                >
+                  {selectedFilterCount}
+                </span>
+              )}
+            </button>
+
+            {(hasSelectedFilters || hasAppliedFilters) && (
+              <button
+                className="btn-secondary"
+                onClick={handleResetFilters}
+                disabled={loading}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  padding: '0.5rem 0.75rem',
+                  fontSize: '0.85rem',
+                  color: 'var(--text-secondary)',
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                }}
+                title="Clear all filters and view all students"
+              >
+                <X size={15} />
+                <span>Reset</span>
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Active Applied Filters Indicator Chips */}
+        {hasAppliedFilters && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              flexWrap: 'wrap',
+              padding: '0.45rem 0.85rem',
+              backgroundColor: 'rgba(59, 130, 246, 0.08)',
+              border: '1px solid rgba(59, 130, 246, 0.2)',
+              borderRadius: '8px',
+              fontSize: '0.8rem',
+              color: '#93c5fd',
+            }}
+          >
+            <span style={{ fontWeight: 600, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <Filter size={13} style={{ color: '#60a5fa' }} />
+              Active Filters:
+            </span>
+            {appliedFilters.search && (
+              <span style={{ padding: '0.15rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(255, 255, 255, 0.08)' }}>
+                Search: "{appliedFilters.search}"
+              </span>
+            )}
+            {appliedFilters.batchId && (
+              <span style={{ padding: '0.15rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(255, 255, 255, 0.08)' }}>
+                Batch: {batches.find((b) => b.id === appliedFilters.batchId)?.batch_name || appliedFilters.batchId}
+              </span>
+            )}
+            {appliedFilters.currentYear && (
+              <span style={{ padding: '0.15rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(255, 255, 255, 0.08)' }}>
+                Year: {appliedFilters.currentYear}
+              </span>
+            )}
+            {appliedFilters.department && (
+              <span style={{ padding: '0.15rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(255, 255, 255, 0.08)' }}>
+                Dept: {appliedFilters.department}
+              </span>
+            )}
+            {appliedFilters.sectionId && (
+              <span style={{ padding: '0.15rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(255, 255, 255, 0.08)' }}>
+                Section: {batches.flatMap((b) => b.sections || []).find((s) => s.id === appliedFilters.sectionId)?.name || appliedFilters.sectionId}
+              </span>
+            )}
+            {appliedFilters.allocationBatchId && (
+              <span style={{ padding: '0.15rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(255, 255, 255, 0.08)' }}>
+                Alloc: {filterAllocBatches.find((ab) => ab.id === appliedFilters.allocationBatchId)?.name || appliedFilters.allocationBatchId}
+              </span>
+            )}
+            {appliedFilters.mentorId && (
+              <span style={{ padding: '0.15rem 0.5rem', borderRadius: '4px', backgroundColor: 'rgba(255, 255, 255, 0.08)' }}>
+                Mentor: {appliedFilters.mentorId === 'UNASSIGNED' ? 'Unpaired' : staffList.find((st) => st.id === appliedFilters.mentorId)?.name || 'Staff'}
+              </span>
+            )}
+            <button
+              onClick={handleResetFilters}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#60a5fa',
+                cursor: 'pointer',
+                fontSize: '0.78rem',
+                textDecoration: 'underline',
+                marginLeft: 'auto',
+              }}
+            >
+              Clear all
+            </button>
+          </div>
+        )}
 
         {loading && (
           <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
@@ -2085,7 +2316,7 @@ export const StudentsPage: React.FC = () => {
                     {totalStudents === 0 ? (
                       <tr>
                         <td colSpan={canManage ? 13 : 11} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                          {search || filterBatchId ? 'No students match your filter criteria.' : 'No students yet.'}
+                          {hasAppliedFilters || hasSelectedFilters ? 'No students match your filter criteria.' : 'No students yet.'}
                         </td>
                       </tr>
                     ) : (

@@ -122,7 +122,7 @@ async function fetchOfficialGraphQL(cleanUsername: string): Promise<LeetCodeStat
     method: 'POST',
     headers: leetHeaders,
     body: JSON.stringify(gqlQuery),
-    signal: AbortSignal.timeout(2200),
+    signal: AbortSignal.timeout(6000),
   });
 
   if (!fetchRes.ok) {
@@ -208,7 +208,7 @@ async function fetchOfficialGraphQL(cleanUsername: string): Promise<LeetCodeStat
 
 async function fetchFaisalShohag(cleanUsername: string): Promise<LeetCodeStats> {
   const backupRes = await axios.get(`https://leetcode-api-faisalshohag.vercel.app/${encodeURIComponent(cleanUsername)}`, {
-    timeout: 2500,
+    timeout: 6000,
   });
 
   if (!backupRes.data) throw new Error('Empty response from Faisal Shohag API');
@@ -276,7 +276,7 @@ async function fetchFaisalShohag(cleanUsername: string): Promise<LeetCodeStats> 
 
 async function fetchAlfaProxy(cleanUsername: string): Promise<LeetCodeStats> {
   const alfaRes = await axios.get(`https://alfa-leetcode-api.onrender.com/userProfile/${encodeURIComponent(cleanUsername)}`, {
-    timeout: 3000,
+    timeout: 7000,
   });
 
   if (!alfaRes.data) throw new Error('Empty response from Alfa proxy');
@@ -358,28 +358,49 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
     };
   }
 
-  // 1. Race Official GraphQL and Faisal Shohag API simultaneously using Promise.any.
-  // Whichever responds first (typically 300ms - 800ms) immediately wins!
-  try {
-    return await Promise.any([
-      fetchOfficialGraphQL(cleanUsername),
-      fetchFaisalShohag(cleanUsername),
-    ]);
-  } catch (raceErr: any) {
-    const errors = Array.isArray(raceErr?.errors) ? raceErr.errors : [raceErr];
-    const notFound = errors.find((e: any) => e?.isUserNotFound || e?.statusCode === 404);
-    if (notFound) {
-      throw notFound;
-    }
-    console.warn(`[LeetCode Fetch] Parallel race failed for @${cleanUsername}. Trying tertiary Alfa proxy...`);
-  }
+  // Resilient live fetch with automatic retry on transient rate-limit (429) or network timeout
+  const maxLiveAttempts = 2;
+  for (let attempt = 1; attempt <= maxLiveAttempts; attempt++) {
+    try {
+      if (attempt > 1) {
+        // Jittered backoff (350ms - 750ms) to allow Cloudflare burst window to reset
+        await new Promise((resolve) => setTimeout(resolve, 350 + Math.random() * 400));
+      }
 
-  // 2. Tertiary failover: Alfa LeetCode Proxy
-  try {
-    return await fetchAlfaProxy(cleanUsername);
-  } catch (alfaErr: any) {
-    if (alfaErr?.isUserNotFound || alfaErr?.statusCode === 404) {
-      throw alfaErr;
+      // 1. Race Official GraphQL and Faisal Shohag API simultaneously using Promise.any.
+      // Whichever responds first (typically 300ms - 800ms) immediately wins!
+      try {
+        return await Promise.any([
+          fetchOfficialGraphQL(cleanUsername),
+          fetchFaisalShohag(cleanUsername),
+        ]);
+      } catch (raceErr: any) {
+        const errors = Array.isArray(raceErr?.errors) ? raceErr.errors : [raceErr];
+        const notFound = errors.find((e: any) => e?.isUserNotFound || e?.statusCode === 404);
+        if (notFound) {
+          throw notFound;
+        }
+        if (attempt === maxLiveAttempts) {
+          console.warn(`[LeetCode Fetch] Parallel race failed for @${cleanUsername}. Trying tertiary Alfa proxy...`);
+        }
+      }
+
+      // 2. Tertiary failover: Alfa LeetCode Proxy
+      try {
+        return await fetchAlfaProxy(cleanUsername);
+      } catch (alfaErr: any) {
+        if (alfaErr?.isUserNotFound || alfaErr?.statusCode === 404) {
+          throw alfaErr;
+        }
+      }
+    } catch (liveErr: any) {
+      if (liveErr?.isUserNotFound || liveErr?.statusCode === 404) {
+        throw liveErr;
+      }
+      if (attempt === maxLiveAttempts) {
+        // Fall through to historical snapshot fallback
+        break;
+      }
     }
   }
 
@@ -1053,18 +1074,17 @@ export async function syncFilteredStudentsLeetCode(
     studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
   }
 
-  // Run student syncing concurrently — no artificial 9s wall-clock cap.
-  // Each student fetch takes 0.5-4s; 15 workers handle 52+ students in ~15-30s naturally.
+  // Controlled concurrency (5 workers) ensures rapid execution while avoiding Cloudflare burst rate limits
   const MAX_SAFE_EXECUTION_MS = process.env.VERCEL ? 55000 : 180000;
   const results = await runConcurrentTasks(
     studentList,
-    15,
+    5,
     async (st) => {
       try {
         const res = await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
         return { studentId: st.id, success: true, stats: res.stats };
       } catch (err: any) {
-        return { studentId: st.id, success: false, error: err.message };
+        return { studentId: st.id, success: false, error: err.message, isUserNotFound: err.isUserNotFound };
       }
     },
     MAX_SAFE_EXECUTION_MS
