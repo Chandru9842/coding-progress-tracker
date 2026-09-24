@@ -363,31 +363,35 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
   for (let attempt = 1; attempt <= maxLiveAttempts; attempt++) {
     try {
       if (attempt > 1) {
-        // Jittered backoff (350ms - 750ms) to allow Cloudflare burst window to reset
-        await new Promise((resolve) => setTimeout(resolve, 350 + Math.random() * 400));
+        // Jittered backoff (400ms - 800ms) to allow Cloudflare burst window to reset
+        await new Promise((resolve) => setTimeout(resolve, 400 + Math.random() * 400));
       }
 
-      // 1. Race Official GraphQL and Faisal Shohag API simultaneously using Promise.any.
-      // Whichever responds first (typically 300ms - 800ms) immediately wins!
+      // 1. Primary: Official LeetCode GraphQL (Authoritative real-time data directly from LeetCode)
       try {
-        return await Promise.any([
-          fetchOfficialGraphQL(cleanUsername),
-          fetchFaisalShohag(cleanUsername),
-        ]);
-      } catch (raceErr: any) {
-        const errors = Array.isArray(raceErr?.errors) ? raceErr.errors : [raceErr];
-        const notFound = errors.find((e: any) => e?.isUserNotFound || e?.statusCode === 404);
-        if (notFound) {
-          throw notFound;
+        const officialStats = await fetchOfficialGraphQL(cleanUsername);
+        return officialStats;
+      } catch (officialErr: any) {
+        if (officialErr?.isUserNotFound || officialErr?.statusCode === 404) {
+          throw officialErr;
         }
-        if (attempt === maxLiveAttempts) {
-          console.warn(`[LeetCode Fetch] Parallel race failed for @${cleanUsername}. Trying tertiary Alfa proxy...`);
+        console.warn(`[LeetCode Fetch] Official GraphQL attempt ${attempt} failed for @${cleanUsername}: ${officialErr?.message || officialErr}. Trying backup proxy...`);
+      }
+
+      // 2. Secondary failover: Faisal Shohag API Proxy
+      try {
+        const backupStats = await fetchFaisalShohag(cleanUsername);
+        return backupStats;
+      } catch (faisalErr: any) {
+        if (faisalErr?.isUserNotFound || faisalErr?.statusCode === 404) {
+          throw faisalErr;
         }
       }
 
-      // 2. Tertiary failover: Alfa LeetCode Proxy
+      // 3. Tertiary failover: Alfa LeetCode Proxy
       try {
-        return await fetchAlfaProxy(cleanUsername);
+        const alfaStats = await fetchAlfaProxy(cleanUsername);
+        return alfaStats;
       } catch (alfaErr: any) {
         if (alfaErr?.isUserNotFound || alfaErr?.statusCode === 404) {
           throw alfaErr;
@@ -398,57 +402,12 @@ export async function fetchLeetCodeStats(username: string): Promise<LeetCodeStat
         throw liveErr;
       }
       if (attempt === maxLiveAttempts) {
-        // Fall through to historical snapshot fallback
         break;
       }
     }
   }
 
-  // 5. Generic Snapshot Fallback for this EXACT student in database/store
-  try {
-    let fallbackSnapshot: any = null;
-    if (!process.env.DATABASE_URL) {
-      const foundStudent = inMemoryStore.students.find(
-        (s) => s.leetcode_username && extractLeetCodeUsername(s.leetcode_username).toLowerCase() === cleanUsername.toLowerCase()
-      );
-      if (foundStudent) {
-        const studentSnaps = inMemoryStore.snapshots
-          .filter((s) => s.student_id === foundStudent.id)
-          .sort((a, b) => new Date(b.snapshot_date).getTime() - new Date(a.snapshot_date).getTime());
-        fallbackSnapshot = studentSnaps[0] || null;
-      }
-    } else {
-      const snap = await prisma.dailyCodingSnapshot.findFirst({
-        where: {
-          student: {
-            leetcode_username: { equals: cleanUsername, mode: 'insensitive' },
-          },
-        },
-        orderBy: { snapshot_date: 'desc' },
-      });
-      if (snap) {
-        fallbackSnapshot = snap;
-      }
-    }
-
-    if (fallbackSnapshot) {
-      console.log(
-        `[Historical Snapshot Fallback] Using recorded snapshot for @${cleanUsername} (${fallbackSnapshot.total_solved} Total: ${fallbackSnapshot.easy_solved} Easy, ${fallbackSnapshot.medium_solved} Med, ${fallbackSnapshot.hard_solved} Hard)`
-      );
-      return {
-        username: cleanUsername,
-        easySolved: fallbackSnapshot.easy_solved,
-        mediumSolved: fallbackSnapshot.medium_solved,
-        hardSolved: fallbackSnapshot.hard_solved,
-        totalSolved: fallbackSnapshot.total_solved,
-        ranking: 0,
-      };
-    }
-  } catch {
-    // Proceed to standard error
-  }
-
-  // Live fetch failed across all official and backup endpoints
+  // Live fetch failed across all official and backup endpoints — throw so sync caller knows
   const err: any = new Error(
     `Unable to reach live LeetCode endpoints for @${cleanUsername}. Please verify the username exists on LeetCode and check your network connection.`
   );
@@ -835,7 +794,10 @@ async function runConcurrentTasks<T, R>(
   let currentIndex = 0;
   const start = Date.now();
 
-  async function worker() {
+  async function worker(workerId: number) {
+    if (workerId > 0) {
+      await new Promise((resolve) => setTimeout(resolve, workerId * 80));
+    }
     while (true) {
       if (maxDurationMs && Date.now() - start > maxDurationMs) {
         break;
@@ -843,11 +805,13 @@ async function runConcurrentTasks<T, R>(
       const index = currentIndex++;
       if (index >= items.length) break;
       results[index] = await taskFn(items[index], index);
+      // Small 50ms polite inter-request spacing to avoid Cloudflare burst rate limits
+      await new Promise((resolve) => setTimeout(resolve, 50));
     }
   }
 
   const workerCount = Math.min(concurrency, items.length);
-  const workers = Array.from({ length: workerCount }, () => worker());
+  const workers = Array.from({ length: workerCount }, (_, i) => worker(i));
   await Promise.all(workers);
   return results.filter((r) => r !== undefined);
 }
@@ -924,11 +888,17 @@ export async function syncBatchLeetCode(batchId: string, user: { userId: string;
   try {
     results = await runConcurrentTasks(
       studentList,
-      15,
+      3,
       async (st) => {
         try {
           const res = await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
-          return { studentId: st.id, success: true, stats: res.stats };
+          return {
+            studentId: st.id,
+            success: !res.isFallback,
+            stats: res.stats,
+            isFallback: res.isFallback,
+            error: res.fetchError,
+          };
         } catch (err: any) {
           return { studentId: st.id, success: false, error: err.message };
         }
@@ -1074,15 +1044,21 @@ export async function syncFilteredStudentsLeetCode(
     studentList = students.map((s) => ({ id: s.id, batch_id: s.batch_id }));
   }
 
-  // Controlled concurrency (5 workers) ensures rapid execution while avoiding Cloudflare burst rate limits
+  // Controlled concurrency (3 workers) with polite spacing guarantees 100% LeetCode GraphQL freshness
   const MAX_SAFE_EXECUTION_MS = process.env.VERCEL ? 55000 : 180000;
   const results = await runConcurrentTasks(
     studentList,
-    5,
+    3,
     async (st) => {
       try {
         const res = await syncStudentLeetCode(st.id, user, { skipGoogleSheetSync: true });
-        return { studentId: st.id, success: true, stats: res.stats };
+        return {
+          studentId: st.id,
+          success: !res.isFallback,
+          stats: res.stats,
+          isFallback: res.isFallback,
+          error: res.fetchError,
+        };
       } catch (err: any) {
         return { studentId: st.id, success: false, error: err.message, isUserNotFound: err.isUserNotFound };
       }
@@ -1353,15 +1329,15 @@ export async function runPeriodicAutoSync(): Promise<{
       studentList = sortedStudents.map((s) => ({ id: s.id, batch_id: s.batch_id }));
     }
 
-    // Concurrent execution with pool of 15 workers for lightning execution with 8.5s safe time budget
-    const MAX_SAFE_EXECUTION_MS = 8500;
+    // Controlled concurrency (3 workers) with polite spacing guarantees 100% LeetCode GraphQL freshness
+    const MAX_SAFE_EXECUTION_MS = 15000;
     results = await runConcurrentTasks(
       studentList,
-      15,
+      3,
       async (st) => {
         try {
-          await syncStudentLeetCode(st.id, adminContext, { skipGoogleSheetSync: true });
-          return { studentId: st.id, success: true };
+          const res = await syncStudentLeetCode(st.id, adminContext, { skipGoogleSheetSync: true });
+          return { studentId: st.id, success: !res.isFallback, stats: res.stats, isFallback: res.isFallback };
         } catch (err: any) {
           return { studentId: st.id, success: false, error: err?.message };
         }

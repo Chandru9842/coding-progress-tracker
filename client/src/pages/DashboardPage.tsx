@@ -335,21 +335,16 @@ export const DashboardPage: React.FC = () => {
         }
 
         let processedCount = 0;
-        const concurrency = 2;
-        for (let cIdx = 0; cIdx < chunks.length; cIdx += concurrency) {
-          const chunkBatch = chunks.slice(cIdx, cIdx + concurrency);
-          await Promise.all(
-            chunkBatch.map(async (chunk) => {
-              try {
-                const res = await syncReportStudents({ studentIds: chunk });
-                totalSuccess += res.successful ?? chunk.length;
-              } catch (chunkErr) {
-                console.warn('[Sync Chunk Warning]:', chunkErr);
-              } finally {
-                processedCount += chunk.length;
-              }
-            })
-          );
+        for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
+          const chunk = chunks[cIdx];
+          try {
+            const res = await syncReportStudents({ studentIds: chunk });
+            totalSuccess += res.successful ?? chunk.length;
+          } catch (chunkErr) {
+            console.warn('[Sync Chunk Warning]:', chunkErr);
+          } finally {
+            processedCount += chunk.length;
+          }
           const percent = Math.min(100, Math.round((processedCount / totalToSync) * 100));
           setSyncMessage(
             `⚡ Live syncing LeetCode stats: ${processedCount}/${totalToSync} students (${percent}%)... Please wait.`

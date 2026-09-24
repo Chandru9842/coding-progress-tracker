@@ -862,6 +862,10 @@ export const StudentsPage: React.FC = () => {
                   };
                   return {
                     ...st,
+                    total_solved: match.stats.totalSolved ?? (st as any).total_solved,
+                    easy_solved: match.stats.easySolved ?? (st as any).easy_solved,
+                    medium_solved: match.stats.mediumSolved ?? (st as any).medium_solved,
+                    hard_solved: match.stats.hardSolved ?? (st as any).hard_solved,
                     snapshots: [newSnap as any],
                     latest_snapshot: newSnap as any,
                   };

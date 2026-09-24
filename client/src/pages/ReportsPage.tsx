@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { RefreshCw, FileSpreadsheet, Download, Trash2, CheckCircle2, AlertCircle, X, Layers, AlertTriangle, ExternalLink } from 'lucide-react';
 import { Layout } from '../components/Layout.js';
-import { getCachedData, staffApi, notifySyncStarted, notifySyncEnded } from '../services/api.js';
+import { getCachedData, clearClientCache, staffApi, notifySyncStarted, notifySyncEnded } from '../services/api.js';
 import { GoogleSheetsIntegration } from '../components/GoogleSheetsIntegration.js';
 import { SyncErrorsView } from '../components/SyncErrorsView.js';
 import { SearchableMentorSelect } from '../components/SearchableMentorSelect.js';
@@ -755,59 +755,54 @@ export default function ReportsPage() {
           chunks.push(immediateIds.slice(i, i + batchSize));
         }
 
-        // Process chunks with concurrency = 3 for ultra-fast parallel throughput
+        // Process chunks sequentially to respect API rate limits while maintaining live updates
         let processedCount = 0;
-        const concurrency = 3;
-        for (let cIdx = 0; cIdx < chunks.length; cIdx += concurrency) {
-          const chunkBatch = chunks.slice(cIdx, cIdx + concurrency);
-          await Promise.all(
-            chunkBatch.map(async (chunk) => {
-              try {
-                const chunkRes = await syncReportStudents({
-                  studentIds: chunk,
-                });
-                totalSuccess += (chunkRes.successful ?? chunk.length);
+        for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
+          const chunk = chunks[cIdx];
+          try {
+            const chunkRes = await syncReportStudents({
+              studentIds: chunk,
+            });
+            totalSuccess += (chunkRes.successful ?? chunk.length);
 
-                // Live in-place row update so user sees numbers increment chunk-by-chunk!
-                if (chunkRes?.results && Array.isArray(chunkRes.results)) {
-                  const statsMap = new Map<string, any>();
-                  chunkRes.results.forEach((r: any) => {
-                    if (r.studentId && r.stats) statsMap.set(r.studentId, r.stats);
-                  });
-                  if (statsMap.size > 0) {
-                    setReportData((prev) => {
-                      if (!prev) return prev;
+            // Live in-place row update so user sees numbers increment chunk-by-chunk!
+            if (chunkRes?.results && Array.isArray(chunkRes.results)) {
+              const statsMap = new Map<string, any>();
+              chunkRes.results.forEach((r: any) => {
+                if (r.studentId && r.stats) statsMap.set(r.studentId, r.stats);
+              });
+              if (statsMap.size > 0) {
+                setReportData((prev) => {
+                  if (!prev) return prev;
+                  return {
+                    ...prev,
+                    students: prev.students.map((st) => {
+                      const newStats = statsMap.get(st.id);
+                      if (!newStats) return st;
                       return {
-                        ...prev,
-                        students: prev.students.map((st) => {
-                          const newStats = statsMap.get(st.id);
-                          if (!newStats) return st;
-                          return {
-                            ...st,
-                            total_solved: newStats.totalSolved ?? st.total_solved,
-                            easy_solved: newStats.easySolved ?? st.easy_solved,
-                            medium_solved: newStats.mediumSolved ?? st.medium_solved,
-                            hard_solved: newStats.hardSolved ?? st.hard_solved,
-                            overall_total: newStats.totalSolved ?? st.overall_total,
-                            overall_easy: newStats.easySolved ?? st.overall_easy,
-                            overall_medium: newStats.mediumSolved ?? st.overall_medium,
-                            overall_hard: newStats.hardSolved ?? st.overall_hard,
-                            has_activity: (newStats.totalSolved ?? 0) > 0,
-                          };
-                        }),
+                        ...st,
+                        total_solved: newStats.totalSolved ?? st.total_solved,
+                        easy_solved: newStats.easySolved ?? st.easy_solved,
+                        medium_solved: newStats.mediumSolved ?? st.medium_solved,
+                        hard_solved: newStats.hardSolved ?? st.hard_solved,
+                        overall_total: newStats.totalSolved ?? st.overall_total,
+                        overall_easy: newStats.easySolved ?? st.overall_easy,
+                        overall_medium: newStats.mediumSolved ?? st.overall_medium,
+                        overall_hard: newStats.hardSolved ?? st.overall_hard,
+                        has_activity: (newStats.totalSolved ?? 0) > 0,
                       };
-                    });
-                  }
-                }
-              } catch (chunkErr) {
-                console.warn('[Sync Chunk Warning]:', chunkErr);
-              } finally {
-                processedCount += chunk.length;
+                    }),
+                  };
+                });
               }
-            })
-          );
+            }
+          } catch (chunkErr) {
+            console.warn('[Sync Chunk Warning]:', chunkErr);
+          } finally {
+            processedCount += chunk.length;
+          }
 
-          // Update progress after each batch
+          // Update progress after each chunk
           const percent = Math.min(100, Math.round((processedCount / totalToSync) * 100));
           const elapsed = Math.floor((Date.now() - startTime) / 1000);
           const estRemaining = Math.max(0, Math.min(45, Math.round((1 - (processedCount / totalToSync)) * targetDuration)));
@@ -854,6 +849,11 @@ export default function ReportsPage() {
         });
         setSuccessMsg(`✅ ${res.message || 'Live LeetCode data synchronized!'}`);
       }
+
+      // Invalidate caches before re-fetching fresh report data
+      clearClientCache('report_data_');
+      clearClientCache('students_');
+      clearClientCache('stats_');
 
       // Refresh report data safely without overwriting live table state on transient error
       try {
