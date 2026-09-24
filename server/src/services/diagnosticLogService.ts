@@ -355,6 +355,12 @@ class DiagnosticLogService {
     };
   }
 
+  public deleteLogsForStudents(studentIds: string[]): void {
+    if (!studentIds || studentIds.length === 0) return;
+    const idSet = new Set(studentIds);
+    this.logs = this.logs.filter((l) => !idSet.has(l.targetId));
+  }
+
   public clearLogs(): void {
     this.logs = [];
   }

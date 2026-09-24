@@ -63,13 +63,20 @@ export const DashboardPage: React.FC = () => {
   const [allocBatches, setAllocBatches] = useState<AllocationBatch[]>([]);
   const [loadingFilters, setLoadingFilters] = useState<boolean>(true);
 
-  const [filterDept, setFilterDept] = useState<string>('ALL');
-  const [filterBatchId, setFilterBatchId] = useState<string>('ALL');
-  const [filterSectionId, setFilterSectionId] = useState<string>('ALL');
-  const [filterAllocBatchId, setFilterAllocBatchId] = useState<string>('ALL');
-  const [filterMentorId, setFilterMentorId] = useState<string>(
-    user?.role === 'STAFF' ? currentUserId : 'ALL'
-  );
+  // Applied filter state (currently rendered stats cohort)
+  const defaultMentor = user?.role === 'STAFF' ? currentUserId : 'ALL';
+  const [appliedDept, setAppliedDept] = useState<string>('ALL');
+  const [appliedBatchId, setAppliedBatchId] = useState<string>('ALL');
+  const [appliedSectionId, setAppliedSectionId] = useState<string>('ALL');
+  const [appliedAllocBatchId, setAppliedAllocBatchId] = useState<string>('ALL');
+  const [appliedMentorId, setAppliedMentorId] = useState<string>(defaultMentor);
+
+  // Staged filter state (interactive form selections before clicking "Apply Filter")
+  const [stagedDept, setStagedDept] = useState<string>('ALL');
+  const [stagedBatchId, setStagedBatchId] = useState<string>('ALL');
+  const [stagedSectionId, setStagedSectionId] = useState<string>('ALL');
+  const [stagedAllocBatchId, setStagedAllocBatchId] = useState<string>('ALL');
+  const [stagedMentorId, setStagedMentorId] = useState<string>(defaultMentor);
 
   // Searchable mentor dropdown state
   const [mentorSearch, setMentorSearch] = useState<string>('');
@@ -78,8 +85,9 @@ export const DashboardPage: React.FC = () => {
 
   // Sync staff mentor default once user profile is verified
   useEffect(() => {
-    if (user?.role === 'STAFF' && filterMentorId === 'ALL' && currentUserId) {
-      setFilterMentorId(currentUserId);
+    if (user?.role === 'STAFF' && currentUserId) {
+      if (appliedMentorId === 'ALL') setAppliedMentorId(currentUserId);
+      if (stagedMentorId === 'ALL') setStagedMentorId(currentUserId);
     }
   }, [user, currentUserId]);
 
@@ -120,42 +128,40 @@ export const DashboardPage: React.FC = () => {
     };
   }, []);
 
-  // When selected section changes, load its allocation batches
+  // When staged section changes, load its allocation batches for dropdown
   useEffect(() => {
-    if (filterSectionId && filterSectionId !== 'ALL') {
+    if (stagedSectionId && stagedSectionId !== 'ALL') {
       batchApi
-        .getAllocationBatches(filterSectionId)
+        .getAllocationBatches(stagedSectionId)
         .then((res) => setAllocBatches(res || []))
         .catch(() => setAllocBatches([]));
     } else {
       setAllocBatches([]);
-      if (filterAllocBatchId !== 'ALL') {
-        setFilterAllocBatchId('ALL');
+      if (stagedAllocBatchId !== 'ALL') {
+        setStagedAllocBatchId('ALL');
       }
     }
-  }, [filterSectionId]);
+  }, [stagedSectionId]);
 
-  // Derived filter options
+  // Derived filter options strictly from admin-created / assigned batches (no hardcoded defaults)
   const departmentOptions = Array.from(
-    new Set([
-      'CSE',
-      'IT',
-      'ECE',
-      'AIDS',
-      ...batches.map((b) => b.department).filter(Boolean),
-    ])
+    new Set(
+      batches
+        .map((b) => b.department?.trim())
+        .filter((d): d is string => Boolean(d))
+    )
   ).sort();
 
   const filteredBatches = batches.filter((b) => {
-    if (filterDept !== 'ALL' && b.department?.toUpperCase() !== filterDept.toUpperCase()) {
+    if (stagedDept !== 'ALL' && b.department?.toUpperCase() !== stagedDept.toUpperCase()) {
       return false;
     }
     return true;
   });
 
   const availableSections: Section[] = [];
-  if (filterBatchId !== 'ALL') {
-    const matchedBatch = batches.find((b) => b.id === filterBatchId);
+  if (stagedBatchId !== 'ALL') {
+    const matchedBatch = batches.find((b) => b.id === stagedBatchId);
     if (matchedBatch?.sections) {
       availableSections.push(...matchedBatch.sections);
     }
@@ -168,7 +174,7 @@ export const DashboardPage: React.FC = () => {
     }
   }
 
-  // Fetch dashboard stats with active filters
+  // Fetch dashboard stats for active cohort
   const fetchStats = useCallback(
     async (
       bypassCache: boolean = false,
@@ -182,12 +188,12 @@ export const DashboardPage: React.FC = () => {
     ) => {
       try {
         setLoading(true);
-        const dept = overrides?.department !== undefined ? overrides.department : filterDept;
-        const bId = overrides?.batchId !== undefined ? overrides.batchId : filterBatchId;
-        const sId = overrides?.sectionId !== undefined ? overrides.sectionId : filterSectionId;
+        const dept = overrides?.department !== undefined ? overrides.department : appliedDept;
+        const bId = overrides?.batchId !== undefined ? overrides.batchId : appliedBatchId;
+        const sId = overrides?.sectionId !== undefined ? overrides.sectionId : appliedSectionId;
         const aId =
-          overrides?.allocationBatchId !== undefined ? overrides.allocationBatchId : filterAllocBatchId;
-        const mId = overrides?.mentorId !== undefined ? overrides.mentorId : filterMentorId;
+          overrides?.allocationBatchId !== undefined ? overrides.allocationBatchId : appliedAllocBatchId;
+        const mId = overrides?.mentorId !== undefined ? overrides.mentorId : appliedMentorId;
 
         const params: any = {};
         if (dept && dept !== 'ALL') params.department = dept;
@@ -211,15 +217,15 @@ export const DashboardPage: React.FC = () => {
         setLoading(false);
       }
     },
-    [filterDept, filterBatchId, filterSectionId, filterAllocBatchId, filterMentorId, user]
+    [appliedDept, appliedBatchId, appliedSectionId, appliedAllocBatchId, appliedMentorId, user]
   );
 
-  // Trigger stats load on filter adjustments
+  // Initial stats load on mount
   useEffect(() => {
     fetchStats(false);
-  }, [fetchStats]);
+  }, []);
 
-  // Sync event listener
+  // Sync event listener (live sync or student updates re-fetch applied cohort)
   useEffect(() => {
     const handleSyncEvent = () => fetchStats(true);
     window.addEventListener('student-synced', handleSyncEvent);
@@ -231,30 +237,61 @@ export const DashboardPage: React.FC = () => {
     };
   }, [fetchStats]);
 
+  // Apply filters button handler — explicit execution
+  const handleApplyFilters = () => {
+    setAppliedDept(stagedDept);
+    setAppliedBatchId(stagedBatchId);
+    setAppliedSectionId(stagedSectionId);
+    setAppliedAllocBatchId(stagedAllocBatchId);
+    setAppliedMentorId(stagedMentorId);
+
+    fetchStats(false, {
+      department: stagedDept,
+      batchId: stagedBatchId,
+      sectionId: stagedSectionId,
+      allocationBatchId: stagedAllocBatchId,
+      mentorId: stagedMentorId,
+    });
+  };
+
   // Reset all filters to default
   const handleResetFilters = () => {
-    const defaultMentor = user?.role === 'STAFF' ? currentUserId : 'ALL';
-    setFilterDept('ALL');
-    setFilterBatchId('ALL');
-    setFilterSectionId('ALL');
-    setFilterAllocBatchId('ALL');
-    setFilterMentorId(defaultMentor);
+    const defaultM = user?.role === 'STAFF' ? currentUserId : 'ALL';
+    setStagedDept('ALL');
+    setStagedBatchId('ALL');
+    setStagedSectionId('ALL');
+    setStagedAllocBatchId('ALL');
+    setStagedMentorId(defaultM);
     setMentorSearch('');
+
+    setAppliedDept('ALL');
+    setAppliedBatchId('ALL');
+    setAppliedSectionId('ALL');
+    setAppliedAllocBatchId('ALL');
+    setAppliedMentorId(defaultM);
+
     fetchStats(false, {
       department: 'ALL',
       batchId: 'ALL',
       sectionId: 'ALL',
       allocationBatchId: 'ALL',
-      mentorId: defaultMentor,
+      mentorId: defaultM,
     });
   };
 
   const isFilterActive =
-    filterDept !== 'ALL' ||
-    filterBatchId !== 'ALL' ||
-    filterSectionId !== 'ALL' ||
-    filterAllocBatchId !== 'ALL' ||
-    (user?.role === 'ADMIN' ? filterMentorId !== 'ALL' : filterMentorId !== currentUserId);
+    appliedDept !== 'ALL' ||
+    appliedBatchId !== 'ALL' ||
+    appliedSectionId !== 'ALL' ||
+    appliedAllocBatchId !== 'ALL' ||
+    (user?.role === 'ADMIN' ? appliedMentorId !== 'ALL' : appliedMentorId !== currentUserId);
+
+  const hasUnappliedChanges =
+    stagedDept !== appliedDept ||
+    stagedBatchId !== appliedBatchId ||
+    stagedSectionId !== appliedSectionId ||
+    stagedAllocBatchId !== appliedAllocBatchId ||
+    stagedMentorId !== appliedMentorId;
 
   // Interactive Live LeetCode Sync scoped to active filters
   const handleLiveLeetCodeSync = async () => {
@@ -265,12 +302,12 @@ export const DashboardPage: React.FC = () => {
       setError(null);
 
       const activeFilterParams: any = {};
-      if (filterDept !== 'ALL') activeFilterParams.department = filterDept;
-      if (filterBatchId !== 'ALL') activeFilterParams.batchId = filterBatchId;
-      if (filterSectionId !== 'ALL') activeFilterParams.sectionId = filterSectionId;
-      if (filterAllocBatchId !== 'ALL') activeFilterParams.allocationBatchId = filterAllocBatchId;
-      if (filterMentorId && filterMentorId !== 'ALL') {
-        activeFilterParams.mentorId = filterMentorId;
+      if (appliedDept !== 'ALL') activeFilterParams.department = appliedDept;
+      if (appliedBatchId !== 'ALL') activeFilterParams.batchId = appliedBatchId;
+      if (appliedSectionId !== 'ALL') activeFilterParams.sectionId = appliedSectionId;
+      if (appliedAllocBatchId !== 'ALL') activeFilterParams.allocationBatchId = appliedAllocBatchId;
+      if (appliedMentorId && appliedMentorId !== 'ALL') {
+        activeFilterParams.mentorId = appliedMentorId;
       } else if (user?.role === 'STAFF') {
         activeFilterParams.mentorId = currentUserId;
       }
@@ -340,13 +377,13 @@ export const DashboardPage: React.FC = () => {
   const lc = (stats as any)?.leetcodeStats;
 
   // Selected mentor display label
-  const selectedMentor = staffList.find((s) => s.id === filterMentorId);
+  const selectedMentor = staffList.find((s) => s.id === stagedMentorId);
   const mentorDisplayLabel =
-    filterMentorId === 'ALL'
+    stagedMentorId === 'ALL'
       ? 'All Mentors / Whole Cohort'
-      : filterMentorId === 'UNASSIGNED'
+      : stagedMentorId === 'UNASSIGNED'
       ? 'Unassigned Students'
-      : filterMentorId === currentUserId
+      : stagedMentorId === currentUserId
       ? `⭐ My Students (${user?.name})`
       : selectedMentor?.name || 'Selected Mentor';
 
@@ -460,6 +497,7 @@ export const DashboardPage: React.FC = () => {
         )}
 
         {/* Dynamic Performance & Cohort Filter Bar */}
+        {/* Dynamic Performance & Cohort Filter Bar */}
         <div
           className="glass-panel"
           style={{
@@ -470,6 +508,9 @@ export const DashboardPage: React.FC = () => {
             display: 'flex',
             flexDirection: 'column',
             gap: '1rem',
+            position: 'relative',
+            zIndex: 40,
+            overflow: 'visible',
           }}
         >
           <div
@@ -481,7 +522,7 @@ export const DashboardPage: React.FC = () => {
               gap: '0.75rem',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
               <div
                 style={{
                   padding: '0.35rem',
@@ -499,7 +540,7 @@ export const DashboardPage: React.FC = () => {
                 Dashboard Cohort Filters
               </span>
 
-              {user?.role === 'STAFF' && filterMentorId === currentUserId && (
+              {user?.role === 'STAFF' && appliedMentorId === currentUserId && (
                 <span
                   style={{
                     fontSize: '0.75rem',
@@ -515,7 +556,7 @@ export const DashboardPage: React.FC = () => {
                 </span>
               )}
 
-              {user?.role === 'ADMIN' && filterMentorId === 'ALL' && (
+              {user?.role === 'ADMIN' && appliedMentorId === 'ALL' && (
                 <span
                   style={{
                     fontSize: '0.75rem',
@@ -528,6 +569,54 @@ export const DashboardPage: React.FC = () => {
                   }}
                 >
                   🌐 College / Whole Department View
+                </span>
+              )}
+
+              {user?.role === 'ADMIN' && appliedMentorId !== 'ALL' && appliedMentorId !== 'UNASSIGNED' && (
+                <span
+                  style={{
+                    fontSize: '0.75rem',
+                    padding: '0.2rem 0.6rem',
+                    borderRadius: '12px',
+                    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                    color: '#34d399',
+                    fontWeight: 600,
+                    border: '1px solid rgba(16, 185, 129, 0.3)',
+                  }}
+                >
+                  ⭐ Filtered Mentor: {staffList.find((s) => s.id === appliedMentorId)?.name || 'Staff'}
+                </span>
+              )}
+
+              {user?.role === 'ADMIN' && appliedMentorId === 'UNASSIGNED' && (
+                <span
+                  style={{
+                    fontSize: '0.75rem',
+                    padding: '0.2rem 0.6rem',
+                    borderRadius: '12px',
+                    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                    color: '#f87171',
+                    fontWeight: 600,
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                  }}
+                >
+                  ⚠️ Unassigned Students
+                </span>
+              )}
+
+              {hasUnappliedChanges && (
+                <span
+                  style={{
+                    fontSize: '0.75rem',
+                    padding: '0.2rem 0.6rem',
+                    borderRadius: '12px',
+                    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                    color: '#fbbf24',
+                    fontWeight: 600,
+                    border: '1px solid rgba(245, 158, 11, 0.3)',
+                  }}
+                >
+                  ⚠️ Filter selections changed — click "Apply Filters"
                 </span>
               )}
             </div>
@@ -563,9 +652,11 @@ export const DashboardPage: React.FC = () => {
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
               gap: '0.85rem',
               alignItems: 'flex-end',
+              position: 'relative',
+              zIndex: 40,
             }}
           >
             {/* 1. Department Filter */}
@@ -574,12 +665,12 @@ export const DashboardPage: React.FC = () => {
                 Department
               </label>
               <select
-                value={filterDept}
+                value={stagedDept}
                 onChange={(e) => {
-                  setFilterDept(e.target.value);
-                  setFilterBatchId('ALL');
-                  setFilterSectionId('ALL');
-                  setFilterAllocBatchId('ALL');
+                  setStagedDept(e.target.value);
+                  setStagedBatchId('ALL');
+                  setStagedSectionId('ALL');
+                  setStagedAllocBatchId('ALL');
                 }}
                 style={{
                   padding: '0.55rem 0.75rem',
@@ -606,11 +697,11 @@ export const DashboardPage: React.FC = () => {
                 Academic Batch
               </label>
               <select
-                value={filterBatchId}
+                value={stagedBatchId}
                 onChange={(e) => {
-                  setFilterBatchId(e.target.value);
-                  setFilterSectionId('ALL');
-                  setFilterAllocBatchId('ALL');
+                  setStagedBatchId(e.target.value);
+                  setStagedSectionId('ALL');
+                  setStagedAllocBatchId('ALL');
                 }}
                 style={{
                   padding: '0.55rem 0.75rem',
@@ -637,10 +728,10 @@ export const DashboardPage: React.FC = () => {
                 Class / Section
               </label>
               <select
-                value={filterSectionId}
+                value={stagedSectionId}
                 onChange={(e) => {
-                  setFilterSectionId(e.target.value);
-                  setFilterAllocBatchId('ALL');
+                  setStagedSectionId(e.target.value);
+                  setStagedAllocBatchId('ALL');
                 }}
                 style={{
                   padding: '0.55rem 0.75rem',
@@ -667,9 +758,9 @@ export const DashboardPage: React.FC = () => {
                 Allocation Batch
               </label>
               <select
-                value={filterAllocBatchId}
-                onChange={(e) => setFilterAllocBatchId(e.target.value)}
-                disabled={allocBatches.length === 0 && filterSectionId === 'ALL'}
+                value={stagedAllocBatchId}
+                onChange={(e) => setStagedAllocBatchId(e.target.value)}
+                disabled={allocBatches.length === 0 && stagedSectionId === 'ALL'}
                 style={{
                   padding: '0.55rem 0.75rem',
                   borderRadius: '6px',
@@ -678,7 +769,7 @@ export const DashboardPage: React.FC = () => {
                   color: 'var(--text-primary)',
                   fontSize: '0.85rem',
                   outline: 'none',
-                  opacity: allocBatches.length === 0 && filterSectionId === 'ALL' ? 0.6 : 1,
+                  opacity: allocBatches.length === 0 && stagedSectionId === 'ALL' ? 0.6 : 1,
                 }}
               >
                 <option value="ALL">All Allocation Batches</option>
@@ -693,7 +784,13 @@ export const DashboardPage: React.FC = () => {
             {/* 5. Mentor Filter (Searchable for Admin / Quick Scoped for Staff) */}
             <div
               ref={mentorDropdownRef}
-              style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', position: 'relative' }}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.3rem',
+                position: 'relative',
+                zIndex: mentorDropdownOpen ? 60 : 1,
+              }}
             >
               <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
                 Mentor / Faculty
@@ -702,8 +799,8 @@ export const DashboardPage: React.FC = () => {
               {user?.role === 'STAFF' ? (
                 // Staff Dropdown
                 <select
-                  value={filterMentorId}
-                  onChange={(e) => setFilterMentorId(e.target.value)}
+                  value={stagedMentorId}
+                  onChange={(e) => setStagedMentorId(e.target.value)}
                   style={{
                     padding: '0.55rem 0.75rem',
                     borderRadius: '6px',
@@ -756,20 +853,19 @@ export const DashboardPage: React.FC = () => {
                     <div
                       style={{
                         position: 'absolute',
-                        top: '100%',
+                        top: 'calc(100% + 4px)',
                         left: 0,
                         right: 0,
-                        marginTop: '0.35rem',
-                        backgroundColor: 'rgba(15, 23, 42, 0.98)',
-                        border: '1px solid var(--border-subtle)',
+                        backgroundColor: '#0f172a',
+                        border: '1px solid rgba(99, 102, 241, 0.35)',
                         borderRadius: '8px',
-                        boxShadow: '0 10px 25px rgba(0, 0, 0, 0.5)',
-                        zIndex: 50,
+                        boxShadow: '0 12px 32px rgba(0, 0, 0, 0.8)',
+                        zIndex: 100,
                         padding: '0.5rem',
                         display: 'flex',
                         flexDirection: 'column',
                         gap: '0.4rem',
-                        minWidth: '240px',
+                        minWidth: '250px',
                       }}
                     >
                       {/* Search Input */}
@@ -815,7 +911,7 @@ export const DashboardPage: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => {
-                            setFilterMentorId('ALL');
+                            setStagedMentorId('ALL');
                             setMentorDropdownOpen(false);
                           }}
                           style={{
@@ -823,9 +919,9 @@ export const DashboardPage: React.FC = () => {
                             borderRadius: '4px',
                             border: 'none',
                             backgroundColor:
-                              filterMentorId === 'ALL' ? 'rgba(99, 102, 241, 0.2)' : 'transparent',
-                            color: filterMentorId === 'ALL' ? 'var(--primary)' : 'var(--text-secondary)',
-                            fontWeight: filterMentorId === 'ALL' ? 700 : 500,
+                              stagedMentorId === 'ALL' ? 'rgba(99, 102, 241, 0.2)' : 'transparent',
+                            color: stagedMentorId === 'ALL' ? 'var(--primary)' : 'var(--text-secondary)',
+                            fontWeight: stagedMentorId === 'ALL' ? 700 : 500,
                             fontSize: '0.83rem',
                             display: 'flex',
                             alignItems: 'center',
@@ -835,13 +931,13 @@ export const DashboardPage: React.FC = () => {
                           }}
                         >
                           <span>All Mentors / Whole Cohort</span>
-                          {filterMentorId === 'ALL' && <Check size={14} />}
+                          {stagedMentorId === 'ALL' && <Check size={14} />}
                         </button>
 
                         <button
                           type="button"
                           onClick={() => {
-                            setFilterMentorId('UNASSIGNED');
+                            setStagedMentorId('UNASSIGNED');
                             setMentorDropdownOpen(false);
                           }}
                           style={{
@@ -849,10 +945,10 @@ export const DashboardPage: React.FC = () => {
                             borderRadius: '4px',
                             border: 'none',
                             backgroundColor:
-                              filterMentorId === 'UNASSIGNED' ? 'rgba(99, 102, 241, 0.2)' : 'transparent',
+                              stagedMentorId === 'UNASSIGNED' ? 'rgba(99, 102, 241, 0.2)' : 'transparent',
                             color:
-                              filterMentorId === 'UNASSIGNED' ? 'var(--primary)' : 'var(--text-secondary)',
-                            fontWeight: filterMentorId === 'UNASSIGNED' ? 700 : 500,
+                              stagedMentorId === 'UNASSIGNED' ? 'var(--primary)' : 'var(--text-secondary)',
+                            fontWeight: stagedMentorId === 'UNASSIGNED' ? 700 : 500,
                             fontSize: '0.83rem',
                             display: 'flex',
                             alignItems: 'center',
@@ -862,7 +958,7 @@ export const DashboardPage: React.FC = () => {
                           }}
                         >
                           <span>Unassigned Students</span>
-                          {filterMentorId === 'UNASSIGNED' && <Check size={14} />}
+                          {stagedMentorId === 'UNASSIGNED' && <Check size={14} />}
                         </button>
 
                         <div
@@ -885,7 +981,7 @@ export const DashboardPage: React.FC = () => {
                               key={staff.id}
                               type="button"
                               onClick={() => {
-                                setFilterMentorId(staff.id);
+                                setStagedMentorId(staff.id);
                                 setMentorDropdownOpen(false);
                               }}
                               style={{
@@ -893,14 +989,14 @@ export const DashboardPage: React.FC = () => {
                                 borderRadius: '4px',
                                 border: 'none',
                                 backgroundColor:
-                                  filterMentorId === staff.id
+                                  stagedMentorId === staff.id
                                     ? 'rgba(99, 102, 241, 0.2)'
                                     : 'transparent',
                                 color:
-                                  filterMentorId === staff.id
+                                  stagedMentorId === staff.id
                                     ? 'var(--primary)'
                                     : 'var(--text-secondary)',
-                                fontWeight: filterMentorId === staff.id ? 700 : 500,
+                                fontWeight: stagedMentorId === staff.id ? 700 : 500,
                                 fontSize: '0.83rem',
                                 display: 'flex',
                                 alignItems: 'center',
@@ -915,7 +1011,7 @@ export const DashboardPage: React.FC = () => {
                                   {staff.email}
                                 </span>
                               </div>
-                              {filterMentorId === staff.id && <Check size={14} />}
+                              {stagedMentorId === staff.id && <Check size={14} />}
                             </button>
                           ))}
                       </div>
@@ -924,28 +1020,103 @@ export const DashboardPage: React.FC = () => {
                 </div>
               )}
             </div>
+
+            {/* 6. Filter Execution Actions */}
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={handleApplyFilters}
+                disabled={loading}
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.45rem',
+                  padding: '0.55rem 1.1rem',
+                  borderRadius: '6px',
+                  backgroundColor: hasUnappliedChanges ? 'var(--primary)' : 'rgba(99, 102, 241, 0.85)',
+                  color: '#ffffff',
+                  fontWeight: 600,
+                  fontSize: '0.85rem',
+                  border: 'none',
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  boxShadow: hasUnappliedChanges ? '0 0 14px rgba(99, 102, 241, 0.6)' : 'none',
+                  transition: 'all 0.2s ease',
+                  opacity: loading ? 0.7 : 1,
+                  minHeight: '38px',
+                }}
+              >
+                {loading ? (
+                  <>
+                    <Loader2 size={15} className="animate-spin" />
+                    <span>Applying...</span>
+                  </>
+                ) : (
+                  <>
+                    <Filter size={15} />
+                    <span>Apply Filters{hasUnappliedChanges ? ' *' : ''}</span>
+                  </>
+                )}
+              </button>
+
+              {isFilterActive && (
+                <button
+                  type="button"
+                  onClick={handleResetFilters}
+                  disabled={loading}
+                  title="Reset to default scope"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '0.35rem',
+                    padding: '0.55rem 0.75rem',
+                    borderRadius: '6px',
+                    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                    color: '#f87171',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    fontSize: '0.85rem',
+                    fontWeight: 600,
+                    cursor: loading ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.15s ease',
+                    minHeight: '38px',
+                  }}
+                >
+                  <RotateCcw size={14} />
+                  <span>Reset</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Loading state indicator */}
-        {loading && (
+        {/* Loading state indicator on first load */}
+        {loading && !stats && (
           <div
             style={{
               display: 'flex',
               alignItems: 'center',
+              justifyContent: 'center',
               gap: '0.75rem',
-              padding: '1.5rem',
+              padding: '3rem',
               color: 'var(--text-secondary)',
             }}
           >
-            <Loader2 className="animate-spin" size={22} style={{ color: 'var(--primary)' }} />
-            <span>Updating LeetCode diagnostic metrics for selected cohort...</span>
+            <Loader2 className="animate-spin" size={24} style={{ color: 'var(--primary)' }} />
+            <span>Loading LeetCode diagnostic metrics...</span>
           </div>
         )}
 
         {/* Key LeetCode Progress Metrics Cards */}
-        {!loading && lc && (
-          <div>
+        {lc && (
+          <div
+            style={{
+              opacity: loading ? 0.6 : 1,
+              transition: 'opacity 0.2s ease',
+              pointerEvents: loading ? 'none' : 'auto',
+            }}
+          >
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
               <Code2 size={20} style={{ color: '#fb923c' }} />
               <h3 style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-primary)' }}>
@@ -1175,8 +1346,16 @@ export const DashboardPage: React.FC = () => {
         )}
 
         {/* Top 5 Performers Leaderboard with Mentor Tag */}
-        {!loading && lc?.topCoders && lc.topCoders.length > 0 && (
-          <div className="glass-panel" style={{ padding: '1.75rem' }}>
+        {lc?.topCoders && lc.topCoders.length > 0 && (
+          <div
+            className="glass-panel"
+            style={{
+              padding: '1.75rem',
+              opacity: loading ? 0.6 : 1,
+              transition: 'opacity 0.2s ease',
+              pointerEvents: loading ? 'none' : 'auto',
+            }}
+          >
             <div
               style={{
                 display: 'flex',
@@ -1415,8 +1594,14 @@ export const DashboardPage: React.FC = () => {
         )}
 
         {/* Academic / Faculty Operational Stats */}
-        {!loading && stats && (
-          <div>
+        {stats && (
+          <div
+            style={{
+              opacity: loading ? 0.6 : 1,
+              transition: 'opacity 0.2s ease',
+              pointerEvents: loading ? 'none' : 'auto',
+            }}
+          >
             <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '1rem' }}>
               Academic & Allocation Metrics
             </h3>
@@ -1550,7 +1735,7 @@ export const DashboardPage: React.FC = () => {
                   style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}
                 >
                   <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                    {filterMentorId && filterMentorId !== 'ALL'
+                    {appliedMentorId && appliedMentorId !== 'ALL'
                       ? 'Students in Mentored Cohort'
                       : 'Students in Assigned Batches'}
                   </span>
@@ -1564,7 +1749,7 @@ export const DashboardPage: React.FC = () => {
         )}
 
         {/* Real-time Google Sheets Sync & Zero-Error Automation Status */}
-        {!loading && <SyncStatus variant="card" />}
+        <SyncStatus variant="card" />
       </div>
     </Layout>
   );

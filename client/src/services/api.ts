@@ -668,13 +668,13 @@ export const studentApi = {
   },
 
   deleteStudent: async (studentId: string): Promise<void> => {
-    clearClientCache();
     await api.delete(`/students/${studentId}`);
+    clearClientCache();
   },
 
   bulkDeleteStudents: async (studentIds: string[]): Promise<void> => {
-    clearClientCache();
     await api.post('/students/bulk-delete', { studentIds });
+    clearClientCache();
   },
 
   bulkImportStudents: async (payload: {

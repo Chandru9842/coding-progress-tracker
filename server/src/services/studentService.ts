@@ -6,6 +6,7 @@ import {
   getAuthorizedStudentIdsForStaff,
 } from './studentAuthorizationService.js';
 import { extractLeetCodeUsername } from './leetcodeService.js';
+import { diagnosticLogService } from './diagnosticLogService.js';
 import { UserRole } from '../types/index.js';
 
 function attachMentorInfo(st: any) {
@@ -644,12 +645,12 @@ export async function updateStudent(
 }
 
 export async function deleteStudent(studentId: string) {
-  serverCache.invalidate();
-
   if (!process.env.DATABASE_URL) {
     inMemoryStore.students = inMemoryStore.students.filter((s) => s.id !== studentId);
     inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter((sa) => sa.student_id !== studentId);
     inMemoryStore.snapshots = inMemoryStore.snapshots.filter((s) => s.student_id !== studentId);
+    diagnosticLogService.deleteLogsForStudents([studentId]);
+    serverCache.invalidate();
     return { message: 'Student deleted successfully' };
   }
 
@@ -658,16 +659,22 @@ export async function deleteStudent(studentId: string) {
     prisma.staffStudentAssignment.deleteMany({ where: { student_id: studentId } }),
     prisma.student.delete({ where: { id: studentId } }),
   ]);
+  diagnosticLogService.deleteLogsForStudents([studentId]);
+  serverCache.invalidate();
   return { message: 'Student deleted successfully' };
 }
 
 export async function bulkDeleteStudents(studentIds: string[]) {
-  serverCache.invalidate();
+  if (!studentIds || studentIds.length === 0) {
+    return { message: '0 students deleted' };
+  }
 
   if (!process.env.DATABASE_URL) {
     inMemoryStore.students = inMemoryStore.students.filter((s) => !studentIds.includes(s.id));
     inMemoryStore.staffStudentAssignments = inMemoryStore.staffStudentAssignments.filter((sa) => !studentIds.includes(sa.student_id));
     inMemoryStore.snapshots = inMemoryStore.snapshots.filter((s) => !studentIds.includes(s.student_id));
+    diagnosticLogService.deleteLogsForStudents(studentIds);
+    serverCache.invalidate();
     return { message: `${studentIds.length} students deleted successfully` };
   }
 
@@ -676,6 +683,8 @@ export async function bulkDeleteStudents(studentIds: string[]) {
     prisma.staffStudentAssignment.deleteMany({ where: { student_id: { in: studentIds } } }),
     prisma.student.deleteMany({ where: { id: { in: studentIds } } }),
   ]);
+  diagnosticLogService.deleteLogsForStudents(studentIds);
+  serverCache.invalidate();
   return { message: `${studentIds.length} students deleted successfully` };
 }
 

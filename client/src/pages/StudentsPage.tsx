@@ -427,8 +427,12 @@ export const StudentsPage: React.FC = () => {
     try {
       setSubmitting(true);
       await studentApi.bulkDeleteStudents(toDeleteIds);
+      clearClientCache();
+      window.dispatchEvent(new CustomEvent('student-synced'));
+      window.dispatchEvent(new CustomEvent('sheets-synced'));
+      await fetchStudents(false, true);
     } catch (err: any) {
-      fetchStudents(false);
+      fetchStudents(false, true);
       alert(err.response?.data?.error || 'Failed to delete selected students');
     } finally {
       setSubmitting(false);
@@ -525,8 +529,12 @@ export const StudentsPage: React.FC = () => {
       setSubmitting(true);
       setDeleteError(null);
       await studentApi.deleteStudent(deletedId);
+      clearClientCache();
+      window.dispatchEvent(new CustomEvent('student-synced'));
+      window.dispatchEvent(new CustomEvent('sheets-synced'));
+      await fetchStudents(false, true);
     } catch (err: any) {
-      fetchStudents(false);
+      fetchStudents(false, true);
       alert(err.response?.data?.error || 'Failed to delete student record');
     } finally {
       setSubmitting(false);
