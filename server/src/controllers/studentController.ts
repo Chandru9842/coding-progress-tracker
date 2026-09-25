@@ -6,6 +6,7 @@ import {
   isStaffAuthorizedForStudent,
   isStaffAuthorizedForSection,
   getAuthorizedStudentIdsForStaff,
+  filterAuthorizedStudentIdsForStaff,
 } from '../services/studentAuthorizationService.js';
 import { syncStudentLeetCode } from '../services/leetcodeService.js';
 import { syncAllActiveGoogleSheets } from '../services/googleSheetsService.js';
@@ -220,13 +221,7 @@ export async function bulkDeleteStudents(req: AuthenticatedRequest, res: Respons
     let authorizedIds = studentIds;
     // STAFF scope enforcement: must be authorized for the specified student IDs
     if (req.user.role === 'STAFF') {
-      const authChecks = await Promise.all(
-        studentIds.map(async (id) => ({
-          id,
-          authorized: await isStaffAuthorizedForStudent(req.user!.userId, id),
-        }))
-      );
-      authorizedIds = authChecks.filter((c) => c.authorized).map((c) => c.id);
+      authorizedIds = await filterAuthorizedStudentIdsForStaff(req.user.userId, studentIds);
       if (authorizedIds.length === 0) {
         res.status(403).json({ error: 'Forbidden: You are not authorized to delete one or more selected students' });
         return;

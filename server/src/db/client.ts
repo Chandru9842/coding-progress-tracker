@@ -11,12 +11,15 @@ function getDatasourceUrl(): string | undefined {
 
   try {
     const url = new URL(rawUrl);
-    // In serverless / Supabase connection pooling, ensure generous connection_limit and pool_timeout
-    if (!url.searchParams.has('connection_limit')) {
-      url.searchParams.set('connection_limit', '10');
+    // In serverless / Supabase / Neon connection pooling, guarantee a healthy connection pool
+    // Override restrictive connection_limit (< 10) to prevent connection pool exhaustion
+    const currentLimit = parseInt(url.searchParams.get('connection_limit') || '0', 10);
+    if (!url.searchParams.has('connection_limit') || currentLimit < 10) {
+      url.searchParams.set('connection_limit', '15');
     }
-    if (!url.searchParams.has('pool_timeout')) {
-      url.searchParams.set('pool_timeout', '30');
+    const currentTimeout = parseInt(url.searchParams.get('pool_timeout') || '0', 10);
+    if (!url.searchParams.has('pool_timeout') || currentTimeout < 60) {
+      url.searchParams.set('pool_timeout', '60');
     }
     return url.toString();
   } catch {

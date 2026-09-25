@@ -222,6 +222,54 @@ export async function getAuthorizedStudentIdsForStaff(
   return students.map((s) => s.id);
 }
 
+/**
+ * High-performance batch authorization checker: filters candidate student IDs down
+ * to only those authorized for the staff member in a single DB query, preventing connection pool exhaustion.
+ */
+export async function filterAuthorizedStudentIdsForStaff(
+  staffId: string,
+  candidateIds: string[]
+): Promise<string[]> {
+  if (!candidateIds || candidateIds.length === 0) return [];
+
+  if (!process.env.DATABASE_URL) {
+    const allAuthorized = await getAuthorizedStudentIdsForStaff(staffId);
+    const authSet = new Set(allAuthorized);
+    return candidateIds.filter((id) => authSet.has(id));
+  }
+
+  const assignedAllocBatches = await prisma.staffSectionAssignment.findMany({
+    where: { staff_id: staffId, allocation_batch_id: { not: null } },
+    include: { allocation_batch: true },
+  });
+  const assignedAllocNames = assignedAllocBatches.map((a) => a.allocation_batch?.name).filter(Boolean) as string[];
+
+  const whereOr: any[] = [
+    { staff_student_assignments: { some: { staff_id: staffId } } },
+    { section: { staff_section_assignments: { some: { staff_id: staffId, assignment_mode: 'ALL' } } } },
+    { allocation_batch: { staff_section_assignments: { some: { staff_id: staffId } } } },
+    { batch: { staff_batch_assignments: { some: { staff_id: staffId } } } },
+  ];
+
+  if (assignedAllocNames.length > 0) {
+    whereOr.push({
+      section: { staff_section_assignments: { some: { staff_id: staffId } } },
+      sub_batch: { in: assignedAllocNames, mode: 'insensitive' },
+    });
+  }
+
+  const authorizedStudents = await prisma.student.findMany({
+    where: {
+      id: { in: candidateIds },
+      OR: whereOr,
+    },
+    select: { id: true },
+  });
+
+  const authorizedSet = new Set(authorizedStudents.map((s) => s.id));
+  return candidateIds.filter((id) => authorizedSet.has(id));
+}
+
 export async function isStaffAuthorizedForAllocationBatch(
   staffId: string,
   allocationBatchId: string

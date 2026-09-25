@@ -237,6 +237,8 @@ export const StudentsPage: React.FC = () => {
   const [studentToDelete, setStudentToDelete] = useState<Student | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null);
+  const [deletingStudentIds, setDeletingStudentIds] = useState<Set<string>>(new Set());
+  const [deleteSuccessNotice, setDeleteSuccessNotice] = useState<string | null>(null);
 
   // Modal States
   const [showStudentModal, setShowStudentModal] = useState<boolean>(false);
@@ -446,18 +448,27 @@ export const StudentsPage: React.FC = () => {
     try {
       setSubmitting(true);
       setBulkDeleteError(null);
+      // Mark rows for animated deletion effect
+      setDeletingStudentIds(toDeleteSet);
+
       await studentApi.bulkDeleteStudents(toDeleteIds);
+
+      // Smooth 350ms delay allowing CSS row slide-out animation to complete
+      await new Promise((resolve) => setTimeout(resolve, 350));
 
       // Confirmed deletion: update UI state
       setStudents((prev) => prev.filter((s) => !toDeleteSet.has(s.id)));
       setSelectedStudentIds(new Set());
+      setDeletingStudentIds(new Set());
       setShowBulkDeleteModal(false);
+      setDeleteSuccessNotice(`🎉 Successfully deleted ${toDeleteIds.length} student record(s) and their associated daily snapshots!`);
 
       clearClientCache();
       window.dispatchEvent(new CustomEvent('student-synced'));
       window.dispatchEvent(new CustomEvent('sheets-synced'));
       await fetchStudents(false, true);
     } catch (err: any) {
+      setDeletingStudentIds(new Set());
       const errMsg = extractErrorMessage(err, 'Failed to delete selected students');
       setBulkDeleteError(errMsg);
       setError(errMsg);
@@ -542,11 +553,18 @@ export const StudentsPage: React.FC = () => {
   const handleConfirmDeleteStudent = async () => {
     if (!studentToDelete) return;
     const deletedId = studentToDelete.id;
+    const studentName = studentToDelete.name;
 
     try {
       setSubmitting(true);
       setDeleteError(null);
+      // Mark row for animated exit
+      setDeletingStudentIds(new Set([deletedId]));
+
       await studentApi.deleteStudent(deletedId);
+
+      // Smooth 350ms delay allowing CSS row slide-out animation to complete
+      await new Promise((resolve) => setTimeout(resolve, 350));
 
       // Confirmed deletion: update UI state
       setStudents((prev) => prev.filter((s) => s.id !== deletedId));
@@ -555,14 +573,17 @@ export const StudentsPage: React.FC = () => {
         next.delete(deletedId);
         return next;
       });
+      setDeletingStudentIds(new Set());
       setShowDeleteModal(false);
       setStudentToDelete(null);
+      setDeleteSuccessNotice(`🎉 Successfully deleted ${studentName}'s record and associated daily snapshots.`);
 
       clearClientCache();
       window.dispatchEvent(new CustomEvent('student-synced'));
       window.dispatchEvent(new CustomEvent('sheets-synced'));
       await fetchStudents(false, true);
     } catch (err: any) {
+      setDeletingStudentIds(new Set());
       const errMsg = extractErrorMessage(err, 'Failed to delete student record');
       setDeleteError(errMsg);
       setError(errMsg);
@@ -2175,6 +2196,33 @@ export const StudentsPage: React.FC = () => {
           </div>
         )}
 
+        {deleteSuccessNotice && (
+          <div style={{
+            padding: '0.85rem 1.25rem',
+            backgroundColor: 'rgba(34, 197, 94, 0.15)',
+            color: '#4ade80',
+            borderRadius: 'var(--radius-sm)',
+            border: '1px solid rgba(34, 197, 94, 0.3)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '0.75rem',
+            marginBottom: '1rem',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+              <CheckCircle2 size={18} />
+              <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{deleteSuccessNotice}</span>
+            </div>
+            <button
+              onClick={() => setDeleteSuccessNotice(null)}
+              style={{ background: 'none', border: 'none', color: '#4ade80', cursor: 'pointer', padding: '0.2rem' }}
+              title="Dismiss notification"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
         {/* Bulk Action Controls Bar */}
         {canManage && selectedStudentIds.size > 0 && (
           <div style={{
@@ -2327,15 +2375,21 @@ export const StudentsPage: React.FC = () => {
                       paginatedStudents.map((student, index) => {
                         const globalIndex = startIndex + index;
                         const isSelected = selectedStudentIds.has(student.id);
+                        const isDeleting = deletingStudentIds.has(student.id);
                         return (
                           <tr
                             key={student.id}
-                            onClick={() => navigate(`/students/${student.id}`)}
+                            onClick={() => !isDeleting && navigate(`/students/${student.id}`)}
+                            className={isDeleting ? 'row-deleting-animation' : undefined}
                             style={{
                               borderBottom: '1px solid var(--border-subtle)',
-                              cursor: 'pointer',
-                              backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.08)' : 'transparent',
-                              transition: 'var(--transition-fast)',
+                              cursor: isDeleting ? 'not-allowed' : 'pointer',
+                              backgroundColor: isDeleting
+                                ? 'rgba(239, 68, 68, 0.18)'
+                                : isSelected
+                                ? 'rgba(99, 102, 241, 0.08)'
+                                : 'transparent',
+                              transition: 'all 0.35s ease',
                             }}
                           >
                             {canManage && (
@@ -2343,8 +2397,9 @@ export const StudentsPage: React.FC = () => {
                                 <input
                                   type="checkbox"
                                   checked={isSelected}
+                                  disabled={isDeleting}
                                   onChange={(e) => handleToggleSelectStudent(student.id, e as any)}
-                                  style={{ cursor: 'pointer' }}
+                                  style={{ cursor: isDeleting ? 'not-allowed' : 'pointer' }}
                                 />
                               </td>
                             )}
@@ -2354,19 +2409,27 @@ export const StudentsPage: React.FC = () => {
                                 minWidth: '26px',
                                 padding: '0.15rem 0.45rem',
                                 borderRadius: '4px',
-                                backgroundColor: globalIndex < 3 ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.04)',
-                                color: globalIndex < 3 ? 'var(--primary)' : 'var(--text-secondary)',
+                                backgroundColor: isDeleting ? 'rgba(239, 68, 68, 0.25)' : globalIndex < 3 ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.04)',
+                                color: isDeleting ? '#f87171' : globalIndex < 3 ? 'var(--primary)' : 'var(--text-secondary)',
                                 fontSize: '0.82rem',
                                 fontWeight: 700,
                               }}>
                                 {globalIndex + 1}
                               </span>
                             </td>
-                            <td style={{ padding: '1rem', fontWeight: 700, color: 'var(--primary)', whiteSpace: 'nowrap' }}>
+                            <td style={{ padding: '1rem', fontWeight: 700, color: isDeleting ? '#f87171' : 'var(--primary)', whiteSpace: 'nowrap' }}>
                               {student.register_number}
                             </td>
                             <td style={{ padding: '1rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
-                              {student.name}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <span>{student.name}</span>
+                                {isDeleting && (
+                                  <span className="badge-deleting">
+                                    <Trash2 size={11} className="animate-spin" />
+                                    Deleting...
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td style={{ padding: '1rem', whiteSpace: 'nowrap' }}>
                               <span style={{
@@ -2678,51 +2741,91 @@ export const StudentsPage: React.FC = () => {
         {/* SINGLE DELETE STUDENT CONFIRMATION MODAL */}
         {showDeleteModal && studentToDelete && (
           <div className="modal-overlay-responsive">
-            <div className="glass-panel modal-card-responsive" style={{ maxWidth: '440px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#f87171', marginBottom: '1rem' }}>
-                <ShieldAlert size={26} />
-                <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Delete Student Record</h3>
-              </div>
-
-              {deleteError && (
-                <div style={{ padding: '0.75rem', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#f87171', borderRadius: 'var(--radius-sm)', marginBottom: '1rem', fontSize: '0.85rem' }}>
-                  {deleteError}
+            <div className="glass-panel modal-card-responsive" style={{ maxWidth: '450px' }}>
+              {submitting ? (
+                <div style={{ textAlign: 'center', padding: '1.25rem 0.5rem' }}>
+                  <div className="delete-halo" style={{
+                    width: '68px',
+                    height: '68px',
+                    borderRadius: '50%',
+                    background: 'radial-gradient(circle, rgba(239, 68, 68, 0.3) 0%, rgba(239, 68, 68, 0.05) 70%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    margin: '0 auto 1.25rem',
+                    border: '1px solid rgba(239, 68, 68, 0.4)',
+                  }}>
+                    <Trash2 size={32} className="animate-spin" style={{ color: '#ef4444', animationDuration: '2.5s' }} />
+                  </div>
+                  <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#f87171', marginBottom: '0.4rem' }}>
+                    Deleting Student Record...
+                  </h3>
+                  <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem', lineHeight: '1.5' }}>
+                    Permanently removing <strong style={{ color: 'var(--text-primary)' }}>{studentToDelete.name}</strong> and purging associated daily coding snapshots.
+                  </p>
+                  <div className="delete-progress-bar" style={{ marginBottom: '1.25rem' }} />
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                    Updating database & cache... Please wait.
+                  </p>
                 </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#f87171' }}>
+                      <ShieldAlert size={26} />
+                      <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Delete Student Record</h3>
+                    </div>
+                    <span style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', color: '#f87171', background: 'rgba(239, 68, 68, 0.15)', padding: '0.2rem 0.5rem', borderRadius: '4px', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+                      Permanent Action
+                    </span>
+                  </div>
+
+                  {deleteError && (
+                    <div style={{ padding: '0.75rem 1rem', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#f87171', borderRadius: 'var(--radius-sm)', marginBottom: '1rem', fontSize: '0.85rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+                      <span>{deleteError}</span>
+                      <button type="button" onClick={handleConfirmDeleteStudent} style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: '4px', padding: '0.25rem 0.6rem', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}>
+                        Retry
+                      </button>
+                    </div>
+                  )}
+
+                  <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1rem', lineHeight: '1.5' }}>
+                    Are you sure you want to delete student <strong style={{ color: 'var(--text-primary)' }}>{studentToDelete.name}</strong> (<span style={{ fontFamily: 'monospace', color: 'var(--primary)' }}>{studentToDelete.register_number}</span>)?
+                  </p>
+                  <p style={{ fontSize: '0.825rem', color: '#f87171', backgroundColor: 'rgba(248, 113, 113, 0.1)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.5rem', border: '1px solid rgba(248, 113, 113, 0.25)' }}>
+                    ⚠️ Warning: This will permanently remove this student record and all their associated daily coding snapshots.
+                  </p>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => { setShowDeleteModal(false); setStudentToDelete(null); setDeleteError(null); }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleConfirmDeleteStudent}
+                      style={{
+                        padding: '0.6rem 1.25rem',
+                        backgroundColor: '#ef4444',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: 'var(--radius-sm)',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.4rem',
+                      }}
+                    >
+                      <Trash2 size={16} />
+                      Confirm Delete
+                    </button>
+                  </div>
+                </>
               )}
-
-              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: '1.5' }}>
-                Are you sure you want to delete student <strong style={{ color: 'var(--text-primary)' }}>{studentToDelete.name}</strong> (<span style={{ fontFamily: 'monospace' }}>{studentToDelete.register_number}</span>)?
-              </p>
-              <p style={{ fontSize: '0.825rem', color: '#f87171', backgroundColor: 'rgba(248, 113, 113, 0.1)', padding: '0.65rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.5rem' }}>
-                ⚠️ Warning: This will permanently remove this student record and all their associated daily coding snapshots.
-              </p>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => { setShowDeleteModal(false); setStudentToDelete(null); setDeleteError(null); }}
-                  disabled={submitting}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConfirmDeleteStudent}
-                  disabled={submitting}
-                  style={{
-                    padding: '0.6rem 1.25rem',
-                    backgroundColor: '#ef4444',
-                    color: '#ffffff',
-                    border: 'none',
-                    borderRadius: 'var(--radius-sm)',
-                    fontWeight: 600,
-                    cursor: submitting ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  {submitting ? 'Deleting...' : 'Confirm Delete'}
-                </button>
-              </div>
             </div>
           </div>
         )}
@@ -2730,61 +2833,102 @@ export const StudentsPage: React.FC = () => {
         {/* BULK DELETE CONFIRMATION MODAL */}
         {showBulkDeleteModal && (
           <div className="modal-overlay-responsive">
-            <div className="glass-panel modal-card-responsive" style={{ maxWidth: '440px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#f87171', marginBottom: '1rem' }}>
-                <Trash2 size={26} />
-                <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Delete Selected Students</h3>
-              </div>
-
-              {bulkDeleteError && (
-                <div style={{ padding: '0.75rem', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#f87171', borderRadius: 'var(--radius-sm)', marginBottom: '1rem', fontSize: '0.85rem' }}>
-                  {bulkDeleteError}
+            <div className="glass-panel modal-card-responsive" style={{ maxWidth: '460px' }}>
+              {submitting ? (
+                <div style={{ textAlign: 'center', padding: '1.25rem 0.5rem' }}>
+                  <div className="delete-halo" style={{
+                    width: '68px',
+                    height: '68px',
+                    borderRadius: '50%',
+                    background: 'radial-gradient(circle, rgba(239, 68, 68, 0.3) 0%, rgba(239, 68, 68, 0.05) 70%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    margin: '0 auto 1.25rem',
+                    border: '1px solid rgba(239, 68, 68, 0.4)',
+                  }}>
+                    <Trash2 size={34} className="animate-spin" style={{ color: '#ef4444', animationDuration: '2.5s' }} />
+                  </div>
+                  <h3 style={{ fontSize: '1.3rem', fontWeight: 700, color: '#f87171', marginBottom: '0.4rem' }}>
+                    Deleting {students.filter((s) => selectedStudentIds.has(s.id)).length} Student Records...
+                  </h3>
+                  <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem', lineHeight: '1.5' }}>
+                    Safely purging student profiles, daily coding snapshots, mentor allocations, and activity logs.
+                  </p>
+                  <div className="delete-progress-bar" style={{ marginBottom: '1.25rem' }} />
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                    Updating database & cache... Please do not close this window.
+                  </p>
                 </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: '#f87171' }}>
+                      <Trash2 size={26} />
+                      <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Delete Selected Students</h3>
+                    </div>
+                    <span style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', color: '#f87171', background: 'rgba(239, 68, 68, 0.15)', padding: '0.2rem 0.5rem', borderRadius: '4px', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+                      Permanent Action
+                    </span>
+                  </div>
+
+                  {bulkDeleteError && (
+                    <div style={{ padding: '0.75rem 1rem', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#f87171', borderRadius: 'var(--radius-sm)', marginBottom: '1rem', fontSize: '0.85rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+                      <span>{bulkDeleteError}</span>
+                      <button type="button" onClick={handleConfirmBulkDelete} style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: '4px', padding: '0.25rem 0.6rem', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}>
+                        Retry
+                      </button>
+                    </div>
+                  )}
+
+                  <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '0.75rem', lineHeight: '1.5' }}>
+                    Are you sure you want to delete <strong style={{ color: '#ef4444' }}>{students.filter((s) => selectedStudentIds.has(s.id)).length} selected student(s)</strong> from the current view?
+                  </p>
+
+                  <div style={{ maxHeight: '140px', overflowY: 'auto', marginBottom: '1rem', padding: '0.5rem 0.75rem', background: 'rgba(0, 0, 0, 0.25)', borderRadius: '6px', fontSize: '0.8rem', border: '1px solid var(--border-subtle)' }}>
+                    {students.filter((s) => selectedStudentIds.has(s.id)).slice(0, 8).map((s) => (
+                      <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.25rem 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{s.register_number} - {s.name}</span>
+                        <span style={{ color: s.mentor?.name ? '#818cf8' : 'var(--text-muted)' }}>{s.mentor?.name || 'Unassigned'}</span>
+                      </div>
+                    ))}
+                    {students.filter((s) => selectedStudentIds.has(s.id)).length > 8 && (
+                      <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '0.35rem', textAlign: 'center' }}>
+                        ...and {students.filter((s) => selectedStudentIds.has(s.id)).length - 8} more student(s)
+                      </div>
+                    )}
+                  </div>
+
+                  <p style={{ fontSize: '0.825rem', color: '#f87171', backgroundColor: 'rgba(248, 113, 113, 0.1)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.5rem', border: '1px solid rgba(248, 113, 113, 0.25)' }}>
+                    ⚠️ Warning: This will permanently remove the selected student records and all their associated daily coding snapshots.
+                  </p>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                    <button type="button" className="btn-secondary" onClick={() => { setShowBulkDeleteModal(false); setBulkDeleteError(null); }}>
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleConfirmBulkDelete}
+                      style={{
+                        padding: '0.6rem 1.25rem',
+                        backgroundColor: '#ef4444',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: 'var(--radius-sm)',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.4rem',
+                      }}
+                    >
+                      <Trash2 size={16} />
+                      Confirm Bulk Delete
+                    </button>
+                  </div>
+                </>
               )}
-
-              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '0.75rem', lineHeight: '1.5' }}>
-                Are you sure you want to delete <strong style={{ color: 'var(--primary)' }}>{students.filter((s) => selectedStudentIds.has(s.id)).length} selected student(s)</strong> from the current view?
-              </p>
-
-              <div style={{ maxHeight: '130px', overflowY: 'auto', marginBottom: '1rem', padding: '0.5rem 0.75rem', background: 'rgba(0, 0, 0, 0.25)', borderRadius: '6px', fontSize: '0.8rem', border: '1px solid var(--border-subtle)' }}>
-                {students.filter((s) => selectedStudentIds.has(s.id)).slice(0, 8).map((s) => (
-                  <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.2rem 0' }}>
-                    <span style={{ fontWeight: 600 }}>{s.register_number} - {s.name}</span>
-                    <span style={{ color: s.mentor?.name ? '#818cf8' : 'var(--text-muted)' }}>{s.mentor?.name || 'Unassigned'}</span>
-                  </div>
-                ))}
-                {students.filter((s) => selectedStudentIds.has(s.id)).length > 8 && (
-                  <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '0.25rem', textAlign: 'center' }}>
-                    ...and {students.filter((s) => selectedStudentIds.has(s.id)).length - 8} more student(s)
-                  </div>
-                )}
-              </div>
-
-              <p style={{ fontSize: '0.825rem', color: '#f87171', backgroundColor: 'rgba(248, 113, 113, 0.1)', padding: '0.65rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.5rem' }}>
-                ⚠️ Warning: This will permanently remove the selected student records and all their associated daily coding snapshots.
-              </p>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-                <button type="button" className="btn-secondary" onClick={() => { setShowBulkDeleteModal(false); setBulkDeleteError(null); }} disabled={submitting}>
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConfirmBulkDelete}
-                  disabled={submitting}
-                  style={{
-                    padding: '0.6rem 1.25rem',
-                    backgroundColor: '#ef4444',
-                    color: '#ffffff',
-                    border: 'none',
-                    borderRadius: 'var(--radius-sm)',
-                    fontWeight: 600,
-                    cursor: submitting ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  {submitting ? 'Deleting...' : 'Confirm Bulk Delete'}
-                </button>
-              </div>
             </div>
           </div>
         )}

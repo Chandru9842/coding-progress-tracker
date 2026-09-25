@@ -11,36 +11,49 @@ export const api = axios.create({
 });
 
 // Universal Error Message Extractor (Guarantees a clean, human-readable string and NEVER an object)
+function sanitizeErrorText(msg: string): string {
+  if (!msg || typeof msg !== 'string') return msg;
+  const lower = msg.toLowerCase();
+  if (lower.includes('timed out fetching a new connection') || lower.includes('connection pool') || lower.includes('p2024')) {
+    return 'Database connection is temporarily busy. Please wait a moment and try again.';
+  }
+  if (lower.includes('invalid \'prisma.') || lower.includes('invocation:') || lower.includes('prismaclient')) {
+    return 'Database operation failed temporarily. Please try again.';
+  }
+  return msg;
+}
+
 export function extractErrorMessage(error: any, fallback: string = 'An unexpected error occurred'): string {
   if (!error) return fallback;
-  if (typeof error === 'string') return error;
+  if (typeof error === 'string') return sanitizeErrorText(error);
 
+  let raw = fallback;
   // Axios response payload
   if (error.response?.data) {
     const data = error.response.data;
-    if (typeof data === 'string') return data;
-    if (typeof data.error === 'string') return data.error;
-    if (typeof data.error?.message === 'string') return data.error.message;
-    if (typeof data.message === 'string') return data.message;
-    if (typeof data.code === 'string') {
-      return `${data.code}: ${data.message || fallback}`;
+    if (typeof data === 'string') raw = data;
+    else if (typeof data.error === 'string') raw = data.error;
+    else if (typeof data.error?.message === 'string') raw = data.error.message;
+    else if (typeof data.message === 'string') raw = data.message;
+    else if (typeof data.code === 'string') {
+      raw = `${data.code}: ${data.message || fallback}`;
     }
+  } else if (typeof error.error === 'string') {
+    raw = error.error;
+  } else if (typeof error.error?.message === 'string') {
+    raw = error.error.message;
+  } else if (typeof error.message === 'string') {
+    raw = error.message;
+  } else if (typeof error.code === 'string') {
+    raw = `${error.code}: ${error.message || fallback}`;
+  } else {
+    try {
+      const str = JSON.stringify(error);
+      if (str && str !== '{}') raw = str;
+    } catch (_) {}
   }
 
-  // Direct error object (e.g. Vercel timeout { code: "FUNCTION_INVOCATION_TIMEOUT", message: "..." })
-  if (typeof error.error === 'string') return error.error;
-  if (typeof error.error?.message === 'string') return error.error.message;
-  if (typeof error.message === 'string') return error.message;
-  if (typeof error.code === 'string') {
-    return `${error.code}: ${error.message || fallback}`;
-  }
-
-  try {
-    const str = JSON.stringify(error);
-    if (str && str !== '{}') return str;
-  } catch (_) {}
-
-  return String(error || fallback);
+  return sanitizeErrorText(String(raw || fallback));
 }
 
 // Interceptor to attach token from localStorage if available
