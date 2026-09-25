@@ -4,7 +4,7 @@ import { AuthProvider } from './context/AuthContext.js';
 import { ProtectedRoute } from './components/ProtectedRoute.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { AutoSyncDaemon } from './components/AutoSyncDaemon.js';
-import { Loader2 } from 'lucide-react';
+import { InteractiveLoader } from './components/InteractiveLoader.js';
 
 const LoginPage = lazy(() => import('./pages/LoginPage.js').then((m) => ({ default: m.LoginPage })));
 const DashboardPage = lazy(() => import('./pages/DashboardPage.js').then((m) => ({ default: m.DashboardPage })));
@@ -19,20 +19,11 @@ const DiagnosticsPage = lazy(() => import('./pages/DiagnosticsPage.js').then((m)
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage.js').then((m) => ({ default: m.NotFoundPage })));
 
 const RouteLoadingFallback: React.FC = () => (
-  <div
-    style={{
-      minHeight: '60vh',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: '0.75rem',
-      color: 'var(--text-secondary)',
-    }}
-  >
-    <Loader2 className="animate-spin" size={30} style={{ color: 'var(--primary)' }} />
-    <span style={{ fontSize: '0.85rem', fontWeight: 500, letterSpacing: '0.02em' }}>Loading...</span>
-  </div>
+  <InteractiveLoader
+    mode="fullscreen"
+    title="Loading Workspace Page..."
+    subtitle="Interactive Cyber Matrix • Play mini-game, shuffle tips, or boost speed!"
+  />
 );
 
 export const App: React.FC = () => {

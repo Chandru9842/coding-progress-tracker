@@ -32,6 +32,7 @@ import {
   Hourglass,
 } from 'lucide-react';
 import { SyncStatus } from '../components/SyncStatus.js';
+import { InteractiveLoader } from '../components/InteractiveLoader.js';
 import {
   analyzeAndParseStudents,
   downloadSampleCSVFile,
@@ -2184,10 +2185,11 @@ export const StudentsPage: React.FC = () => {
         )}
 
         {loading && (
-          <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-            <Loader2 className="animate-spin" size={24} style={{ margin: '0 auto 0.5rem auto', color: 'var(--primary)' }} />
-            <span>Loading student records...</span>
-          </div>
+          <InteractiveLoader
+            mode="inline"
+            title="Loading Student Records..."
+            subtitle="Interactive Matrix • Click or drag to ripple or squash bugs while records load!"
+          />
         )}
 
         {error && (

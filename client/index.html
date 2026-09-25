@@ -13,7 +13,206 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="pre-loader-container" style="position: fixed; inset: 0; background-color: #0f172a; display: flex; align-items: center; justify-content: center; z-index: 99999; font-family: 'Inter', system-ui, -apple-system, sans-serif; color: #f8fafc; overflow: hidden;">
+        <canvas id="pre-loader-canvas" style="position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; z-index: 1;"></canvas>
+        <div style="position: relative; z-index: 10; max-width: 520px; width: 90%; background: rgba(15, 23, 42, 0.88); border: 1px solid rgba(99, 102, 241, 0.35); border-radius: 20px; padding: 2rem; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 20px 60px -15px rgba(0,0,0,0.8), 0 0 35px rgba(99, 102, 241, 0.25); text-align: center;">
+          <div style="display: flex; align-items: center; justify-content: center; gap: 0.75rem; margin-bottom: 0.75rem;">
+            <div style="width: 44px; height: 44px; border-radius: 12px; background: linear-gradient(135deg, rgba(99, 102, 241, 0.4), rgba(6, 182, 212, 0.4)); border: 1px solid rgba(99, 102, 241, 0.5); display: flex; align-items: center; justify-content: center; font-size: 1.3rem; box-shadow: 0 0 20px rgba(99, 102, 241, 0.4);">
+              💻
+            </div>
+            <div style="text-align: left;">
+              <h1 style="font-size: 1.25rem; font-weight: 700; margin: 0; color: #f8fafc; font-family: 'Outfit', sans-serif; letter-spacing: -0.01em;">Coding Progress Tracker</h1>
+              <p style="font-size: 0.75rem; color: #94a3b8; margin: 0;">Interactive Loading Matrix</p>
+            </div>
+          </div>
+
+          <div style="margin: 1.25rem 0 0.75rem 0;">
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; margin-bottom: 0.35rem; font-weight: 600;">
+              <span id="pre-loader-status" style="color: #38bdf8;">Connecting to platform nodes...</span>
+              <span id="pre-loader-pct" style="color: #818cf8; font-family: monospace;">24%</span>
+            </div>
+            <div style="width: 100%; height: 8px; background: rgba(30, 41, 59, 0.8); border-radius: 9999px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08);">
+              <div id="pre-loader-bar" style="height: 100%; width: 24%; border-radius: 9999px; background: linear-gradient(90deg, #6366f1, #06b6d4, #ec4899); box-shadow: 0 0 16px rgba(99, 102, 241, 0.8); transition: width 0.3s ease;"></div>
+            </div>
+          </div>
+
+          <div id="pre-loader-tip-box" style="margin: 1rem 0; padding: 0.75rem 1rem; border-radius: 10px; background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(255, 255, 255, 0.08); font-size: 0.8rem; color: #cbd5e1; line-height: 1.4; text-align: left;">
+            <span style="display: inline-block; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; color: #fbbf24; margin-bottom: 0.25rem;">💡 LeetCode Tip</span>
+            <div id="pre-loader-tip-text">Two Pointers technique turns O(N²) pair searching into O(N) linear time for sorted arrays.</div>
+          </div>
+
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid rgba(255,255,255,0.08);">
+            <button id="pre-loader-boost-btn" style="background: rgba(99, 102, 241, 0.2); border: 1px solid rgba(99, 102, 241, 0.4); color: #c7d2fe; font-size: 0.75rem; font-weight: 600; padding: 0.4rem 0.85rem; border-radius: 8px; cursor: pointer; display: inline-flex; align-items: center; gap: 0.35rem;">
+              ⚡ Turbo Boost (<span id="pre-loader-clicks">0</span>)
+            </button>
+            <span style="font-size: 0.72rem; color: #64748b; font-style: italic;">Move mouse or click to ripple!</span>
+          </div>
+        </div>
+      </div>
+      <script>
+        (function() {
+          var canvas = document.getElementById('pre-loader-canvas');
+          if (!canvas) return;
+          var ctx = canvas.getContext('2d');
+          var boostClicks = 0;
+          var pct = 24;
+          var statusEl = document.getElementById('pre-loader-status');
+          var pctEl = document.getElementById('pre-loader-pct');
+          var barEl = document.getElementById('pre-loader-bar');
+          var boostBtn = document.getElementById('pre-loader-boost-btn');
+          var clicksEl = document.getElementById('pre-loader-clicks');
+          var tipTextEl = document.getElementById('pre-loader-tip-text');
+
+          var tips = [
+            "Two Pointers technique turns O(N²) pair searching into O(N) linear time for sorted arrays.",
+            "Sliding Window is best when finding min/max sub-array lengths with a continuous constraint.",
+            "Binary Search works on ANY monotonic condition (True/False boundary), not just sorted lists.",
+            "BFS always guarantees the shortest path in unweighted graphs; DFS is ideal for backtracking.",
+            "Prefix Sum precomputation reduces any subarray range-sum query to instantaneous O(1) lookups."
+          ];
+          var tipIdx = 0;
+          setInterval(function() {
+            tipIdx = (tipIdx + 1) % tips.length;
+            if (tipTextEl) tipTextEl.textContent = tips[tipIdx];
+          }, 4500);
+
+          var statuses = [
+            "Connecting to platform nodes...",
+            "Verifying security session...",
+            "Hydrating student coding cache...",
+            "Preparing dashboard matrix..."
+          ];
+          var sIdx = 0;
+          var pTimer = setInterval(function() {
+            if (pct < 92) {
+              pct += Math.floor(Math.random() * 4) + 2;
+              if (pct > 92) pct = 92;
+              if (pctEl) pctEl.textContent = pct + "%";
+              if (barEl) barEl.style.width = pct + "%";
+              if (pct > 40 && sIdx === 0) { sIdx = 1; if (statusEl) statusEl.textContent = statuses[1]; }
+              if (pct > 65 && sIdx === 1) { sIdx = 2; if (statusEl) statusEl.textContent = statuses[2]; }
+              if (pct > 82 && sIdx === 2) { sIdx = 3; if (statusEl) statusEl.textContent = statuses[3]; }
+            }
+          }, 800);
+
+          if (boostBtn) {
+            boostBtn.addEventListener('click', function(e) {
+              e.stopPropagation();
+              boostClicks++;
+              if (clicksEl) clicksEl.textContent = boostClicks;
+              pct = Math.min(pct + 8, 96);
+              if (pctEl) pctEl.textContent = pct + "%";
+              if (barEl) barEl.style.width = pct + "%";
+              boostBtn.style.background = 'rgba(236, 72, 153, 0.4)';
+              setTimeout(function() { boostBtn.style.background = 'rgba(99, 102, 241, 0.2)'; }, 300);
+            });
+          }
+
+          var width = canvas.width = window.innerWidth;
+          var height = canvas.height = window.innerHeight;
+          window.addEventListener('resize', function() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+          });
+
+          var particles = [];
+          var tokens = ['{}', '</>', 'fn()', 'const', '01', 'git', '=>', 'LC'];
+          var colors = ['#6366f1', '#06b6d4', '#ec4899', '#3b82f6', '#10b981'];
+          for (var i = 0; i < 35; i++) {
+            particles.push({
+              x: Math.random() * width,
+              y: Math.random() * height,
+              vx: (Math.random() - 0.5) * 0.8,
+              vy: (Math.random() - 0.5) * 0.8,
+              text: i % 2 === 0 ? tokens[i % tokens.length] : null,
+              radius: Math.random() * 2 + 1.5,
+              color: colors[i % colors.length]
+            });
+          }
+
+          var shockwaves = [];
+          function addShockwave(x, y) {
+            shockwaves.push({ x: x, y: y, r: 5, maxR: 160, a: 0.9, color: colors[Math.floor(Math.random() * colors.length)] });
+          }
+
+          window.addEventListener('click', function(e) {
+            addShockwave(e.clientX, e.clientY);
+          });
+
+          var mouse = { x: -100, y: -100 };
+          window.addEventListener('mousemove', function(e) {
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+          });
+
+          function animate() {
+            ctx.clearRect(0, 0, width, height);
+
+            for (var s = shockwaves.length - 1; s >= 0; s--) {
+              var sw = shockwaves[s];
+              ctx.save();
+              ctx.beginPath();
+              ctx.arc(sw.x, sw.y, sw.r, 0, Math.PI * 2);
+              ctx.strokeStyle = sw.color;
+              ctx.globalAlpha = sw.a;
+              ctx.lineWidth = 2;
+              ctx.stroke();
+              ctx.restore();
+              sw.r += 3.5;
+              sw.a *= 0.94;
+              if (sw.a < 0.02 || sw.r > sw.maxR) shockwaves.splice(s, 1);
+            }
+
+            for (var i = 0; i < particles.length; i++) {
+              var p = particles[i];
+              var dx = mouse.x - p.x;
+              var dy = mouse.y - p.y;
+              var d = Math.sqrt(dx * dx + dy * dy);
+              if (d < 100 && d > 1) {
+                p.vx += (dx / d) * 0.12;
+                p.vy += (dy / d) * 0.12;
+              }
+              p.x += p.vx;
+              p.y += p.vy;
+              p.vx *= 0.985;
+              p.vy *= 0.985;
+              if (p.x < 10 || p.x > width - 10) p.vx *= -1;
+              if (p.y < 10 || p.y > height - 10) p.vy *= -1;
+
+              for (var j = i + 1; j < particles.length; j++) {
+                var p2 = particles[j];
+                var dist = Math.hypot(p.x - p2.x, p.y - p2.y);
+                if (dist < 85) {
+                  ctx.beginPath();
+                  ctx.moveTo(p.x, p.y);
+                  ctx.lineTo(p2.x, p2.y);
+                  ctx.strokeStyle = p.color;
+                  ctx.globalAlpha = (1 - dist / 85) * 0.2;
+                  ctx.stroke();
+                }
+              }
+
+              ctx.save();
+              ctx.globalAlpha = 0.75;
+              ctx.fillStyle = p.color;
+              if (p.text) {
+                ctx.font = '600 11px monospace';
+                ctx.fillText(p.text, p.x, p.y);
+              } else {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fill();
+              }
+              ctx.restore();
+            }
+
+            requestAnimationFrame(animate);
+          }
+          animate();
+        })();
+      </script>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

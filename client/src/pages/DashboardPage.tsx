@@ -43,6 +43,7 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { SyncStatus } from '../components/SyncStatus.js';
+import { InteractiveLoader } from '../components/InteractiveLoader.js';
 
 export const DashboardPage: React.FC = () => {
   const { user } = useAuth();
@@ -1088,19 +1089,11 @@ export const DashboardPage: React.FC = () => {
 
         {/* Loading state indicator on first load */}
         {loading && !stats && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '0.75rem',
-              padding: '3rem',
-              color: 'var(--text-secondary)',
-            }}
-          >
-            <Loader2 className="animate-spin" size={24} style={{ color: 'var(--primary)' }} />
-            <span>Loading LeetCode diagnostic metrics...</span>
-          </div>
+          <InteractiveLoader
+            mode="inline"
+            title="Loading LeetCode Analytics & Diagnostic Metrics..."
+            subtitle="Interactive Matrix • Click or drag to ripple or squash bugs while metrics calculate!"
+          />
         )}
 
         {/* Key LeetCode Progress Metrics Cards */}
