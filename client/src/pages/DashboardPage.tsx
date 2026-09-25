@@ -43,7 +43,6 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { SyncStatus } from '../components/SyncStatus.js';
-import { InteractiveLoader } from '../components/InteractiveLoader.js';
 
 export const DashboardPage: React.FC = () => {
   const { user } = useAuth();
@@ -1089,11 +1088,19 @@ export const DashboardPage: React.FC = () => {
 
         {/* Loading state indicator on first load */}
         {loading && !stats && (
-          <InteractiveLoader
-            mode="inline"
-            title="SYNCHRONIZING LEETCODE ANALYTICS"
-            subtitle="Aggregating student progress matrices • Telemetry socket active"
-          />
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.75rem',
+              padding: '3rem',
+              color: 'var(--text-secondary)',
+            }}
+          >
+            <Loader2 className="animate-spin" size={24} style={{ color: 'var(--primary)' }} />
+            <span>Loading LeetCode diagnostic metrics...</span>
+          </div>
         )}
 
         {/* Key LeetCode Progress Metrics Cards */}

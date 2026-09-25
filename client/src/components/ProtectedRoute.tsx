@@ -1,7 +1,7 @@
 import React from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.js';
-import { InteractiveLoader } from './InteractiveLoader.js';
+import { Loader2 } from 'lucide-react';
 
 interface ProtectedRouteProps {
   requiredRole?: 'ADMIN' | 'STAFF';
@@ -12,11 +12,21 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ requiredRole }) 
 
   if (loading) {
     return (
-      <InteractiveLoader
-        mode="fullscreen"
-        title="AUTHENTICATING FACULTY SESSION"
-        subtitle="Verifying cryptographic token signature • Telemetry link online"
-      />
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100vh',
+          backgroundColor: '#0f172a',
+          color: '#94a3b8',
+        }}
+      >
+        <Loader2 className="animate-spin" size={32} style={{ color: '#6366f1' }} />
+        <span style={{ marginLeft: '12px', fontSize: '1rem', fontWeight: 500 }}>
+          Verifying session...
+        </span>
+      </div>
     );
   }
 

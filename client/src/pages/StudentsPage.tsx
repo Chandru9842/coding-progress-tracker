@@ -32,7 +32,6 @@ import {
   Hourglass,
 } from 'lucide-react';
 import { SyncStatus } from '../components/SyncStatus.js';
-import { InteractiveLoader } from '../components/InteractiveLoader.js';
 import {
   analyzeAndParseStudents,
   downloadSampleCSVFile,
@@ -2185,11 +2184,10 @@ export const StudentsPage: React.FC = () => {
         )}
 
         {loading && (
-          <InteractiveLoader
-            mode="inline"
-            title="HYDRATING STUDENT REGISTRY"
-            subtitle="Streaming student index records • Precision telemetry active"
-          />
+          <div style={{ padding: '3rem 2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+            <Loader2 className="animate-spin" size={28} style={{ margin: '0 auto 0.75rem auto', color: 'var(--primary)', display: 'block' }} />
+            <span style={{ fontSize: '0.9rem', fontWeight: 500 }}>Loading student records...</span>
+          </div>
         )}
 
         {error && (
