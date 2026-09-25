@@ -14,8 +14,8 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ requiredRole }) 
     return (
       <InteractiveLoader
         mode="fullscreen"
-        title="Verifying Faculty Session..."
-        subtitle="Interactive Matrix • Click or drag to ripple or squash bugs while authenticating!"
+        title="AUTHENTICATING FACULTY SESSION"
+        subtitle="Verifying cryptographic token signature • Telemetry link online"
       />
     );
   }

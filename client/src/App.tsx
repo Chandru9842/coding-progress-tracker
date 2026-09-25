@@ -21,8 +21,8 @@ const NotFoundPage = lazy(() => import('./pages/NotFoundPage.js').then((m) => ({
 const RouteLoadingFallback: React.FC = () => (
   <InteractiveLoader
     mode="fullscreen"
-    title="Loading Workspace Page..."
-    subtitle="Interactive Cyber Matrix • Play mini-game, shuffle tips, or boost speed!"
+    title="INITIALIZING WORKSPACE VIEWPORT"
+    subtitle="Streaming module bundle • GPU-accelerated rendering active"
   />
 );
 

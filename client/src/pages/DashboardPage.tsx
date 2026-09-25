@@ -1091,8 +1091,8 @@ export const DashboardPage: React.FC = () => {
         {loading && !stats && (
           <InteractiveLoader
             mode="inline"
-            title="Loading LeetCode Analytics & Diagnostic Metrics..."
-            subtitle="Interactive Matrix • Click or drag to ripple or squash bugs while metrics calculate!"
+            title="SYNCHRONIZING LEETCODE ANALYTICS"
+            subtitle="Aggregating student progress matrices • Telemetry socket active"
           />
         )}
 

@@ -2187,8 +2187,8 @@ export const StudentsPage: React.FC = () => {
         {loading && (
           <InteractiveLoader
             mode="inline"
-            title="Loading Student Records..."
-            subtitle="Interactive Matrix • Click or drag to ripple or squash bugs while records load!"
+            title="HYDRATING STUDENT REGISTRY"
+            subtitle="Streaming student index records • Precision telemetry active"
           />
         )}
 
